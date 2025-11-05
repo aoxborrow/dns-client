@@ -28,6 +28,7 @@ describe('Query Cache Tests', () => {
     type: 'A',
     server: '1.1.1.1',
     serverHost: null,
+    transport: 'udp',
     elapsed: 10,
     bytes: 100,
     rcode: 0,

@@ -135,6 +135,7 @@ export type DnsResolutionHop = {
   rcode: DnsResponseCode | null;
   rcodeName: DnsResponseType | null;
   flags: DnsFlag[];
+  records: DnsRecord[]; // NS, DNSSEC, and glue records for this hop
 };
 
 // only a valid error code
@@ -149,6 +150,7 @@ export interface DnsAnswer {
   type: DnsRecordType; // the record type that was queried (renamed from recordType)
   server: string; // required, the final server that answered the query
   serverHost: string | null; // the hostname of the server that answered the query
+  transport: DnsTransportType; // the transport protocol used for the query ('udp', 'tcp', 'doh')
   elapsed: number | null; // query duration in ms
   bytes: number | null; // the number of bytes in the response
   rcode: DnsResponseCode | null; // e.g. 0 for NOERROR, 2 for SERVFAIL, etc

@@ -230,17 +230,20 @@ export class DnsClient {
     // try to resolve the question with retries
     const answer = await this.resolveWithRetries(question, options);
 
-    // build trace step/hop
-    trace.push({
-      server: answer.server,
-      serverHost: answer.serverHost,
-      timestamp: new Date(),
-      elapsed: answer.elapsed ?? null,
-      bytes: answer.bytes ?? null,
-      rcode: answer.rcode ?? null,
-      rcodeName: answer.rcodeName ?? null,
-      flags: answer.flags ?? [],
-    });
+    // build trace step/hop, but skip the final hop (when we have actual answer records)
+    if (answer.records.length === 0) {
+      trace.push({
+        server: answer.server,
+        serverHost: answer.serverHost,
+        timestamp: new Date(),
+        elapsed: answer.elapsed ?? null,
+        bytes: answer.bytes ?? null,
+        rcode: answer.rcode ?? null,
+        rcodeName: answer.rcodeName ?? null,
+        flags: answer.flags ?? [],
+        records: this.collectTraceRecords(answer),
+      });
+    }
 
     // attach the trace to the answer
     answer.trace = trace;
@@ -323,6 +326,39 @@ export class DnsClient {
     return nameserver;
   }
 
+  // collect relevant records for the trace hop
+  // includes NS records, DNSSEC records, and glue records
+  protected collectTraceRecords(answer: DnsAnswer): DnsRecord[] {
+    const records: DnsRecord[] = [];
+
+    // DNSSEC record types to collect
+    const dnssecTypes = ['DS', 'RRSIG', 'DNSKEY', 'NSEC', 'NSEC3', 'NSEC3PARAM', 'CDS', 'CDNSKEY'];
+
+    // collect NS records from authorities
+    const nsRecords = answer.authorities.filter(r => r.type === NS_RECORD);
+    records.push(...nsRecords);
+
+    // get all NS record values for glue record matching
+    const nsValues = nsRecords.map(r => r.value);
+
+    // collect DNSSEC records from authorities
+    records.push(...answer.authorities.filter(r => dnssecTypes.includes(r.type)));
+
+    // collect DNSSEC records from additionals
+    records.push(...answer.additionals.filter(r => dnssecTypes.includes(r.type)));
+
+    // collect DNSSEC records from records section (shouldn't normally be here, but check anyway)
+    records.push(...answer.records.filter(r => dnssecTypes.includes(r.type)));
+
+    // collect glue records (A/AAAA) from additionals that match NS record values
+    const glueRecords = answer.additionals.filter(
+      r => (r.type === A_RECORD || r.type === AAAA_RECORD) && nsValues.includes(r.name)
+    );
+    records.push(...glueRecords);
+
+    return records;
+  }
+
   // resolve a question with retries
   protected async resolveWithRetries(
     question: DnsQuestion,
@@ -352,7 +388,10 @@ export class DnsClient {
         // should not retry or out of retries, return answer with error attached
         if (attempt >= options.retries || !lastError.shouldRetry?.()) {
           // return answer with error attached
-          return this.createAnswer(question, { error: lastError });
+          return this.createAnswer(question, {
+            transport: currentOpts.transport,
+            error: lastError,
+          });
         }
 
         // exponential backoff: backoff * 2^attempt
@@ -382,7 +421,7 @@ export class DnsClient {
     const { server, serverHost } = await this.resolveServer(question.server, options);
 
     // start building the DnsAnswer object
-    const answer = this.createAnswer(question, { serverHost });
+    const answer = this.createAnswer(question, { transport: options.transport, serverHost });
 
     // track query elapsed time
     const startTime = performance.now();
@@ -564,6 +603,7 @@ export class DnsClient {
       type: question.type,
       server: question.server,
       serverHost: null,
+      transport: DNS_TRANSPORT_UDP, // default, should be overridden
       elapsed: null,
       bytes: null,
       rcode: null,

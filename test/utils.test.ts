@@ -48,6 +48,7 @@ describe('Utility Functions', () => {
           records: [],
           server: '1.1.1.1',
           serverHost: null,
+          transport: 'udp',
           elapsed: 10,
           bytes: 100,
           rcode: 0,
