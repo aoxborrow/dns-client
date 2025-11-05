@@ -2,12 +2,14 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
+    "module": "NodeNext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
     "declaration": true,
     "declarationMap": true,
     "outDir": "./dist",
     "rootDir": "./src",
-    "removeComments": true,
-    "sourceMap": true
+    "removeComments": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "test", "scripts", "**/*.test.ts", "**/*.integration.test.ts"]
