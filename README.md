@@ -13,14 +13,7 @@
 - **DNSSEC Support** - Query and validate DNSSEC records (DNSKEY, DS, RRSIG, NSEC, NSEC3)
 - **Advanced Features** - Parallel queries, concurrency control, query caching, retries with backoff
 
-<!-- - support for 30+ DNS record types
-- DNS records parsed into strongly-typed objects
-- authoritative and stub modes of operation
-- full resolution trace similar to `dig +trace`
-- parallel query execution with concurrency control
-- TCP fallback for truncated UDP responses
-- configurable query and host cache
-- configurable retries with exponential backoff -->
+This library is extracted from [dns.tools](https://dns.tools). Check out our [DNS API](https://dns.tools/docs#dns) if you need a hosted version of this library.
 
 | Transport | Requirements                                                       |
 | --------- | ------------------------------------------------------------------ |
