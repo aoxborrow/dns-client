@@ -76,7 +76,10 @@
     "clear": "npm run clear:ts && npm run clear:jest && npm run clear:eslint",
     "flush": "npm run clear && npm run generate",
     "query": "tsx scripts/dns-client.ts",
-    "generate-fixtures": "node -e \"const args = process.argv.slice(1); require('child_process').spawn('tsx', ['scripts/generate-fixtures.ts'].concat(args), {stdio: 'inherit'});\""
+    "generate-fixtures": "node -e \"const args = process.argv.slice(1); require('child_process').spawn('tsx', ['scripts/generate-fixtures.ts'].concat(args), {stdio: 'inherit'});\"",
+    "release:patch": "npm version patch && git push --follow-tags && gh release create v$(node -p \"require('./package.json').version\") --generate-notes",
+    "release:minor": "npm version minor && git push --follow-tags && gh release create v$(node -p \"require('./package.json').version\") --generate-notes",
+    "release:major": "npm version major && git push --follow-tags && gh release create v$(node -p \"require('./package.json').version\") --generate-notes"
   },
   "dependencies": {
     "dns-packet": "^5.6.1"
