@@ -1,13 +1,13 @@
 {
   "name": "@aoxborrow/dns-client",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Fully-typed DNS resolver with support for UDP, TCP, and DNS-over-HTTPS (DoH) transports",
   "author": "Aaron Oxborrow <aaron@oxborrow.com>",
   "license": "MIT",
   "homepage": "https://github.com/aoxborrow/dns-client",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aoxborrow/dns-client.git"
+    "url": "git+https://github.com/aoxborrow/dns-client.git"
   },
   "bugs": {
     "url": "https://github.com/aoxborrow/dns-client/issues"
