@@ -1,9 +1,9 @@
 import net from 'net';
 import dnsPacket from 'dns-packet';
-import { createDnsPacket } from '../packets';
-import type { DnsOptions, DnsPacket, DnsQuestion, DnsTransportQuery } from '../types';
-import { TimeoutError, ConnectionError, ParsingError, AbortError } from '../errors';
-import { isValidIpv6 } from '../utils';
+import { createDnsPacket } from '../packets.js';
+import type { DnsOptions, DnsPacket, DnsQuestion, DnsTransportQuery } from '../types.js';
+import { TimeoutError, ConnectionError, ParsingError, AbortError } from '../errors.js';
+import { isValidIpv6 } from '../utils.js';
 
 // maximum TCP DNS response size to prevent memory exhaustion
 const MAX_TCP_RESPONSE_SIZE = 65535; // Maximum DNS message size per RFC

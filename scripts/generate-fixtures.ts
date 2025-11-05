@@ -16,11 +16,11 @@
 
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { DnsClient, getRecords } from '../src/index';
-import { DNS_TEST_DOMAINS, DNS_TEST_SERVER_IPS, DNS_TEST_SERVERS } from '../test/dns-test-helpers';
-import type { DnsRecordType } from '../src/types';
-import { sortObjectKeys } from '../src/utils';
-import { DNS_TRANSPORT_UDP } from '../src/constants';
+import { DnsClient, getRecords } from '../src/index.js';
+import { DNS_TEST_DOMAINS, DNS_TEST_SERVER_IPS, DNS_TEST_SERVERS } from '../test/dns-test-helpers.js';
+import type { DnsRecordType } from '../src/types.js';
+import { sortObjectKeys } from '../src/utils.js';
+import { DNS_TRANSPORT_UDP } from '../src/constants.js';
 
 // fixed TTL value for consistent test fixtures
 const TEST_FIXED_TTL = 69;

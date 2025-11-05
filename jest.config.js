@@ -18,6 +18,10 @@ const config = {
   testPathIgnorePatterns: ['/node_modules/', '/dist/'],
   verbose: true,
   errorOnDeprecated: true,
+  // map .js extensions to .ts files for ESM compatibility
+  moduleNameMapper: {
+    '^(\\.{1,2}/.*)\\.js$': '$1',
+  },
 };
 
 export default config;

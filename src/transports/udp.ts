@@ -1,9 +1,9 @@
 import dgram from 'dgram';
 import dnsPacket from 'dns-packet';
-import { TimeoutError, ConnectionError, ParsingError, AbortError } from '../errors';
-import { createDnsPacket } from '../packets';
-import type { DnsOptions, DnsPacket, DnsQuestion, DnsTransportQuery } from '../types';
-import { isValidIpv6 } from '../utils';
+import { TimeoutError, ConnectionError, ParsingError, AbortError } from '../errors.js';
+import { createDnsPacket } from '../packets.js';
+import type { DnsOptions, DnsPacket, DnsQuestion, DnsTransportQuery } from '../types.js';
+import { isValidIpv6 } from '../utils.js';
 
 // resolve a DnsQuestion using UDP transport
 export const udpQuery: DnsTransportQuery = async function (

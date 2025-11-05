@@ -1,4 +1,4 @@
-import { ROOT_SERVERS } from './caches/nameservers';
+import { ROOT_SERVERS } from './caches/nameservers.js';
 import {
   A_RECORD,
   AAAA_RECORD,
@@ -32,8 +32,8 @@ import {
   SSHFP_RECORD,
   SVCB_RECORD,
   URI_RECORD,
-} from './constants';
-import type { DnsRecord, DnsAnswer, FlatDnsRecord } from './types';
+} from './constants.js';
+import type { DnsRecord, DnsAnswer, FlatDnsRecord } from './types.js';
 
 // flatten records from answers
 export function getRecords(answers: DnsAnswer[]): DnsRecord[] {

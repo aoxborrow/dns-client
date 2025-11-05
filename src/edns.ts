@@ -1,4 +1,4 @@
-import { EXTENDED_DNS_ERRORS, EDNS_OPTIONS, OPT_RECORD } from './constants';
+import { EXTENDED_DNS_ERRORS, EDNS_OPTIONS, OPT_RECORD } from './constants.js';
 import type {
   DnsExtendedErrors,
   DnsExtendedErrorCode,
@@ -13,7 +13,7 @@ import type {
   EdnsPadding,
   EdnsDnssecCapability,
   EdnsKeyTag,
-} from './types';
+} from './types.js';
 
 // parse OPT records from DNS response additionals into structured OptRecord objects
 export function parsePacketOptions(additionals: PacketAnswer[]): OptRecord[] {
