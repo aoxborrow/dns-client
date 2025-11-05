@@ -1,6 +1,6 @@
 {
   "name": "@aoxborrow/dns-client",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Fully-typed DNS resolver with support for UDP, TCP, and DNS-over-HTTPS (DoH) transports",
   "author": "Aaron Oxborrow <aaron@oxborrow.com>",
   "license": "MIT",
