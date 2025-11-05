@@ -1,0 +1,41 @@
+# dependabot configuration for automated dependency updates
+# creates pull requests for minor version updates to ensure tests pass
+version: 2
+updates:
+  # npm package updates
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'wednesday'
+      time: '07:00'
+      timezone: 'America/Los_Angeles'
+    # allow minor and patch updates only (no major version bumps)
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+    # group all dependencies together to create only one PR per week
+    groups:
+      # group all dependencies (both dev and prod) together
+      all-dependencies:
+        update-types:
+          - 'minor'
+          - 'patch'
+    # limit number of open pull requests
+    open-pull-requests-limit: 3
+    # add reviewers if needed (uncomment and modify as needed)
+    # reviewers:
+    #   - "username"
+    # add labels to PRs for easier management
+    labels:
+      - 'dependencies'
+      - 'automated'
+    # customize commit messages
+    commit-message:
+      prefix: 'deps'
+      prefix-development: 'deps-dev'
+      include: 'scope'
+    # allow dependabot to rebase PRs when conflicts arise
+    rebase-strategy: 'auto'
+    # set target branch (defaults to default branch)
+    target-branch: 'main'

@@ -1,0 +1,139 @@
+{
+  "TLSA": [
+    {
+      "cert": "0c0c6da0ceac595ab7e2d7dd839ec05e32b30207b1cd6ad8fac8a2332949d204",
+      "mtype": 1,
+      "name": "_443._tcp.www.huque.com",
+      "selector": 1,
+      "ttl": 69,
+      "type": "TLSA",
+      "usage": 3
+    },
+    {
+      "cert": "8ac3759d5240649bd28fd9236ea0641f7beda2f63bce79cbe5dd081195867bc5",
+      "mtype": 1,
+      "name": "_443._tcp.www.huque.com",
+      "selector": 1,
+      "ttl": 69,
+      "type": "TLSA",
+      "usage": 3
+    },
+    {
+      "cert": "8c40a4237c0460485b64f9921dddd51b88493a36f27bd333247717feafb97a7c",
+      "mtype": 1,
+      "name": "_443._tcp.www.huque.com",
+      "selector": 1,
+      "ttl": 69,
+      "type": "TLSA",
+      "usage": 3
+    },
+    {
+      "cert": "9de41df4c3fde57b884f7491fa5f93e1fde54be9924876afef5ee2f3f7d8673c",
+      "mtype": 1,
+      "name": "_443._tcp.www.huque.com",
+      "selector": 1,
+      "ttl": 69,
+      "type": "TLSA",
+      "usage": 3
+    },
+    {
+      "cert": "55e0e90eb587fe77ad140c66ee45044c50474fac211c2945f7d206c3d461786f",
+      "mtype": 1,
+      "name": "_443._tcp.www.huque.com",
+      "selector": 1,
+      "ttl": 69,
+      "type": "TLSA",
+      "usage": 3
+    },
+    {
+      "cert": "98a3098a019dcf84175b843e9783056f7e21a94e004522cc55c63ebf45513d22",
+      "mtype": 1,
+      "name": "_443._tcp.www.huque.com",
+      "selector": 1,
+      "ttl": 69,
+      "type": "TLSA",
+      "usage": 3
+    },
+    {
+      "cert": "422e3e5c1f85363474b3519c5de48d60d7c46ddcb8175b3198fdd7cd924ed7c4",
+      "mtype": 1,
+      "name": "_443._tcp.www.huque.com",
+      "selector": 1,
+      "ttl": 69,
+      "type": "TLSA",
+      "usage": 3
+    },
+    {
+      "cert": "ac964edbeb7f4eb3d655b9b51647a473734070320dc92f92821de068ee21c622",
+      "mtype": 1,
+      "name": "_443._tcp.www.huque.com",
+      "selector": 1,
+      "ttl": 69,
+      "type": "TLSA",
+      "usage": 3
+    },
+    {
+      "cert": "b10f78fd4631a3bca2c8edad1ff3d798337df9e4c0086366eae92532e92f2f5c",
+      "mtype": 1,
+      "name": "_443._tcp.www.huque.com",
+      "selector": 1,
+      "ttl": 69,
+      "type": "TLSA",
+      "usage": 3
+    },
+    {
+      "cert": "b5173d182696e8881e045556197a931bd24bc1e4e9458e782bd7855ed1b53819",
+      "mtype": 1,
+      "name": "_443._tcp.www.huque.com",
+      "selector": 1,
+      "ttl": 69,
+      "type": "TLSA",
+      "usage": 3
+    },
+    {
+      "cert": "c0fd180908ec6eb059a349f59c2cbeff4f4f6a875378086ae7b548f58b536e22",
+      "mtype": 1,
+      "name": "_443._tcp.www.huque.com",
+      "selector": 1,
+      "ttl": 69,
+      "type": "TLSA",
+      "usage": 3
+    },
+    {
+      "cert": "ddd07f4b3582cef2cbea565c6c71e6f18e71a505cb2049ab54d5d8215a9a41fe",
+      "mtype": 1,
+      "name": "_443._tcp.www.huque.com",
+      "selector": 1,
+      "ttl": 69,
+      "type": "TLSA",
+      "usage": 3
+    },
+    {
+      "cert": "de38c1c08eb239d76b45da575c70151ce7da13a935bf5fb887b4e43664d6f728",
+      "mtype": 1,
+      "name": "_443._tcp.www.huque.com",
+      "selector": 1,
+      "ttl": 69,
+      "type": "TLSA",
+      "usage": 3
+    },
+    {
+      "cert": "f6b71ed68b8e9126640e988e85ef71de0c68b454610572c7a8d66a52de3a1a0b",
+      "mtype": 1,
+      "name": "_443._tcp.www.huque.com",
+      "selector": 1,
+      "ttl": 69,
+      "type": "TLSA",
+      "usage": 3
+    },
+    {
+      "cert": "f1302083de60dc5f869656feed7ea802e59083b08ffbb4833aae59f59dbaf74f",
+      "mtype": 1,
+      "name": "_443._tcp.www.huque.com",
+      "selector": 1,
+      "ttl": 69,
+      "type": "TLSA",
+      "usage": 3
+    }
+  ]
+}

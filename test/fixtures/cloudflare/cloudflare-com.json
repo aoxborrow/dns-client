@@ -1,0 +1,273 @@
+{
+  "SOA": [
+    {
+      "expire": 604800,
+      "hostmaster": "dns.cloudflare.com",
+      "minimum": 300,
+      "name": "cloudflare.com",
+      "nsname": "ns3.cloudflare.com",
+      "refresh": 10000,
+      "retry": 2400,
+      "serial": 2387738886,
+      "ttl": 69,
+      "type": "SOA"
+    }
+  ],
+  "A": [
+    {
+      "address": "104.16.132.229",
+      "name": "cloudflare.com",
+      "ttl": 69,
+      "type": "A"
+    },
+    {
+      "address": "104.16.133.229",
+      "name": "cloudflare.com",
+      "ttl": 69,
+      "type": "A"
+    }
+  ],
+  "MX": [
+    {
+      "exchange": "mxa-canary.global.inbound.cf-emailsecurity.net",
+      "name": "cloudflare.com",
+      "priority": 5,
+      "ttl": 69,
+      "type": "MX"
+    },
+    {
+      "exchange": "mxb-canary.global.inbound.cf-emailsecurity.net",
+      "name": "cloudflare.com",
+      "priority": 5,
+      "ttl": 69,
+      "type": "MX"
+    },
+    {
+      "exchange": "mxa.global.inbound.cf-emailsecurity.net",
+      "name": "cloudflare.com",
+      "priority": 10,
+      "ttl": 69,
+      "type": "MX"
+    },
+    {
+      "exchange": "mxb.global.inbound.cf-emailsecurity.net",
+      "name": "cloudflare.com",
+      "priority": 10,
+      "ttl": 69,
+      "type": "MX"
+    }
+  ],
+  "NS": [
+    {
+      "name": "cloudflare.com",
+      "ttl": 69,
+      "type": "NS",
+      "value": "ns3.cloudflare.com"
+    },
+    {
+      "name": "cloudflare.com",
+      "ttl": 69,
+      "type": "NS",
+      "value": "ns4.cloudflare.com"
+    },
+    {
+      "name": "cloudflare.com",
+      "ttl": 69,
+      "type": "NS",
+      "value": "ns5.cloudflare.com"
+    },
+    {
+      "name": "cloudflare.com",
+      "ttl": 69,
+      "type": "NS",
+      "value": "ns6.cloudflare.com"
+    },
+    {
+      "name": "cloudflare.com",
+      "ttl": 69,
+      "type": "NS",
+      "value": "ns7.cloudflare.com"
+    }
+  ],
+  "DNSKEY": [
+    {
+      "algorithm": 13,
+      "flags": 256,
+      "name": "cloudflare.com",
+      "protocol": 3,
+      "public_key": "oJMRESz5E4gYzS/q6XDrvU1qMPYIjCWzJaOau8XNEZeqCYKD5ar0IRd8KqXXFJkqmVfRvMGPmM1x8fGAa2XhSA==",
+      "ttl": 69,
+      "type": "DNSKEY"
+    },
+    {
+      "algorithm": 13,
+      "flags": 257,
+      "name": "cloudflare.com",
+      "protocol": 3,
+      "public_key": "mdsswUyr3DPW132mOi8V9xESWE8jTo0dxCjjnopKl+GqJxpVXckHAeF+KkxLbxILfDLUT0rAK9iUzy1L53eKGQ==",
+      "ttl": 69,
+      "type": "DNSKEY"
+    }
+  ],
+  "DS": [
+    {
+      "algorithm": 13,
+      "digest": "32996839a6d808afe3eb4a795a0e6a7a39a76fc52ff228b22b76f6d63826f2b9",
+      "digest_type": 2,
+      "key_tag": 2371,
+      "name": "cloudflare.com",
+      "ttl": 69,
+      "type": "DS"
+    }
+  ],
+  "CAA": [
+    {
+      "flags": 0,
+      "name": "cloudflare.com",
+      "tag": "iodef",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "mailto:tls-abuse@cloudflare.com"
+    },
+    {
+      "flags": 0,
+      "name": "cloudflare.com",
+      "tag": "issue",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "comodoca.com"
+    },
+    {
+      "flags": 0,
+      "name": "cloudflare.com",
+      "tag": "issue",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "digicert.com; cansignhttpexchanges=yes"
+    },
+    {
+      "flags": 0,
+      "name": "cloudflare.com",
+      "tag": "issue",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "letsencrypt.org"
+    },
+    {
+      "flags": 0,
+      "name": "cloudflare.com",
+      "tag": "issue",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "pki.goog; cansignhttpexchanges=yes"
+    },
+    {
+      "flags": 0,
+      "name": "cloudflare.com",
+      "tag": "issue",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "ssl.com"
+    },
+    {
+      "flags": 0,
+      "name": "cloudflare.com",
+      "tag": "issuewild",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "comodoca.com"
+    },
+    {
+      "flags": 0,
+      "name": "cloudflare.com",
+      "tag": "issuewild",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "digicert.com; cansignhttpexchanges=yes"
+    },
+    {
+      "flags": 0,
+      "name": "cloudflare.com",
+      "tag": "issuewild",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "letsencrypt.org"
+    },
+    {
+      "flags": 0,
+      "name": "cloudflare.com",
+      "tag": "issuewild",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "pki.goog; cansignhttpexchanges=yes"
+    },
+    {
+      "flags": 0,
+      "name": "cloudflare.com",
+      "tag": "issuewild",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "ssl.com"
+    }
+  ],
+  "RRSIG": [],
+  "NSEC": [
+    {
+      "name": "cloudflare.com",
+      "next_domain": ".cloudflare.com",
+      "rr_types": [
+        "A",
+        "NS",
+        "SOA",
+        "HINFO",
+        "MX",
+        "TXT",
+        "AAAA",
+        "LOC",
+        "SRV",
+        "NAPTR",
+        "CERT",
+        "SSHFP",
+        "RRSIG",
+        "NSEC",
+        "DNSKEY",
+        "TLSA",
+        "UNKNOWN_53",
+        "HIP",
+        "CDS",
+        "CDNSKEY",
+        "UNKNOWN_61",
+        "UNKNOWN_64",
+        "UNKNOWN_65",
+        "UNKNOWN_256",
+        "CAA"
+      ],
+      "ttl": 69,
+      "type": "NSEC"
+    }
+  ],
+  "CDS": [
+    {
+      "algorithm": 13,
+      "digest": "32996839a6d808afe3eb4a795a0e6a7a39a76fc52ff228b22b76f6d63826f2b9",
+      "digest_type": 2,
+      "key_tag": 2371,
+      "name": "cloudflare.com",
+      "ttl": 69,
+      "type": "CDS"
+    }
+  ],
+  "CDNSKEY": [
+    {
+      "algorithm": 13,
+      "flags": 257,
+      "name": "cloudflare.com",
+      "protocol": 3,
+      "public_key": "mdsswUyr3DPW132mOi8V9xESWE8jTo0dxCjjnopKl+GqJxpVXckHAeF+KkxLbxILfDLUT0rAK9iUzy1L53eKGQ==",
+      "ttl": 69,
+      "type": "CDNSKEY"
+    }
+  ],
+  "HTTPS": [],
+  "SVCB": []
+}

@@ -1,0 +1,46 @@
+# Test and script files (we publish src/ for debugging)
+test/
+scripts/
+
+# Development files
+*.test.ts
+*.itest.ts
+.vscode/
+.idea/
+.vscode/
+.cursor/
+.claude/
+
+# Build artifacts
+*.tsbuildinfo
+.eslintcache
+tsconfig.tsbuildinfo
+
+# Config files
+tsconfig.json
+tsconfig.build.json
+eslint.config.mjs
+jest.config.js
+.prettierrc
+.prettierignore
+.editorconfig
+
+# Documentation
+*.md
+!README.md
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+
+# Dependencies
+node_modules/
+
+# Misc
+*.log
+.DS_Store
+

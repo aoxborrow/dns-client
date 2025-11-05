@@ -1,0 +1,86 @@
+{
+  "TXT": [
+    {
+      "name": "google.com",
+      "ttl": 69,
+      "type": "TXT",
+      "value": "apple-domain-verification=30afIBcvSuDV2PLX"
+    },
+    {
+      "name": "google.com",
+      "ttl": 69,
+      "type": "TXT",
+      "value": "cisco-ci-domain-verification=47c38bc8c4b74b7233e9053220c1bbe76bcc1cd33c7acf7acd36cd6a5332004b"
+    },
+    {
+      "name": "google.com",
+      "ttl": 69,
+      "type": "TXT",
+      "value": "docusign=1b0a6754-49b1-4db5-8540-d2c12664b289"
+    },
+    {
+      "name": "google.com",
+      "ttl": 69,
+      "type": "TXT",
+      "value": "docusign=05958488-4752-4ef2-95eb-aa7ba8a3bd0e"
+    },
+    {
+      "name": "google.com",
+      "ttl": 69,
+      "type": "TXT",
+      "value": "facebook-domain-verification=22rm551cu4k0ab0bxsw536tlds4h95"
+    },
+    {
+      "name": "google.com",
+      "ttl": 69,
+      "type": "TXT",
+      "value": "globalsign-smime-dv=CDYX+XFHUw2wml6/Gb8+59BsH31KzUr6c1l2BPvqKX8="
+    },
+    {
+      "name": "google.com",
+      "ttl": 69,
+      "type": "TXT",
+      "value": "google-site-verification=4ibFUgB-wXLQ_S7vsXVomSTVamuOXBiVAzpR5IZ87D0"
+    },
+    {
+      "name": "google.com",
+      "ttl": 69,
+      "type": "TXT",
+      "value": "google-site-verification=TV9-DBe4R80X4v0M4U_bd_J9cpOJM0nikft0jAgjmsQ"
+    },
+    {
+      "name": "google.com",
+      "ttl": 69,
+      "type": "TXT",
+      "value": "google-site-verification=wD8N7i1JTNTkezJ49swvWW48f8_9xveREV4oB-0Hf5o"
+    },
+    {
+      "name": "google.com",
+      "ttl": 69,
+      "type": "TXT",
+      "value": "MS=E4A68B9AB2BB9670BCE15412F62916164C0B20BB"
+    },
+    {
+      "name": "google.com",
+      "ttl": 69,
+      "type": "TXT",
+      "value": "onetrust-domain-verification=de01ed21f2fa4d8781cbc3ffb89cf4ef"
+    },
+    {
+      "name": "google.com",
+      "ttl": 69,
+      "type": "TXT",
+      "value": "v=spf1 include:_spf.google.com ~all"
+    }
+  ],
+  "CAA": [
+    {
+      "flags": 0,
+      "name": "google.com",
+      "tag": "issue",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "pki.goog"
+    }
+  ]
+}

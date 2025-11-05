@@ -1,0 +1,13 @@
+{
+  "SRV": [
+    {
+      "name": "_xmpp-client._tcp.jabber.org",
+      "port": 5222,
+      "priority": 30,
+      "target": "scarlet.jabber.org",
+      "ttl": 69,
+      "type": "SRV",
+      "weight": 30
+    }
+  ]
+}

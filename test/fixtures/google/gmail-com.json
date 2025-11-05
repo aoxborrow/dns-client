@@ -1,0 +1,39 @@
+{
+  "MX": [
+    {
+      "exchange": "gmail-smtp-in.l.google.com",
+      "name": "gmail.com",
+      "priority": 5,
+      "ttl": 69,
+      "type": "MX"
+    },
+    {
+      "exchange": "alt1.gmail-smtp-in.l.google.com",
+      "name": "gmail.com",
+      "priority": 10,
+      "ttl": 69,
+      "type": "MX"
+    },
+    {
+      "exchange": "alt2.gmail-smtp-in.l.google.com",
+      "name": "gmail.com",
+      "priority": 20,
+      "ttl": 69,
+      "type": "MX"
+    },
+    {
+      "exchange": "alt3.gmail-smtp-in.l.google.com",
+      "name": "gmail.com",
+      "priority": 30,
+      "ttl": 69,
+      "type": "MX"
+    },
+    {
+      "exchange": "alt4.gmail-smtp-in.l.google.com",
+      "name": "gmail.com",
+      "priority": 40,
+      "ttl": 69,
+      "type": "MX"
+    }
+  ]
+}

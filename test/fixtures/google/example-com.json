@@ -1,0 +1,158 @@
+{
+  "SOA": [
+    {
+      "expire": 1209600,
+      "hostmaster": "noc.dns.icann.org",
+      "minimum": 3600,
+      "name": "example.com",
+      "nsname": "ns.icann.org",
+      "refresh": 7200,
+      "retry": 3600,
+      "serial": 2025082284,
+      "ttl": 69,
+      "type": "SOA"
+    }
+  ],
+  "A": [
+    {
+      "address": "23.192.228.80",
+      "name": "example.com",
+      "ttl": 69,
+      "type": "A"
+    },
+    {
+      "address": "23.192.228.84",
+      "name": "example.com",
+      "ttl": 69,
+      "type": "A"
+    },
+    {
+      "address": "23.215.0.136",
+      "name": "example.com",
+      "ttl": 69,
+      "type": "A"
+    },
+    {
+      "address": "23.215.0.138",
+      "name": "example.com",
+      "ttl": 69,
+      "type": "A"
+    },
+    {
+      "address": "23.220.75.232",
+      "name": "example.com",
+      "ttl": 69,
+      "type": "A"
+    },
+    {
+      "address": "23.220.75.245",
+      "name": "example.com",
+      "ttl": 69,
+      "type": "A"
+    }
+  ],
+  "MX": [
+    {
+      "exchange": ".",
+      "name": "example.com",
+      "priority": 0,
+      "ttl": 69,
+      "type": "MX"
+    }
+  ],
+  "NS": [
+    {
+      "name": "example.com",
+      "ttl": 69,
+      "type": "NS",
+      "value": "a.iana-servers.net"
+    },
+    {
+      "name": "example.com",
+      "ttl": 69,
+      "type": "NS",
+      "value": "b.iana-servers.net"
+    }
+  ],
+  "DNSKEY": [
+    {
+      "algorithm": 13,
+      "flags": 256,
+      "name": "example.com",
+      "protocol": 3,
+      "public_key": "SNalPzrc+XSTPJycEVNhO8147jJESmQexDzSVJWSI6hfX1EsHV0dlLbXwUdz335eY62jZaJGpJaljHZJ1HYeNQ==",
+      "ttl": 69,
+      "type": "DNSKEY"
+    },
+    {
+      "algorithm": 13,
+      "flags": 257,
+      "name": "example.com",
+      "protocol": 3,
+      "public_key": "kXKkvWU3vGYfTJGl3qBd4qhiWp5aRs7YtkCJxD2d+t7KXqwahww5IgJtxJT2yFItlggazyfXqJEVOmMJ3qT0tQ==",
+      "ttl": 69,
+      "type": "DNSKEY"
+    }
+  ],
+  "DS": [
+    {
+      "algorithm": 13,
+      "digest": "be74359954660069d5c63d200c39f5603827d7dd02b56f120ee9f3a86764247c",
+      "digest_type": 2,
+      "key_tag": 370,
+      "name": "example.com",
+      "ttl": 69,
+      "type": "DS"
+    }
+  ],
+  "CAA": [],
+  "AAAA": [
+    {
+      "address": "2600:1406:5e00:6::17ce:bc1b",
+      "name": "example.com",
+      "ttl": 69,
+      "type": "AAAA"
+    },
+    {
+      "address": "2600:1406:5e00:6::17ce:bc12",
+      "name": "example.com",
+      "ttl": 69,
+      "type": "AAAA"
+    },
+    {
+      "address": "2600:1406:bc00:53::b81e:94c8",
+      "name": "example.com",
+      "ttl": 69,
+      "type": "AAAA"
+    },
+    {
+      "address": "2600:1406:bc00:53::b81e:94ce",
+      "name": "example.com",
+      "ttl": 69,
+      "type": "AAAA"
+    },
+    {
+      "address": "2600:1408:ec00:36::1736:7f24",
+      "name": "example.com",
+      "ttl": 69,
+      "type": "AAAA"
+    },
+    {
+      "address": "2600:1408:ec00:36::1736:7f31",
+      "name": "example.com",
+      "ttl": 69,
+      "type": "AAAA"
+    }
+  ],
+  "NSEC3PARAM": [
+    {
+      "algorithm": 1,
+      "flags": 0,
+      "iterations": 0,
+      "name": "example.com",
+      "salt": "",
+      "ttl": 69,
+      "type": "NSEC3PARAM"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "PTR": [
+    {
+      "name": "8.8.8.8.in-addr.arpa",
+      "ttl": 69,
+      "type": "PTR",
+      "value": "dns.google"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "CNAME": [
+    {
+      "name": "www.github.com",
+      "ttl": 69,
+      "type": "CNAME",
+      "value": "github.com"
+    }
+  ]
+}

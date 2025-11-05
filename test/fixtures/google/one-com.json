@@ -1,0 +1,106 @@
+{
+  "SOA": [
+    {
+      "expire": 1209600,
+      "hostmaster": "hostmaster.one.com",
+      "minimum": 300,
+      "name": "one.com",
+      "nsname": "a.b-one-dns.net",
+      "refresh": 1800,
+      "retry": 900,
+      "serial": 2025110405,
+      "ttl": 69,
+      "type": "SOA"
+    }
+  ],
+  "A": [
+    {
+      "address": "195.47.247.8",
+      "name": "one.com",
+      "ttl": 69,
+      "type": "A"
+    },
+    {
+      "address": "195.47.247.9",
+      "name": "one.com",
+      "ttl": 69,
+      "type": "A"
+    }
+  ],
+  "MX": [
+    {
+      "exchange": "mx1.pub.mailpod12-cph3.one.com",
+      "name": "one.com",
+      "priority": 10,
+      "ttl": 69,
+      "type": "MX"
+    },
+    {
+      "exchange": "mx2.pub.mailpod12-cph3.one.com",
+      "name": "one.com",
+      "priority": 10,
+      "ttl": 69,
+      "type": "MX"
+    },
+    {
+      "exchange": "mx3.pub.mailpod12-cph3.one.com",
+      "name": "one.com",
+      "priority": 10,
+      "ttl": 69,
+      "type": "MX"
+    },
+    {
+      "exchange": "mx4.pub.mailpod12-cph3.one.com",
+      "name": "one.com",
+      "priority": 10,
+      "ttl": 69,
+      "type": "MX"
+    }
+  ],
+  "NS": [
+    {
+      "name": "one.com",
+      "ttl": 69,
+      "type": "NS",
+      "value": "auth.g1-dns.com"
+    },
+    {
+      "name": "one.com",
+      "ttl": 69,
+      "type": "NS",
+      "value": "auth.g1-dns.one"
+    }
+  ],
+  "DNSKEY": [
+    {
+      "algorithm": 13,
+      "flags": 256,
+      "name": "one.com",
+      "protocol": 3,
+      "public_key": "SRSla/veaY4AwY//LCByQbKX7Dk52g4gpLisGGEAPgifvRSVQxkm9HZR09dXbOMkI7OYN5LUFQAMHVpvhxjwNQ==",
+      "ttl": 69,
+      "type": "DNSKEY"
+    },
+    {
+      "algorithm": 13,
+      "flags": 257,
+      "name": "one.com",
+      "protocol": 3,
+      "public_key": "L7BCt1pcbFGPdjIcbCWulUXZPQjMSh/ObuMhz+Z334/1FXucFtPmMavdGl/g1i9hxc5NDdVDat/g9YREEibCEg==",
+      "ttl": 69,
+      "type": "DNSKEY"
+    }
+  ],
+  "DS": [
+    {
+      "algorithm": 13,
+      "digest": "ba4392d771a117986bf097bccb3d1de0dcb55ce565770e51b28452d1e675a71d",
+      "digest_type": 2,
+      "key_tag": 44996,
+      "name": "one.com",
+      "ttl": 69,
+      "type": "DS"
+    }
+  ],
+  "CAA": []
+}

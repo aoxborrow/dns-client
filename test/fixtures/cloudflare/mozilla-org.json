@@ -1,0 +1,172 @@
+{
+  "SOA": [
+    {
+      "expire": 1209600,
+      "hostmaster": "hostmaster.mozilla.com",
+      "minimum": 60,
+      "name": "mozilla.org",
+      "nsname": "infoblox1.private.mdc1.mozilla.com",
+      "refresh": 180,
+      "retry": 180,
+      "serial": 2024020675,
+      "ttl": 69,
+      "type": "SOA"
+    }
+  ],
+  "A": [
+    {
+      "address": "35.190.14.201",
+      "name": "mozilla.org",
+      "ttl": 69,
+      "type": "A"
+    }
+  ],
+  "MX": [
+    {
+      "exchange": "aspmx.l.google.com",
+      "name": "mozilla.org",
+      "priority": 1,
+      "ttl": 69,
+      "type": "MX"
+    },
+    {
+      "exchange": "alt1.aspmx.l.google.com",
+      "name": "mozilla.org",
+      "priority": 5,
+      "ttl": 69,
+      "type": "MX"
+    },
+    {
+      "exchange": "alt2.aspmx.l.google.com",
+      "name": "mozilla.org",
+      "priority": 5,
+      "ttl": 69,
+      "type": "MX"
+    },
+    {
+      "exchange": "aspmx3.googlemail.com",
+      "name": "mozilla.org",
+      "priority": 10,
+      "ttl": 69,
+      "type": "MX"
+    }
+  ],
+  "NS": [
+    {
+      "name": "mozilla.org",
+      "ttl": 69,
+      "type": "NS",
+      "value": "ns1-240.akam.net"
+    },
+    {
+      "name": "mozilla.org",
+      "ttl": 69,
+      "type": "NS",
+      "value": "ns4-64.akam.net"
+    },
+    {
+      "name": "mozilla.org",
+      "ttl": 69,
+      "type": "NS",
+      "value": "ns5-65.akam.net"
+    },
+    {
+      "name": "mozilla.org",
+      "ttl": 69,
+      "type": "NS",
+      "value": "ns7-66.akam.net"
+    }
+  ],
+  "DNSKEY": [],
+  "DS": [],
+  "CAA": [
+    {
+      "flags": 0,
+      "name": "mozilla.org",
+      "tag": "iodef",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "mailto:foxsec+caaiodef@mozilla.com"
+    },
+    {
+      "flags": 0,
+      "name": "mozilla.org",
+      "tag": "issue",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "amazon.com"
+    },
+    {
+      "flags": 0,
+      "name": "mozilla.org",
+      "tag": "issue",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "amazonaws.com"
+    },
+    {
+      "flags": 0,
+      "name": "mozilla.org",
+      "tag": "issue",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "amazontrust.com"
+    },
+    {
+      "flags": 0,
+      "name": "mozilla.org",
+      "tag": "issue",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "awstrust.com"
+    },
+    {
+      "flags": 0,
+      "name": "mozilla.org",
+      "tag": "issue",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "certainly.com"
+    },
+    {
+      "flags": 0,
+      "name": "mozilla.org",
+      "tag": "issue",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "comodoca.com"
+    },
+    {
+      "flags": 0,
+      "name": "mozilla.org",
+      "tag": "issue",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "digicert.com"
+    },
+    {
+      "flags": 0,
+      "name": "mozilla.org",
+      "tag": "issue",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "letsencrypt.org"
+    },
+    {
+      "flags": 0,
+      "name": "mozilla.org",
+      "tag": "issue",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "pki.goog"
+    },
+    {
+      "flags": 0,
+      "name": "mozilla.org",
+      "tag": "issue",
+      "ttl": 69,
+      "type": "CAA",
+      "value": "sectigo.com"
+    }
+  ]
+}
