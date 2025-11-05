@@ -17,7 +17,11 @@
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { DnsClient, getRecords } from '../src/index.js';
-import { DNS_TEST_DOMAINS, DNS_TEST_SERVER_IPS, DNS_TEST_SERVERS } from '../test/dns-test-helpers.js';
+import {
+  DNS_TEST_DOMAINS,
+  DNS_TEST_SERVER_IPS,
+  DNS_TEST_SERVERS,
+} from '../test/dns-test-helpers.js';
 import type { DnsRecordType } from '../src/types.js';
 import { sortObjectKeys } from '../src/utils.js';
 import { DNS_TRANSPORT_UDP } from '../src/constants.js';

@@ -1,6 +1,11 @@
 import { QueryCache } from '../src/caches/queries.js';
 import { DnsClient } from '../src/index.js';
-import { A_RECORD, AAAA_RECORD, DNS_TRANSPORT_TCP, FLAG_RECURSION_DESIRED } from '../src/constants.js';
+import {
+  A_RECORD,
+  AAAA_RECORD,
+  DNS_TRANSPORT_TCP,
+  FLAG_RECURSION_DESIRED,
+} from '../src/constants.js';
 import type { DnsQuestion, DnsAnswer } from '../src/types.js';
 
 describe('Query Cache Tests', () => {

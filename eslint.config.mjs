@@ -18,7 +18,7 @@ export default tseslint.config(
     extends: [eslint.configs.recommended, tseslint.configs.recommendedTypeChecked],
     plugins: {
       '@typescript-eslint': typescriptEslint,
-      import: importPlugin,
+      'import': importPlugin,
     },
     languageOptions: {
       parser: tsParser,
