@@ -1,5 +1,5 @@
-import { DnsClient, type DnsQuery } from '../src/index';
-import { A_RECORD, AAAA_RECORD, DNS_TRANSPORT_UDP, NS_RECORD } from '../src/constants';
+import { DnsClient, type DnsQuery } from '../src/index.js';
+import { A_RECORD, AAAA_RECORD, DNS_TRANSPORT_UDP, NS_RECORD } from '../src/constants.js';
 
 const TEST_TRANSPORT = DNS_TRANSPORT_UDP;
 

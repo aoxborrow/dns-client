@@ -1,8 +1,8 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { sortRecordsCanonical, sortObjectKeys } from '../src/utils';
-import { DNS_TRANSPORT_DOH } from '../src/constants';
-import type { DnsTransportType, DnsRecordType } from '../src/types';
+import { sortRecordsCanonical, sortObjectKeys } from '../src/utils.js';
+import { DNS_TRANSPORT_DOH } from '../src/constants.js';
+import type { DnsTransportType, DnsRecordType } from '../src/types.js';
 
 // common record types to test
 export const DNS_TEST_RECORD_TYPES = ['SOA', 'A', 'MX', 'NS', 'DNSKEY', 'DS', 'CAA'];
@@ -324,7 +324,7 @@ export async function testDomain(
   resolverType: DnsTransportType,
   enableLogging = false
 ): Promise<void> {
-  const { DnsClient } = await import('../src/index');
+  const { DnsClient } = await import('../src/index.js');
   const { expect } = await import('@jest/globals');
 
   for (const recordType of recordTypes) {

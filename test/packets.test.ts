@@ -13,7 +13,7 @@ import {
   parseRawSigRecord,
   parseRawUriRecord,
   parseRawLocRecord,
-} from '../src/packets';
+} from '../src/packets.js';
 import {
   FLAG_RECURSION_DESIRED,
   FLAG_CHECKING_DISABLED,
@@ -41,9 +41,9 @@ import {
   SIG_RECORD,
   URI_RECORD,
   LOC_RECORD,
-} from '../src/constants';
-import { ParsingError } from '../src/errors';
-import type { DnsQuestion, PacketAnswer, DnsRecordType } from '../src/types';
+} from '../src/constants.js';
+import { ParsingError } from '../src/errors.js';
+import type { DnsQuestion, PacketAnswer, DnsRecordType } from '../src/types.js';
 
 describe('DNS Packet Functions', () => {
   describe('getQueryFlagsBitmask', () => {

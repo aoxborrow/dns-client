@@ -1,6 +1,6 @@
-import { testDomain, DNS_TEST_SERVER_IPS, getRecordTypesFromFixtures } from './dns-test-helpers';
-import { DNS_TRANSPORT_TCP } from '../src/constants';
-import { DnsClient } from '../src/index';
+import { testDomain, DNS_TEST_SERVER_IPS, getRecordTypesFromFixtures } from './dns-test-helpers.js';
+import { DNS_TRANSPORT_TCP } from '../src/constants.js';
+import { DnsClient } from '../src/index.js';
 
 // note: Cloudflare (1.1.1.1) via TCP returns slightly different results for some queries
 // (e.g., different MX records, A/AAAA addresses) compared to UDP/DoH, so we only test

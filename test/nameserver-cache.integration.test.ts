@@ -1,4 +1,4 @@
-import { DnsClient } from '../src/index';
+import { DnsClient } from '../src/index.js';
 
 describe('Nameserver Cache Integration Tests', () => {
   jest.setTimeout(60000);

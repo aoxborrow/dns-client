@@ -1,6 +1,6 @@
-import { testDomain, DNS_TEST_SERVER_IPS, getRecordTypesFromFixtures } from './dns-test-helpers';
-import { DNS_TRANSPORT_UDP } from '../src/constants';
-import { DnsClient } from '../src/index';
+import { testDomain, DNS_TEST_SERVER_IPS, getRecordTypesFromFixtures } from './dns-test-helpers.js';
+import { DNS_TRANSPORT_UDP } from '../src/constants.js';
+import { DnsClient } from '../src/index.js';
 
 describe('DNS UDP Integration Tests', () => {
   jest.setTimeout(60000);

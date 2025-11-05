@@ -1,8 +1,8 @@
-import { getRecordTypesFromFixtures, testDomain, DNS_DOH_SERVER_URLS } from './dns-test-helpers';
-import { DNS_TRANSPORT_DOH, FLAG_RECURSION_DESIRED } from '../src/constants';
-import { DnsClient } from '../src/index';
-import { dohQuery } from '../src/transports/doh';
-import type { DnsQuestion, DnsOptions } from '../src/types';
+import { getRecordTypesFromFixtures, testDomain, DNS_DOH_SERVER_URLS } from './dns-test-helpers.js';
+import { DNS_TRANSPORT_DOH, FLAG_RECURSION_DESIRED } from '../src/constants.js';
+import { DnsClient } from '../src/index.js';
+import { dohQuery } from '../src/transports/doh.js';
+import type { DnsQuestion, DnsOptions } from '../src/types.js';
 
 describe('DNS DoH (DNS over HTTPS) Integration Tests', () => {
   jest.setTimeout(60000);
