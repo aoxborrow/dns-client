@@ -1,3 +1,4 @@
+import { Buffer } from 'buffer';
 import { EXTENDED_DNS_ERRORS, EDNS_OPTIONS, OPT_RECORD } from './constants.js';
 import type {
   DnsExtendedErrors,

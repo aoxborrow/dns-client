@@ -1,4 +1,5 @@
 import dnsPacket from 'dns-packet';
+import { Buffer } from 'buffer';
 import {
   DNS_FLAGS,
   A_RECORD,

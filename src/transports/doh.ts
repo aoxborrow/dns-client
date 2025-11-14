@@ -1,4 +1,5 @@
 import dnsPacket from 'dns-packet';
+import { Buffer } from 'buffer';
 import { InvalidResponseError, ParsingError, TimeoutError, AbortError } from '../errors.js';
 import { createDnsPacket } from '../packets.js';
 import type { DnsOptions, DnsPacket, DnsQuestion, DnsTransportQuery } from '../types.js';

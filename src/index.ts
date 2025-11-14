@@ -1,3 +1,9 @@
+// global Buffer polyfill
+import { Buffer as BufferPolyfill } from 'buffer';
+if (typeof globalThis.Buffer === 'undefined') {
+  globalThis.Buffer = BufferPolyfill;
+}
+
 import { NameserverCache } from './caches/nameservers.js';
 import { QueryCache } from './caches/queries.js';
 import {
