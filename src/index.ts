@@ -654,5 +654,7 @@ export class DnsClient {
 // export types and constants
 export type * from './types.js';
 export * from './constants.js';
+export * from './edns.js';
+export * from './packets.js';
 export * from './utils.js';
 export * from './errors.js';
