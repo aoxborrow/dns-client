@@ -1,6 +1,7 @@
 {
   "SOA": [
     {
+      "class": "IN",
       "expire": 1209600,
       "hostmaster": "hostmaster.one.com",
       "minimum": 300,
@@ -8,7 +9,7 @@
       "nsname": "a.b-one-dns.net",
       "refresh": 1800,
       "retry": 900,
-      "serial": 2025110405,
+      "serial": 2026082603,
       "ttl": 69,
       "type": "SOA"
     }
@@ -16,12 +17,14 @@
   "A": [
     {
       "address": "195.47.247.8",
+      "class": "IN",
       "name": "one.com",
       "ttl": 69,
       "type": "A"
     },
     {
       "address": "195.47.247.9",
+      "class": "IN",
       "name": "one.com",
       "ttl": 69,
       "type": "A"
@@ -29,6 +32,7 @@
   ],
   "MX": [
     {
+      "class": "IN",
       "exchange": "mx1.pub.mailpod12-cph3.one.com",
       "name": "one.com",
       "priority": 10,
@@ -36,6 +40,7 @@
       "type": "MX"
     },
     {
+      "class": "IN",
       "exchange": "mx2.pub.mailpod12-cph3.one.com",
       "name": "one.com",
       "priority": 10,
@@ -43,6 +48,7 @@
       "type": "MX"
     },
     {
+      "class": "IN",
       "exchange": "mx3.pub.mailpod12-cph3.one.com",
       "name": "one.com",
       "priority": 10,
@@ -50,6 +56,7 @@
       "type": "MX"
     },
     {
+      "class": "IN",
       "exchange": "mx4.pub.mailpod12-cph3.one.com",
       "name": "one.com",
       "priority": 10,
@@ -59,12 +66,14 @@
   ],
   "NS": [
     {
+      "class": "IN",
       "name": "one.com",
       "ttl": 69,
       "type": "NS",
       "value": "auth.g1-dns.com"
     },
     {
+      "class": "IN",
       "name": "one.com",
       "ttl": 69,
       "type": "NS",
@@ -74,6 +83,7 @@
   "DNSKEY": [
     {
       "algorithm": 13,
+      "class": "IN",
       "flags": 256,
       "name": "one.com",
       "protocol": 3,
@@ -83,6 +93,7 @@
     },
     {
       "algorithm": 13,
+      "class": "IN",
       "flags": 257,
       "name": "one.com",
       "protocol": 3,
@@ -94,6 +105,7 @@
   "DS": [
     {
       "algorithm": 13,
+      "class": "IN",
       "digest": "ba4392d771a117986bf097bccb3d1de0dcb55ce565770e51b28452d1e675a71d",
       "digest_type": 2,
       "key_tag": 44996,

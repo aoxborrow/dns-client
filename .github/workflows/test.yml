@@ -11,6 +11,7 @@ permissions:
   pull-requests: write
 
 jobs:
+  # Blocking gate: hermetic unit tests only (no live network).
   test:
     runs-on: ubuntu-latest
 
@@ -34,8 +35,8 @@ jobs:
       - name: Run linter
         run: npm run lint
 
-      - name: Run tests with coverage
-        run: npm test
+      - name: Run unit tests with coverage
+        run: npm run test:no-integration
 
       - name: Upload coverage reports
         uses: actions/upload-artifact@v4
@@ -47,16 +48,6 @@ jobs:
             !coverage/**/*.js
           retention-days: 30
 
-      # - name: Upload coverage to Codecov (optional)
-      #   uses: codecov/codecov-action@v4
-      #   if: matrix.node-version == '22.x'
-      #   with:
-      #     files: ./coverage/lcov.info
-      #     flags: unittests
-      #     name: codecov-umbrella
-      #     fail_ci_if_error: false
-      #   continue-on-error: true
-
       - name: Comment coverage on PR
         uses: romeovs/lcov-reporter-action@v0.3.1
         if: github.event_name == 'pull_request' && matrix.node-version == '20.x'
@@ -64,3 +55,31 @@ jobs:
           lcov-file: ./coverage/lcov.info
           github-token: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
+
+  # Non-blocking: integration tests hit live third-party DNS (Google/Cloudflare)
+  # and compare against recorded fixtures. These legitimately drift when domains
+  # change DNS providers, so they are informational and never block the pipeline.
+  # Regenerate fixtures locally with `npm run generate-fixtures` when they drift.
+  integration:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    strategy:
+      matrix:
+        node-version: [20.x]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run integration tests (live DNS)
+        run: npm run test:integration

@@ -1,6 +1,7 @@
 {
   "SOA": [
     {
+      "class": "IN",
       "expire": 604800,
       "hostmaster": "dns.cloudflare.com",
       "minimum": 300,
@@ -8,7 +9,7 @@
       "nsname": "ns3.cloudflare.com",
       "refresh": 10000,
       "retry": 2400,
-      "serial": 2387738886,
+      "serial": 2413292242,
       "ttl": 69,
       "type": "SOA"
     }
@@ -16,12 +17,14 @@
   "A": [
     {
       "address": "104.16.132.229",
+      "class": "IN",
       "name": "cloudflare.com",
       "ttl": 69,
       "type": "A"
     },
     {
       "address": "104.16.133.229",
+      "class": "IN",
       "name": "cloudflare.com",
       "ttl": 69,
       "type": "A"
@@ -29,6 +32,7 @@
   ],
   "MX": [
     {
+      "class": "IN",
       "exchange": "mxa-canary.global.inbound.cf-emailsecurity.net",
       "name": "cloudflare.com",
       "priority": 5,
@@ -36,6 +40,7 @@
       "type": "MX"
     },
     {
+      "class": "IN",
       "exchange": "mxb-canary.global.inbound.cf-emailsecurity.net",
       "name": "cloudflare.com",
       "priority": 5,
@@ -43,6 +48,7 @@
       "type": "MX"
     },
     {
+      "class": "IN",
       "exchange": "mxa.global.inbound.cf-emailsecurity.net",
       "name": "cloudflare.com",
       "priority": 10,
@@ -50,6 +56,7 @@
       "type": "MX"
     },
     {
+      "class": "IN",
       "exchange": "mxb.global.inbound.cf-emailsecurity.net",
       "name": "cloudflare.com",
       "priority": 10,
@@ -59,30 +66,35 @@
   ],
   "NS": [
     {
+      "class": "IN",
       "name": "cloudflare.com",
       "ttl": 69,
       "type": "NS",
       "value": "ns3.cloudflare.com"
     },
     {
+      "class": "IN",
       "name": "cloudflare.com",
       "ttl": 69,
       "type": "NS",
       "value": "ns4.cloudflare.com"
     },
     {
+      "class": "IN",
       "name": "cloudflare.com",
       "ttl": 69,
       "type": "NS",
       "value": "ns5.cloudflare.com"
     },
     {
+      "class": "IN",
       "name": "cloudflare.com",
       "ttl": 69,
       "type": "NS",
       "value": "ns6.cloudflare.com"
     },
     {
+      "class": "IN",
       "name": "cloudflare.com",
       "ttl": 69,
       "type": "NS",
@@ -92,6 +104,7 @@
   "DNSKEY": [
     {
       "algorithm": 13,
+      "class": "IN",
       "flags": 256,
       "name": "cloudflare.com",
       "protocol": 3,
@@ -101,6 +114,7 @@
     },
     {
       "algorithm": 13,
+      "class": "IN",
       "flags": 257,
       "name": "cloudflare.com",
       "protocol": 3,
@@ -112,6 +126,7 @@
   "DS": [
     {
       "algorithm": 13,
+      "class": "IN",
       "digest": "32996839a6d808afe3eb4a795a0e6a7a39a76fc52ff228b22b76f6d63826f2b9",
       "digest_type": 2,
       "key_tag": 2371,
@@ -122,6 +137,7 @@
   ],
   "CAA": [
     {
+      "class": "IN",
       "flags": 0,
       "name": "cloudflare.com",
       "tag": "iodef",
@@ -130,6 +146,7 @@
       "value": "mailto:tls-abuse@cloudflare.com"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "cloudflare.com",
       "tag": "issue",
@@ -138,6 +155,7 @@
       "value": "comodoca.com"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "cloudflare.com",
       "tag": "issue",
@@ -146,6 +164,7 @@
       "value": "digicert.com; cansignhttpexchanges=yes"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "cloudflare.com",
       "tag": "issue",
@@ -154,6 +173,7 @@
       "value": "letsencrypt.org"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "cloudflare.com",
       "tag": "issue",
@@ -162,6 +182,7 @@
       "value": "pki.goog; cansignhttpexchanges=yes"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "cloudflare.com",
       "tag": "issue",
@@ -170,6 +191,7 @@
       "value": "ssl.com"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "cloudflare.com",
       "tag": "issuewild",
@@ -178,6 +200,7 @@
       "value": "comodoca.com"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "cloudflare.com",
       "tag": "issuewild",
@@ -186,6 +209,7 @@
       "value": "digicert.com; cansignhttpexchanges=yes"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "cloudflare.com",
       "tag": "issuewild",
@@ -194,6 +218,7 @@
       "value": "letsencrypt.org"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "cloudflare.com",
       "tag": "issuewild",
@@ -202,6 +227,7 @@
       "value": "pki.goog; cansignhttpexchanges=yes"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "cloudflare.com",
       "tag": "issuewild",
@@ -213,12 +239,14 @@
   "RRSIG": [],
   "NSEC": [
     {
+      "class": "IN",
       "name": "cloudflare.com",
       "next_domain": ".cloudflare.com",
       "rr_types": [
         "A",
         "NS",
         "SOA",
+        "PTR",
         "HINFO",
         "MX",
         "TXT",
@@ -249,6 +277,7 @@
   "CDS": [
     {
       "algorithm": 13,
+      "class": "IN",
       "digest": "32996839a6d808afe3eb4a795a0e6a7a39a76fc52ff228b22b76f6d63826f2b9",
       "digest_type": 2,
       "key_tag": 2371,
@@ -260,6 +289,7 @@
   "CDNSKEY": [
     {
       "algorithm": 13,
+      "class": "IN",
       "flags": 257,
       "name": "cloudflare.com",
       "protocol": 3,

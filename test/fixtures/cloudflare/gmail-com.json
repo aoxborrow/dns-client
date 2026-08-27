@@ -1,6 +1,7 @@
 {
   "MX": [
     {
+      "class": "IN",
       "exchange": "gmail-smtp-in.l.google.com",
       "name": "gmail.com",
       "priority": 5,
@@ -8,6 +9,7 @@
       "type": "MX"
     },
     {
+      "class": "IN",
       "exchange": "alt1.gmail-smtp-in.l.google.com",
       "name": "gmail.com",
       "priority": 10,
@@ -15,6 +17,7 @@
       "type": "MX"
     },
     {
+      "class": "IN",
       "exchange": "alt2.gmail-smtp-in.l.google.com",
       "name": "gmail.com",
       "priority": 20,
@@ -22,6 +25,7 @@
       "type": "MX"
     },
     {
+      "class": "IN",
       "exchange": "alt3.gmail-smtp-in.l.google.com",
       "name": "gmail.com",
       "priority": 30,
@@ -29,6 +33,7 @@
       "type": "MX"
     },
     {
+      "class": "IN",
       "exchange": "alt4.gmail-smtp-in.l.google.com",
       "name": "gmail.com",
       "priority": 40,

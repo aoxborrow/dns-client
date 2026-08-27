@@ -1,6 +1,7 @@
 {
   "PTR": [
     {
+      "class": "IN",
       "name": "8.8.8.8.in-addr.arpa",
       "ttl": 69,
       "type": "PTR",

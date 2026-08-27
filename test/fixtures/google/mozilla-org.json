@@ -1,14 +1,15 @@
 {
   "SOA": [
     {
+      "class": "IN",
       "expire": 1209600,
       "hostmaster": "hostmaster.mozilla.com",
       "minimum": 60,
       "name": "mozilla.org",
-      "nsname": "infoblox1.private.mdc1.mozilla.com",
+      "nsname": "ns5-65.akam.net",
       "refresh": 180,
       "retry": 180,
-      "serial": 2024020675,
+      "serial": 2024020794,
       "ttl": 69,
       "type": "SOA"
     }
@@ -16,6 +17,7 @@
   "A": [
     {
       "address": "35.190.14.201",
+      "class": "IN",
       "name": "mozilla.org",
       "ttl": 69,
       "type": "A"
@@ -23,6 +25,7 @@
   ],
   "MX": [
     {
+      "class": "IN",
       "exchange": "aspmx.l.google.com",
       "name": "mozilla.org",
       "priority": 1,
@@ -30,6 +33,7 @@
       "type": "MX"
     },
     {
+      "class": "IN",
       "exchange": "alt1.aspmx.l.google.com",
       "name": "mozilla.org",
       "priority": 5,
@@ -37,6 +41,7 @@
       "type": "MX"
     },
     {
+      "class": "IN",
       "exchange": "alt2.aspmx.l.google.com",
       "name": "mozilla.org",
       "priority": 5,
@@ -44,6 +49,7 @@
       "type": "MX"
     },
     {
+      "class": "IN",
       "exchange": "aspmx3.googlemail.com",
       "name": "mozilla.org",
       "priority": 10,
@@ -53,24 +59,28 @@
   ],
   "NS": [
     {
+      "class": "IN",
       "name": "mozilla.org",
       "ttl": 69,
       "type": "NS",
       "value": "ns1-240.akam.net"
     },
     {
+      "class": "IN",
       "name": "mozilla.org",
       "ttl": 69,
       "type": "NS",
       "value": "ns4-64.akam.net"
     },
     {
+      "class": "IN",
       "name": "mozilla.org",
       "ttl": 69,
       "type": "NS",
       "value": "ns5-65.akam.net"
     },
     {
+      "class": "IN",
       "name": "mozilla.org",
       "ttl": 69,
       "type": "NS",
@@ -81,6 +91,7 @@
   "DS": [],
   "CAA": [
     {
+      "class": "IN",
       "flags": 0,
       "name": "mozilla.org",
       "tag": "iodef",
@@ -89,6 +100,7 @@
       "value": "mailto:foxsec+caaiodef@mozilla.com"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "mozilla.org",
       "tag": "issue",
@@ -97,6 +109,7 @@
       "value": "amazon.com"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "mozilla.org",
       "tag": "issue",
@@ -105,6 +118,7 @@
       "value": "amazonaws.com"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "mozilla.org",
       "tag": "issue",
@@ -113,6 +127,7 @@
       "value": "amazontrust.com"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "mozilla.org",
       "tag": "issue",
@@ -121,6 +136,7 @@
       "value": "awstrust.com"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "mozilla.org",
       "tag": "issue",
@@ -129,6 +145,7 @@
       "value": "certainly.com"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "mozilla.org",
       "tag": "issue",
@@ -137,6 +154,7 @@
       "value": "comodoca.com"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "mozilla.org",
       "tag": "issue",
@@ -145,6 +163,7 @@
       "value": "digicert.com"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "mozilla.org",
       "tag": "issue",
@@ -153,6 +172,7 @@
       "value": "letsencrypt.org"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "mozilla.org",
       "tag": "issue",
@@ -161,6 +181,7 @@
       "value": "pki.goog"
     },
     {
+      "class": "IN",
       "flags": 0,
       "name": "mozilla.org",
       "tag": "issue",

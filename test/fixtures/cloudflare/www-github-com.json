@@ -1,6 +1,7 @@
 {
   "CNAME": [
     {
+      "class": "IN",
       "name": "www.github.com",
       "ttl": 69,
       "type": "CNAME",

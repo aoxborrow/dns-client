@@ -1,6 +1,7 @@
 {
   "SRV": [
     {
+      "class": "IN",
       "name": "_xmpp-client._tcp.jabber.org",
       "port": 5222,
       "priority": 30,
