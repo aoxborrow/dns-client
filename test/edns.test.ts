@@ -5,19 +5,7 @@ import {
   parseEdnsOptions,
   parseEdnsOption,
 } from '../src/edns';
-import type {
-  PacketAnswer,
-  DnsExtendedErrors,
-  EdnsNsid,
-  EdnsClientSubnet,
-  EdnsCookie,
-  EdnsTcpKeepAlive,
-  EdnsPadding,
-  EdnsDnssecCapability,
-  EdnsKeyTag,
-  RawEdnsOption,
-  OptRecord,
-} from '../src/types';
+import type { PacketAnswer, DnsExtendedErrors, RawEdnsOption, OptRecord } from '../src/types';
 
 // Helper functions to create valid test PacketAnswer objects
 const createOptAnswer = (options: RawEdnsOption[] = []): PacketAnswer => {
@@ -51,7 +39,7 @@ const parseTestPacketOptions = (additionals: unknown[]): OptRecord[] => {
     }
     return additional as PacketAnswer;
   });
-  return parsePacketOptions(properAdditionals as unknown as PacketAnswer[]);
+  return parsePacketOptions(properAdditionals);
 };
 
 describe('EDNS Functions', () => {
@@ -299,7 +287,7 @@ describe('EDNS Functions', () => {
       expect(result[0]).toEqual({
         code: EDNS_OPTIONS.NSID,
         nsid: 'ns1.example.com',
-      } as EdnsNsid);
+      });
     });
 
     test('should parse CLIENT_SUBNET option', () => {
@@ -329,7 +317,7 @@ describe('EDNS Functions', () => {
         sourcePrefixLength: 24,
         scopePrefixLength: 0,
         ip: '192.0.2.0',
-      } as EdnsClientSubnet);
+      });
     });
 
     test('should parse COOKIE option', () => {
@@ -355,7 +343,7 @@ describe('EDNS Functions', () => {
         clientCookie: '1234567890abcdef',
         serverCookie: 'fedcba0987654321',
         valid: true,
-      } as EdnsCookie);
+      });
     });
 
     test('should parse TCP_KEEPALIVE option', () => {
@@ -378,7 +366,7 @@ describe('EDNS Functions', () => {
         code: EDNS_OPTIONS.TCP_KEEPALIVE,
         timeout: 100,
         unit: 'centiseconds',
-      } as EdnsTcpKeepAlive);
+      });
     });
 
     test('should parse PADDING option', () => {
@@ -402,7 +390,7 @@ describe('EDNS Functions', () => {
         code: EDNS_OPTIONS.PADDING,
         paddingLength: 32,
         purpose: 'Traffic analysis protection',
-      } as EdnsPadding);
+      });
     });
 
     test('should parse DNSSEC capability options (DAU, DHU, N3U)', () => {
@@ -434,19 +422,19 @@ describe('EDNS Functions', () => {
         code: EDNS_OPTIONS.DAU,
         algorithms: [7, 8, 10],
         algorithmType: 'DNSSEC algorithms',
-      } as EdnsDnssecCapability);
+      });
 
       expect(result[1]).toEqual({
         code: EDNS_OPTIONS.DHU,
         algorithms: [1, 2],
         algorithmType: 'DS hash algorithms',
-      } as EdnsDnssecCapability);
+      });
 
       expect(result[2]).toEqual({
         code: EDNS_OPTIONS.N3U,
         algorithms: [1],
         algorithmType: 'NSEC3 hash algorithms',
-      } as EdnsDnssecCapability);
+      });
     });
 
     test('should parse KEY_TAG option', () => {
@@ -471,7 +459,7 @@ describe('EDNS Functions', () => {
       expect(result[0]).toEqual({
         code: EDNS_OPTIONS.KEY_TAG,
         tags: [12345, 26505],
-      } as EdnsKeyTag);
+      });
     });
 
     test('should parse multiple options from single OPT record', () => {
@@ -559,7 +547,7 @@ describe('EDNS Functions', () => {
       expect(result).toEqual({
         code: EDNS_OPTIONS.NSID,
         nsid: 'ns1.example.com',
-      } as EdnsNsid);
+      });
     });
 
     test('should parse NSID with non-printable data as hex', () => {
@@ -572,7 +560,7 @@ describe('EDNS Functions', () => {
       expect(result).toEqual({
         code: EDNS_OPTIONS.NSID,
         nsid: '01020304',
-      } as EdnsNsid);
+      });
     });
 
     test('should handle CLIENT_SUBNET with IPv6', () => {
@@ -593,7 +581,7 @@ describe('EDNS Functions', () => {
         sourcePrefixLength: 64,
         scopePrefixLength: 0,
         ip: '20010db800000000',
-      } as EdnsClientSubnet);
+      });
     });
 
     test('should handle CLIENT_SUBNET with insufficient data', () => {
@@ -618,7 +606,7 @@ describe('EDNS Functions', () => {
         clientCookie: '1234567890abcdef',
         serverCookie: null,
         valid: false, // No server cookie
-      } as EdnsCookie);
+      });
     });
 
     test('should handle COOKIE with insufficient data', () => {
@@ -651,7 +639,7 @@ describe('EDNS Functions', () => {
       expect(result).toEqual({
         code: EDNS_OPTIONS.KEY_TAG,
         tags: [12345], // Only complete tags
-      } as EdnsKeyTag);
+      });
     });
 
     test('should handle KEY_TAG with empty data', () => {
@@ -664,7 +652,7 @@ describe('EDNS Functions', () => {
       expect(result).toEqual({
         code: EDNS_OPTIONS.KEY_TAG,
         tags: [],
-      } as EdnsKeyTag);
+      });
     });
 
     test('should return null for unknown option codes', () => {
@@ -699,7 +687,7 @@ describe('EDNS Functions', () => {
       expect(result).toEqual({
         code: EDNS_OPTIONS.NSID,
         nsid: 'deadbeef', // Should fall back to hex
-      } as EdnsNsid);
+      });
       expect(mockData.toString).toHaveBeenCalledWith('utf8');
       expect(mockData.toString).toHaveBeenCalledWith('hex');
     });
