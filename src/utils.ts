@@ -71,7 +71,7 @@ export function sortObjectKeys(obj: unknown): unknown {
   if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
     return obj;
   }
-  const sortedKeys = Object.keys(obj as Record<string, unknown>).sort(naturalCompare);
+  const sortedKeys = Object.keys(obj).sort(naturalCompare);
   const sortedObj: Record<string, unknown> = {};
   for (const key of sortedKeys) {
     sortedObj[key] = (obj as Record<string, unknown>)[key];
@@ -92,7 +92,7 @@ export function isEmpty(value: unknown): boolean {
     return value.length === 0 || value.every(v => isEmpty(v));
   }
   if (typeof value === 'object') {
-    return Object.keys(value as Record<string, unknown>).length === 0;
+    return Object.keys(value).length === 0;
   }
   return false;
 }

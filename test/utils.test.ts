@@ -60,7 +60,7 @@ describe('Utility Functions', () => {
           authorities: [],
           additionals: [],
           trace: [],
-        } as DnsAnswer,
+        },
       ];
       const records = getRecords(answers);
       expect(records).toEqual([]);

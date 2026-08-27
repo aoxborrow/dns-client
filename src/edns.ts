@@ -64,8 +64,7 @@ export function parseExtendedDnsErrors(opts: OptRecord[]): DnsExtendedErrors {
             const extendedErrorCode = errorCode as DnsExtendedErrorCode;
             // the rest of the buffer contains the error text
             const errorText = buffer.slice(2).toString('utf8');
-            errors[extendedErrorCode] =
-              errorText || (EXTENDED_DNS_ERRORS[extendedErrorCode] as string);
+            errors[extendedErrorCode] = errorText || EXTENDED_DNS_ERRORS[extendedErrorCode];
           }
         }
       }

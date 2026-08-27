@@ -364,39 +364,39 @@ export function parsePacketAnswer(answer: PacketAnswer): DnsRecord | null {
       // parse raw unstructured record types (buffer data) from dns-packet
       // **********
       case CDNSKEY_RECORD: {
-        return parseRawCdnskeyRecord(baseData.name, answer.data as Buffer, baseData.ttl);
+        return parseRawCdnskeyRecord(baseData.name, answer.data, baseData.ttl);
       }
 
       case CDS_RECORD: {
-        return parseRawCdsRecord(baseData.name, answer.data as Buffer, baseData.ttl);
+        return parseRawCdsRecord(baseData.name, answer.data, baseData.ttl);
       }
 
       case NSEC3PARAM_RECORD: {
-        return parseRawNsec3paramRecord(baseData.name, answer.data as Buffer, baseData.ttl);
+        return parseRawNsec3paramRecord(baseData.name, answer.data, baseData.ttl);
       }
 
       case TSIG_RECORD: {
-        return parseRawTsigRecord(baseData.name, answer.data as Buffer, baseData.ttl);
+        return parseRawTsigRecord(baseData.name, answer.data, baseData.ttl);
       }
 
       case CERT_RECORD: {
-        return parseRawCertRecord(baseData.name, answer.data as Buffer, baseData.ttl);
+        return parseRawCertRecord(baseData.name, answer.data, baseData.ttl);
       }
 
       case KEY_RECORD: {
-        return parseRawKeyRecord(baseData.name, answer.data as Buffer, baseData.ttl);
+        return parseRawKeyRecord(baseData.name, answer.data, baseData.ttl);
       }
 
       case SIG_RECORD: {
-        return parseRawSigRecord(baseData.name, answer.data as Buffer, baseData.ttl);
+        return parseRawSigRecord(baseData.name, answer.data, baseData.ttl);
       }
 
       case URI_RECORD: {
-        return parseRawUriRecord(baseData.name, answer.data as Buffer, baseData.ttl);
+        return parseRawUriRecord(baseData.name, answer.data, baseData.ttl);
       }
 
       case LOC_RECORD: {
-        return parseRawLocRecord(baseData.name, answer.data as Buffer, baseData.ttl);
+        return parseRawLocRecord(baseData.name, answer.data, baseData.ttl);
       }
 
       default:
