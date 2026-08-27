@@ -1,4 +1,4 @@
-import { DnsClient, type DnsRecordType } from '../src/index.js';
+import { DnsClient, type DnsRecordType } from '../src/index';
 
 // process command line arguments
 const args = process.argv.slice(2);

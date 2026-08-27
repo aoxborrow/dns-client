@@ -1,10 +1,10 @@
-import { EDNS_OPTIONS } from '../src/constants.js';
+import { EDNS_OPTIONS } from '../src/constants';
 import {
   parsePacketOptions,
   parseExtendedDnsErrors,
   parseEdnsOptions,
   parseEdnsOption,
-} from '../src/edns.js';
+} from '../src/edns';
 import type {
   PacketAnswer,
   DnsExtendedErrors,
@@ -17,7 +17,7 @@ import type {
   EdnsKeyTag,
   RawEdnsOption,
   OptRecord,
-} from '../src/types.js';
+} from '../src/types';
 
 // Helper functions to create valid test PacketAnswer objects
 const createOptAnswer = (options: RawEdnsOption[] = []): PacketAnswer => {

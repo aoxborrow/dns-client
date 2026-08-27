@@ -4,8 +4,8 @@ if (typeof globalThis.Buffer === 'undefined') {
   globalThis.Buffer = BufferPolyfill;
 }
 
-import { NameserverCache } from './caches/nameservers.js';
-import { QueryCache } from './caches/queries.js';
+import { NameserverCache } from './caches/nameservers';
+import { QueryCache } from './caches/queries';
 import {
   A_RECORD,
   AAAA_RECORD,
@@ -22,16 +22,16 @@ import {
   FLAG_RECURSION_DESIRED,
   FLAG_TRUNCATED_RESPONSE,
   NS_RECORD,
-} from './constants.js';
-import { parsePacketOptions, parseExtendedDnsErrors, parseEdnsOptions } from './edns.js';
+} from './constants';
+import { parsePacketOptions, parseExtendedDnsErrors, parseEdnsOptions } from './edns';
 import {
   ConfigurationError,
   ServerNotFoundError,
   toDnsError,
   TruncatedResponseError,
   type DnsError,
-} from './errors.js';
-import { parsePacketAnswer } from './packets.js';
+} from './errors';
+import { parsePacketAnswer } from './packets';
 import type {
   ARecord,
   DnsAnswer,
@@ -46,7 +46,7 @@ import type {
   DnsResolutionHop,
   DnsResponseType,
   PacketAnswer,
-} from './types.js';
+} from './types';
 import {
   deduplicateRecords,
   detectDohServer,
@@ -54,7 +54,7 @@ import {
   isValidIp,
   normalizeHost,
   sortRecordsCanonical,
-} from './utils.js';
+} from './utils';
 
 // default options for DnsClient
 export const DEFAULT_OPTIONS: DnsOptions = {
@@ -198,15 +198,15 @@ export class DnsClient {
   protected async transportQuery(question: DnsQuestion, options: DnsOptions): Promise<DnsPacket> {
     switch (options.transport) {
       case DNS_TRANSPORT_UDP: {
-        const { udpQuery } = await import('./transports/udp.js');
+        const { udpQuery } = await import('./transports/udp');
         return await udpQuery(question, options);
       }
       case DNS_TRANSPORT_TCP: {
-        const { tcpQuery } = await import('./transports/tcp.js');
+        const { tcpQuery } = await import('./transports/tcp');
         return await tcpQuery(question, options);
       }
       case DNS_TRANSPORT_DOH: {
-        const { dohQuery } = await import('./transports/doh.js');
+        const { dohQuery } = await import('./transports/doh');
         return await dohQuery(question, options);
       }
     }
@@ -652,9 +652,9 @@ export class DnsClient {
 }
 
 // export types and constants
-export type * from './types.js';
-export * from './constants.js';
-export * from './edns.js';
-export * from './packets.js';
-export * from './utils.js';
-export * from './errors.js';
+export type * from './types';
+export * from './constants';
+export * from './edns';
+export * from './packets';
+export * from './utils';
+export * from './errors';

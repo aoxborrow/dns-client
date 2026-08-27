@@ -1,5 +1,5 @@
 import type { Question, Answer, DecodedPacket } from 'dns-packet';
-import type { DnsError } from './errors.js';
+import type { DnsError } from './errors';
 import {
   A_RECORD,
   AAAA_RECORD,
@@ -44,7 +44,7 @@ import {
   DNS_TRANSPORT_TYPES,
   DNS_RECORD_TYPES,
   type DNS_QUERY_FLAGS,
-} from './constants.js';
+} from './constants';
 
 // configuration options for DNS queries
 // external API uses Partial<DnsOptions>, internal uses full DnsOptions

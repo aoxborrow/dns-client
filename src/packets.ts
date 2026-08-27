@@ -36,8 +36,8 @@ import {
   SSHFP_RECORD,
   DNS_TEXT_RECORD_TYPES,
   FLAG_DNSSEC_OK,
-} from './constants.js';
-import { ParsingError } from './errors.js';
+} from './constants';
+import { ParsingError } from './errors';
 import type {
   DnsRecordType,
   DnsRecordClass,
@@ -76,8 +76,8 @@ import type {
   TsigRecord,
   UriRecord,
   DnsQueryFlag,
-} from './types.js';
-import { toBase32Hex, sanitizeString } from './utils.js';
+} from './types';
+import { toBase32Hex, sanitizeString } from './utils';
 
 // pass the flag constants and get a bitmask for them
 export function getQueryFlagsBitmask(flags: DnsQueryFlag[]) {

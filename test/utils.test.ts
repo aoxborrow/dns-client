@@ -14,8 +14,8 @@ import {
   isEmpty,
   stripProtocol,
   sanitizeString,
-} from '../src/utils.js';
-import type { DnsAnswer, DnsRecord } from '../src/types.js';
+} from '../src/utils';
+import type { DnsAnswer, DnsRecord } from '../src/types';
 
 describe('Utility Functions', () => {
   describe('getRecords', () => {

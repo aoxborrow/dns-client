@@ -48,12 +48,12 @@ export default tseslint.config(
       },
     },
     rules: {
-      // enforce .js extension for ESM imports
+      // forbid extensions on relative imports (bundler resolution)
       'import/extensions': [
         'error',
         'ignorePackages',
         {
-          js: 'always',
+          js: 'never',
           ts: 'never',
         },
       ],

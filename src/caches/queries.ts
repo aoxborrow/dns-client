@@ -1,4 +1,4 @@
-import type { DnsAnswer, DnsQuestion } from '../types.js';
+import type { DnsAnswer, DnsQuestion } from '../types';
 
 // default maximum query cache size
 const MAX_CACHE_SIZE = 1000;

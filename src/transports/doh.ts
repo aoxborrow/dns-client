@@ -1,8 +1,8 @@
 import dnsPacket from 'dns-packet';
 import { Buffer } from 'buffer';
-import { InvalidResponseError, ParsingError, TimeoutError, AbortError } from '../errors.js';
-import { createDnsPacket } from '../packets.js';
-import type { DnsOptions, DnsPacket, DnsQuestion, DnsTransportQuery } from '../types.js';
+import { InvalidResponseError, ParsingError, TimeoutError, AbortError } from '../errors';
+import { createDnsPacket } from '../packets';
+import type { DnsOptions, DnsPacket, DnsQuestion, DnsTransportQuery } from '../types';
 
 // resolve a DnsQuestion using DoH transport
 export const dohQuery: DnsTransportQuery = async function (
