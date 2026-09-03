@@ -5,6 +5,7 @@
   "author": "Aaron Oxborrow <aaron@oxborrow.com>",
   "license": "MIT",
   "homepage": "https://github.com/aoxborrow/dns-client",
+  "funding": "https://github.com/sponsors/aoxborrow",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aoxborrow/dns-client.git"
