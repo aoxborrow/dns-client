@@ -26,3 +26,12 @@ export class InvalidQueryError extends DnsError {
     this.name = 'InvalidQueryError';
   }
 }
+
+// record text that is not valid for its type. The message is written to be shown to the
+// person who typed the record
+export class RecordSyntaxError extends DnsError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'RecordSyntaxError';
+  }
+}

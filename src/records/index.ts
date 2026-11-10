@@ -14,3 +14,5 @@ export { parseIpv4, parseIpv6, reverseIp } from './addresses';
 export { formatRecord, formatRecordData, formatSignatureTime } from './format';
 export { deduplicateRecords, flattenRecord, flattenRecords, sortRecords } from './helpers';
 export type { FlatRecord } from './helpers';
+export { hasRecordParser, parseRecordData } from './parse';
+export type { RecordData } from './parse';
