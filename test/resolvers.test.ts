@@ -630,6 +630,22 @@ describe('AuthoritativeResolver', () => {
     expect(answer.trace?.at(-1)?.serverName).toBe('ns1.shared.com');
   });
 
+  it('names a nameserver as its zone wrote it', async () => {
+    // the delegation spells the name with capitals, and its glue in lower case
+    const parent = zoneServer({
+      zone: 'com',
+      delegations: { 'cased.com': { 'NS1.Cased.COM': ['10.7.0.1'] } },
+    });
+    const zone = zoneServer({ zone: 'cased.com', records: [['cased.com', 'A', '192.0.2.7']] });
+    const answer = await resolver({}, { '10.0.1.1': parent, '10.7.0.1': zone }).query(
+      'cased.com',
+      'A'
+    );
+    expect(answer.server).toBe('10.7.0.1');
+    expect(answer.serverName).toBe('NS1.Cased.COM');
+    expect(answer.trace?.at(-1)?.serverName).toBe('NS1.Cased.COM');
+  });
+
   it('tries the addresses of one nameserver in the same order on every run', async () => {
     // glue arrives in whatever order the parent sends it: lowest address first, or the
     // order the caller gives
@@ -776,6 +792,23 @@ describe('AuthoritativeResolver', () => {
         .query('example.com', 'A')
         .catch(caught => caught);
       expect(error).toBeInstanceOf(ConnectionError);
+    });
+
+    it('throws the first failure when no server of the zone answers', async () => {
+      // ns1 says nothing and ns2 cannot be reached: the error is from the server that
+      // would have answered, and the other is in the trace
+      const error = await resolver(
+        { timeout: 30 },
+        { '10.1.0.1': () => undefined, '10.1.0.2': undefined }
+      )
+        .query('example.com', 'A')
+        .catch(caught => caught);
+      expect(error).toBeInstanceOf(TimeoutError);
+      expect(error.server).toBe('10.1.0.1');
+      expect(error.trace.at(-1)).toMatchObject({
+        server: '10.1.0.2',
+        error: { name: 'ConnectionError' },
+      });
     });
 
     it('says how far it got when it fails', async () => {

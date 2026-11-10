@@ -97,6 +97,8 @@ export interface AuthoritativeQueryOptions extends Omit<
 interface Nameserver {
   // canonical name, or '' where only an address is known
   name: string;
+  // the name as the delegation wrote it, where its letter case differs
+  written?: string;
   // undefined until looked up; empty when the lookup found none
   addresses?: string[];
 }
@@ -336,7 +338,7 @@ export class AuthoritativeResolver {
     for (;;) {
       // ask the zone's servers in turn until one gives something to go on
       let step: { result: ExchangeResult; outcome: Outcome } | undefined;
-      let lastError: DnsError | undefined;
+      let firstError: DnsError | undefined;
       let lastLame: ExchangeResult | undefined;
       const refusals = new Set<number>();
       let loop: string | undefined;
@@ -357,7 +359,7 @@ export class AuthoritativeResolver {
           const hopStarted = now();
           const hop: TraceHop = {
             server: address,
-            ...(server.name && { serverName: server.name }),
+            ...(server.name && { serverName: server.written ?? server.name }),
             zone: cut.zone,
             name,
             type,
@@ -411,17 +413,18 @@ export class AuthoritativeResolver {
               throw error;
             }
             hop.error = errorData(error);
-            lastError = error;
+            firstError ??= error;
           }
         }
       }
 
       if (!step) {
         // nobody in the zone helped. An error response is still what its servers said,
-        // and is returned as the answer; with only failures, the last one is thrown
+        // and is returned as the answer; with only failures, the first is thrown, from the
+        // server that would have answered. The others are in the trace
         if (lastLame) return { result: lastLame, outcome: { kind: 'answer' } };
         if (loop) throw new InvalidResponseError(`Referral loop: ${loop}`, { query: name, type });
-        if (lastError) throw lastError;
+        if (firstError) throw firstError;
         if (now() >= run.deadline) {
           throw new TimeoutError(`No answer for ${name} ${type} within ${run.totalTimeout} ms`, {
             query: name,
@@ -489,6 +492,12 @@ export class AuthoritativeResolver {
     }
 
     const glue = decodeRecords(message.additionals, lenient);
+    // names are compared in their canonical form and shown as the zone wrote them
+    const written = new Map<string, string>();
+    for (const record of delegations) {
+      const target = canonicalName(record.target);
+      if (record.target !== target && !written.has(target)) written.set(target, record.target);
+    }
     const servers: Nameserver[] = delegations
       .filter(record => canonicalName(record.name) === child)
       .map(record => canonicalName(record.target))
@@ -502,10 +511,15 @@ export class AuthoritativeResolver {
               canonicalName(record.name) === target
           )
           .map(record => normalizeAddress(record.address));
-        for (const address of addresses) this.names.set(address, target);
+        const shown = written.get(target);
+        for (const address of addresses) this.names.set(address, shown ?? target);
         const usable = this.usable(addresses);
         // without usable glue the address is looked up when the server is first needed
-        return usable.length > 0 ? { name: target, addresses: usable } : { name: target };
+        return {
+          name: target,
+          ...(shown && { written: shown }),
+          ...(usable.length > 0 && { addresses: usable }),
+        };
       });
 
     const ttl = Math.min(...delegations.map(record => record.ttl)) || DEFAULT_CUT_TTL;
@@ -534,10 +548,10 @@ export class AuthoritativeResolver {
     try {
       // the caller's own way of finding it comes first
       if (this.options.resolveNameserver) {
-        const supplied = await this.options.resolveNameserver(name);
+        const supplied = await this.options.resolveNameserver(server.written ?? name);
         if (supplied?.length) {
           const normalized = supplied.map(normalizeAddress);
-          for (const address of normalized) this.names.set(address, name);
+          for (const address of normalized) this.names.set(address, server.written ?? name);
           const usable = this.usable(normalized);
           run.knowledge.addresses.set(name, {
             addresses: usable,
@@ -564,7 +578,7 @@ export class AuthoritativeResolver {
           // this nameserver cannot be found; another may be
         }
       }
-      for (const address of found) this.names.set(address, name);
+      for (const address of found) this.names.set(address, server.written ?? name);
       const addresses = this.usable(found);
       if (addresses.length > 0) {
         run.knowledge.addresses.set(name, { addresses, expires: Date.now() + ttl * 1000 });
