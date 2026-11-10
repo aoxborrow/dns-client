@@ -21,7 +21,7 @@ export const ROOT_TRUST_ANCHORS: TrustAnchor[] = [
     algorithm: 8,
     digestType: 2,
     digest: 'e06d44b80b8f1d39a95c0b0d7c65d08458e880409bbc683457104237c7f8ec8d',
-    validFrom: '2017-02-02T00:00:00.000Z',
+    validFrom: new Date('2017-02-02T00:00:00.000Z'),
   },
   {
     id: 'KSK-2024',
@@ -29,7 +29,7 @@ export const ROOT_TRUST_ANCHORS: TrustAnchor[] = [
     algorithm: 8,
     digestType: 2,
     digest: '683d2d0acb8c9b712a1948b27f741219298d0a450d612c483af444a4c0fb2b16',
-    validFrom: '2024-07-18T00:00:00.000Z',
+    validFrom: new Date('2024-07-18T00:00:00.000Z'),
   },
 ];
 
@@ -39,7 +39,7 @@ export const KSK_2017_REVOCATION_DATE = '2027-01-11';
 
 // an anchor is usable when the scan time falls inside its published validity window
 export function isAnchorCurrent(anchor: TrustAnchor, at: Date): boolean {
-  if (anchor.validFrom && at < new Date(anchor.validFrom)) return false;
-  if (anchor.validUntil && at > new Date(anchor.validUntil)) return false;
+  if (anchor.validFrom && at < anchor.validFrom) return false;
+  if (anchor.validUntil && at > anchor.validUntil) return false;
   return true;
 }

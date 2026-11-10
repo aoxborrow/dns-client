@@ -167,12 +167,9 @@ export interface DnssecRrsig {
   algorithmName: string;
   labels: number;
   originalTtl: number;
-  // ISO 8601, not Date — a tool result round-trips through a Postgres JSON column
-  // (JSON.stringify/parse, no reviver), so a Date field is live-typed on a cold call
-  // and a string on every warm one. Constructing the string here instead means every
-  // caller sees the same type regardless of cache state.
-  inception: string;
-  expiration: string;
+  // when the signature is valid from and until
+  inception: Date;
+  expiration: Date;
   // milliseconds until expiry at scan time; negative once expired
   remainingMs: number;
   keyTag: number;
@@ -301,8 +298,8 @@ export interface TrustAnchor {
   algorithm: number;
   digestType: number;
   digest: string;
-  validFrom?: string;
-  validUntil?: string;
+  validFrom?: Date;
+  validUntil?: Date;
 }
 
 export interface TrustAnchorState {
@@ -326,7 +323,8 @@ export interface TrustAnchorState {
 
 export interface DnssecQueryLogEntry {
   index: number;
-  timestamp: string;
+  // when the query was sent
+  timestamp: Date;
   zone: string;
   qname: string;
   qtype: string;

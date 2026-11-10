@@ -36,7 +36,7 @@ export interface DnssecQueryOptions {
 
 export interface DnssecQueryResult {
   message?: WireMessage;
-  timestamp: string;
+  timestamp: Date;
   elapsed: number;
   transport: DnssecTransport;
   flagsSent: string[];
@@ -65,7 +65,7 @@ export async function dnssecQuery(
 
   const started = performance.now();
   const base: DnssecQueryResult = {
-    timestamp: new Date().toISOString(),
+    timestamp: new Date(),
     elapsed: 0,
     transport,
     flagsSent,
