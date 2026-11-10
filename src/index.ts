@@ -1,12 +1,13 @@
 // @aoxborrow/dns-client: the whole library. The narrower entry points (`/records`, `/wire`,
 // `/transports/*`) carry less and run in more places.
 //
-// the resolvers, which are how questions get asked, arrive with the next milestone. The
-// function they are built on (`./exchange`: one question to one server) is not exported:
-// asking one particular server is an option on a resolver's `query`
+// questions are asked through a resolver. The function both are built on (`./exchange`:
+// one question to one server) is not exported: asking one particular server is the
+// `server` option on `Resolver.query`
 export * from './errors';
 export * from './records/index';
 export * from './wire/index';
+export * from './resolvers/index';
 export {
   closeDefaultTransports,
   createCloudflareConnect,
