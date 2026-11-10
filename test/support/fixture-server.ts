@@ -38,6 +38,8 @@ export interface FixtureServer {
   port: number;
   // every query received, in arrival order
   received: ReceivedQuery[];
+  // how many TCP connections have been accepted
+  readonly tcpConnections: number;
   close(): Promise<void>;
 }
 
@@ -57,7 +59,10 @@ export async function startFixtureServer(respond: Responder): Promise<FixtureSer
   const connections = new Set<net.Socket>();
 
   // ---- TCP: two-byte length prefix, any number of queries per connection
+  let tcpConnections = 0;
+  let stopped = false;
   const tcp = net.createServer(socket => {
+    tcpConnections++;
     connections.add(socket);
     socket.on('close', () => connections.delete(socket));
     socket.on('error', () => socket.destroy());
@@ -96,11 +101,25 @@ export async function startFixtureServer(respond: Responder): Promise<FixtureSer
     if (reply.closeAfterBytes !== undefined) socket.destroy();
   }
 
-  await new Promise<void>(resolve => tcp.listen(0, address, resolve));
-  const { port } = tcp.address() as AddressInfo;
-
-  // ---- UDP on the same port, plus a second socket for replies from the wrong source
-  const udp = dgram.createSocket('udp4');
+  // ---- UDP on the same port, plus a second socket for replies from the wrong source.
+  // The TCP port is picked by the system and may already be taken for UDP by something
+  // else on the machine, so the pair is retried until both halves bind
+  let udp = dgram.createSocket('udp4');
+  let port = 0;
+  for (let attempt = 1; ; attempt++) {
+    await new Promise<void>(resolve => tcp.listen(0, address, resolve));
+    port = (tcp.address() as AddressInfo).port;
+    const socket = udp;
+    const bound = await new Promise<boolean>(resolve => {
+      socket.once('error', () => resolve(false));
+      socket.bind(port, address, () => resolve(true));
+    });
+    if (bound) break;
+    await new Promise<void>(resolve => tcp.close(() => resolve()));
+    if (attempt === 20) throw new Error('fixture server: no port free for both TCP and UDP');
+    udp = dgram.createSocket('udp4');
+  }
+  udp.removeAllListeners('error');
   const otherSource = dgram.createSocket('udp4');
   udp.on('message', (message, remote) => {
     const entry: ReceivedQuery = { transport: 'udp', query: Uint8Array.from(message) };
@@ -116,14 +135,19 @@ export async function startFixtureServer(respond: Responder): Promise<FixtureSer
     if (reply.delayMs) setTimeout(send, reply.delayMs);
     else send();
   });
-  await new Promise<void>(resolve => udp.bind(port, address, resolve));
   await new Promise<void>(resolve => otherSource.bind(0, address, resolve));
 
   return {
     address,
     port,
     received,
+    get tcpConnections() {
+      return tcpConnections;
+    },
     async close() {
+      // closing twice is fine: a test may stop the server itself to see what a client does
+      if (stopped) return;
+      stopped = true;
       for (const socket of connections) socket.destroy();
       await Promise.all([
         new Promise<void>(resolve => tcp.close(() => resolve())),

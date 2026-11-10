@@ -1,0 +1,502 @@
+import {
+  ConnectionError,
+  EmptyResponseError,
+  InvalidResponseError,
+  NoServerError,
+  TimeoutError,
+} from '../src/errors';
+import { exchange } from '../src/exchange';
+import { createCloudflareConnect } from '../src/transports/cloudflare';
+import type { CloudflareSocket } from '../src/transports/cloudflare';
+import { toBase64Url } from '../src/transports/doh';
+import { normalizeAddress, toEndpoint } from '../src/transports/endpoint';
+import {
+  createTcpTransport,
+  createTransports,
+  createTunnelFetch,
+  createUdpTransport,
+} from '../src/transports/index';
+import type { Transports } from '../src/transports/index';
+import type { FetchLike, Transport } from '../src/transports/types';
+import { decodeMessage, encodeQuery } from '../src/wire/index';
+import { answerTo, askedName } from './support/answers';
+import { startFixtureServer } from './support/fixture-server';
+import type { FixtureServer } from './support/fixture-server';
+import { startDohServer, startDotServer, testCertificate } from './support/secure-servers';
+import type { DohServer, DotServer } from './support/secure-servers';
+
+// the transports apart from the proxies: server addresses, DoH, DoT, and the corners of
+// UDP and TCP that `exchange` cannot reach on its own
+
+const QUESTION = { name: 'example.com', type: 'A' };
+
+describe('toEndpoint', () => {
+  it('fills in the port for the transport', () => {
+    expect(toEndpoint('192.0.2.1', 'udp')).toEqual({ host: '192.0.2.1', port: 53 });
+    expect(toEndpoint('192.0.2.1', 'tcp')).toEqual({ host: '192.0.2.1', port: 53 });
+    expect(toEndpoint('192.0.2.1', 'tls')).toEqual({
+      host: '192.0.2.1',
+      port: 853,
+      serverName: '192.0.2.1',
+    });
+    expect(toEndpoint('dns.example', 'doh')).toEqual({
+      host: 'dns.example',
+      port: 443,
+      url: 'https://dns.example/dns-query',
+    });
+  });
+
+  it('reads a port written into the server, which beats the port option', () => {
+    expect(toEndpoint('192.0.2.1:5353', 'udp', 99)).toEqual({ host: '192.0.2.1', port: 5353 });
+    expect(toEndpoint('192.0.2.1', 'udp', 99)).toEqual({ host: '192.0.2.1', port: 99 });
+    expect(toEndpoint('[2001:db8::1]:5353', 'tcp')).toEqual({ host: '2001:db8::1', port: 5353 });
+    expect(toEndpoint('[2001:db8::1]', 'tcp')).toEqual({ host: '2001:db8::1', port: 53 });
+    // a bare IPv6 address has colons of its own
+    expect(toEndpoint('2001:db8::1', 'udp')).toEqual({ host: '2001:db8::1', port: 53 });
+  });
+
+  it('takes a DoH server as a URL, a name, or an address', () => {
+    expect(toEndpoint('https://dns.example/custom?x=1', 'doh')).toEqual({
+      host: 'dns.example',
+      port: 443,
+      url: 'https://dns.example/custom?x=1',
+    });
+    expect(toEndpoint('http://127.0.0.1:8053/dns-query', 'doh')).toEqual({
+      host: '127.0.0.1',
+      port: 8053,
+      url: 'http://127.0.0.1:8053/dns-query',
+    });
+    expect(toEndpoint('2001:db8::1', 'doh').url).toBe('https://[2001:db8::1]/dns-query');
+    expect(toEndpoint('dns.example:8443', 'doh').url).toBe('https://dns.example:8443/dns-query');
+  });
+
+  it('takes a server described as an object', () => {
+    expect(toEndpoint({ address: '192.0.2.1', serverName: 'dns.example' }, 'tls')).toEqual({
+      host: '192.0.2.1',
+      port: 853,
+      serverName: 'dns.example',
+    });
+    expect(toEndpoint({ address: '192.0.2.1', port: 8853 }, 'tls', 1).port).toBe(8853);
+  });
+
+  it('rejects a server it cannot read', () => {
+    expect(() => toEndpoint('', 'udp')).toThrow(NoServerError);
+    expect(() => toEndpoint('192.0.2.1:notaport', 'udp')).toThrow(NoServerError);
+    expect(() => toEndpoint('192.0.2.1:70000', 'udp')).toThrow(NoServerError);
+    expect(() => toEndpoint('[2001:db8::1', 'udp')).toThrow(NoServerError);
+  });
+});
+
+describe('normalizeAddress', () => {
+  it('gives every spelling of an IPv6 address one form', () => {
+    expect(normalizeAddress('2001:0db8:0000:0000:0000:0000:0000:0001')).toBe('2001:db8::1');
+    expect(normalizeAddress('2001:DB8::1')).toBe('2001:db8::1');
+    expect(normalizeAddress('fe80::1%en0')).toBe('fe80::1');
+    expect(normalizeAddress('192.0.2.1')).toBe('192.0.2.1');
+  });
+});
+
+describe('UDP and TCP transports', () => {
+  let server: FixtureServer;
+  let transport: Transport;
+
+  afterEach(async () => {
+    transport?.close();
+    await server?.close();
+  });
+
+  // two queries with the same ID in flight to the same server: random 16-bit IDs make
+  // this rare, not impossible
+  const colliding = () => {
+    const first = encodeQuery({ id: 7, name: 'first.example', type: 'A' });
+    const second = encodeQuery({ id: 7, name: 'second.example', type: 'A' });
+    const wants = (name: string) => (bytes: Uint8Array) =>
+      decodeMessage(bytes).questions[0].name === name;
+    return { first, second, wants };
+  };
+
+  it.each([
+    ['udp', () => createUdpTransport()],
+    ['tcp', () => createTcpTransport()],
+  ] as const)('gives each of two queries with one ID its own answer over %s', async (_, make) => {
+    // answer in the opposite order to the one they were asked in
+    server = await startFixtureServer(({ query }) => ({
+      response: answerTo(query),
+      delayMs: askedName(query) === 'first.example' ? 40 : 0,
+    }));
+    transport = make();
+    const endpoint = { host: server.address, port: server.port };
+    const { first, second, wants } = colliding();
+    const [a, b] = await Promise.all([
+      transport.send({ endpoint, query: first, accept: wants('first.example') }),
+      transport.send({ endpoint, query: second, accept: wants('second.example') }),
+    ]);
+    expect(askedName(a.bytes)).toBe('first.example');
+    expect(askedName(b.bytes)).toBe('second.example');
+  });
+
+  it('fails what is in flight when a transport is closed', async () => {
+    server = await startFixtureServer(() => undefined);
+    for (const make of [createUdpTransport, createTcpTransport]) {
+      transport = make();
+      const pending = transport.send({
+        endpoint: { host: server.address, port: server.port },
+        query: encodeQuery({ id: 1, name: 'example.com', type: 'A' }),
+      });
+      // let the query reach the wire first
+      await new Promise(resolve => setTimeout(resolve, 20));
+      transport.close();
+      await expect(pending).rejects.toBeInstanceOf(ConnectionError);
+      await expect(
+        transport.send({
+          endpoint: { host: server.address, port: server.port },
+          query: encodeQuery({ id: 2, name: 'example.com', type: 'A' }),
+        })
+      ).rejects.toBeInstanceOf(ConnectionError);
+    }
+  });
+});
+
+describe('DNS over TLS', () => {
+  let server: DotServer;
+  let transports: Transports;
+
+  beforeEach(async () => {
+    server = await startDotServer(query => answerTo(query));
+  });
+
+  afterEach(async () => {
+    transports?.close();
+    await server.close();
+  });
+
+  it('asks over an encrypted connection and reuses it', async () => {
+    transports = createTransports({ tls: { ca: testCertificate().cert } });
+    const options = { transport: 'tls' as const, port: server.port, transports };
+    const first = await exchange(QUESTION, server.address, options);
+    const second = await exchange(QUESTION, server.address, options);
+    expect(first.transport).toBe('tls');
+    expect(first.message.answers).toHaveLength(1);
+    expect(second.message.answers).toHaveLength(1);
+    expect(server.received).toHaveLength(2);
+    expect(server.connections).toBe(1);
+    expect(first.toDig()).toBe(`dig +norecurse +tls -p ${server.port} @127.0.0.1 example.com A`);
+  });
+
+  it('checks the certificate against the server name', async () => {
+    transports = createTransports({ tls: { ca: testCertificate().cert } });
+    const options = { transport: 'tls' as const, transports, retries: 0 };
+    // the certificate names localhost, so this verifies
+    await exchange(
+      QUESTION,
+      { address: '127.0.0.1', port: server.port, serverName: 'localhost' },
+      options
+    );
+    // and it does not name this
+    const error = await exchange(
+      QUESTION,
+      { address: '127.0.0.1', port: server.port, serverName: 'dns.example' },
+      options
+    ).catch(caught => caught);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(error.transport).toBe('tls');
+  });
+
+  it('refuses a certificate it has no reason to trust', async () => {
+    transports = createTransports();
+    const error = await exchange(QUESTION, server.address, {
+      transport: 'tls',
+      port: server.port,
+      transports,
+      retries: 0,
+    }).catch(caught => caught);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(server.received).toHaveLength(0);
+  });
+});
+
+describe('DNS over HTTPS', () => {
+  let server: DohServer;
+  let transports: Transports;
+
+  afterEach(async () => {
+    transports?.close();
+    await server?.close();
+  });
+
+  it('sends the query in the URL of a GET by default', async () => {
+    server = await startDohServer(query => answerTo(query));
+    transports = createTransports();
+    const result = await exchange(QUESTION, server.url, { transports });
+
+    // a server given as a URL is asked over DoH without being told to
+    expect(result.transport).toBe('doh');
+    expect(result.message.answers).toHaveLength(1);
+    const [request] = server.requests;
+    expect(request.method).toBe('GET');
+    expect(request.url).toBe(`/dns-query?dns=${toBase64Url(result.query.bytes)}`);
+    expect(request.headers.accept).toBe('application/dns-message');
+    // ID 0, so HTTP caches can share the answer
+    expect(result.query.id).toBe(0);
+    expect(decodeMessage(request.query).id).toBe(0);
+    expect(result.toDig()).toBe(`dig +norecurse +https -p ${server.port} @127.0.0.1 example.com A`);
+  });
+
+  it('sends the query as the body of a POST when asked to', async () => {
+    server = await startDohServer(query => answerTo(query));
+    transports = createTransports({ dohMethod: 'POST' });
+    const result = await exchange(QUESTION, server.url, { transports });
+    const [request] = server.requests;
+    expect(request.method).toBe('POST');
+    expect(request.url).toBe('/dns-query');
+    expect(request.headers['content-type']).toBe('application/dns-message');
+    expect(request.query).toEqual(result.query.bytes);
+  });
+
+  it('keeps the query string of the URL it was given', async () => {
+    server = await startDohServer(query => answerTo(query));
+    transports = createTransports();
+    await exchange(QUESTION, `${server.url}?token=abc`, { transports });
+    expect(server.requests[0].url).toMatch(/^\/dns-query\?token=abc&dns=/);
+  });
+
+  it('reports a server error as a failure worth retrying', async () => {
+    server = await startDohServer(query => answerTo(query), { status: 503 });
+    transports = createTransports();
+    const error = await exchange(QUESTION, server.url, { transports, retries: 1 }).catch(
+      caught => caught
+    );
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(error.message).toContain('HTTP 503');
+    expect(server.requests).toHaveLength(2);
+  });
+
+  it('reports a rejected request as an invalid response', async () => {
+    server = await startDohServer(query => answerTo(query), { status: 400 });
+    transports = createTransports();
+    const error = await exchange(QUESTION, server.url, { transports }).catch(caught => caught);
+    expect(error).toBeInstanceOf(InvalidResponseError);
+    expect(server.requests).toHaveLength(1);
+  });
+
+  it('rejects a response that is not a DNS message', async () => {
+    server = await startDohServer(query => answerTo(query), { contentType: 'text/html' });
+    transports = createTransports();
+    const error = await exchange(QUESTION, server.url, { transports }).catch(caught => caught);
+    expect(error).toBeInstanceOf(InvalidResponseError);
+    expect(error.message).toContain('text/html');
+  });
+
+  it('reports an empty body', async () => {
+    server = await startDohServer(() => new Uint8Array(0));
+    transports = createTransports();
+    await expect(exchange(QUESTION, server.url, { transports, retries: 0 })).rejects.toBeInstanceOf(
+      EmptyResponseError
+    );
+  });
+
+  it('times out when the server never answers', async () => {
+    server = await startDohServer(() => undefined);
+    transports = createTransports();
+    await expect(
+      exchange(QUESTION, server.url, { transports, timeout: 80, retries: 0 })
+    ).rejects.toBeInstanceOf(TimeoutError);
+  });
+
+  it('uses the fetch it is given', async () => {
+    server = await startDohServer(query => answerTo(query));
+    const calls: string[] = [];
+    const custom: FetchLike = (url, init) => {
+      calls.push(`${init.method} ${url}`);
+      return fetch(url, init as RequestInit);
+    };
+    const result = await exchange(QUESTION, server.url, { fetch: custom });
+    expect(result.message.answers).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatch(/^GET http:\/\/127\.0\.0\.1:\d+\/dns-query\?dns=/);
+  });
+
+  it('turns whatever a custom fetch throws into a connection error', async () => {
+    const error = await exchange(QUESTION, 'https://dns.example/dns-query', {
+      retries: 0,
+      fetch: () => Promise.reject(new TypeError('fetch failed')),
+    }).catch(caught => caught);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(error.retryable).toBe(true);
+    expect(error.cause).toBeInstanceOf(TypeError);
+  });
+});
+
+describe('tunnelFetch', () => {
+  let server: DohServer;
+  const query = encodeQuery({ id: 0, name: 'example.com', type: 'A' });
+  const post = { method: 'POST', body: query };
+
+  afterEach(async () => {
+    await server?.close();
+  });
+
+  it('makes requests over a connection it keeps open', async () => {
+    server = await startDohServer(received => answerTo(received));
+    const tunnelFetch = createTunnelFetch();
+    try {
+      for (let round = 0; round < 3; round++) {
+        const response = await tunnelFetch(server.url, post);
+        expect(response.status).toBe(200);
+        expect(response.headers.get('content-type')).toBe('application/dns-message');
+        expect(new Uint8Array(await response.arrayBuffer())).toEqual(answerTo(query));
+      }
+      expect(server.requests).toHaveLength(3);
+      expect(server.connections).toBe(1);
+    } finally {
+      tunnelFetch.close();
+    }
+  });
+
+  it('opens more connections for requests made at once', async () => {
+    server = await startDohServer(received => answerTo(received));
+    const tunnelFetch = createTunnelFetch();
+    try {
+      const responses = await Promise.all([
+        tunnelFetch(server.url, post),
+        tunnelFetch(server.url, post),
+        tunnelFetch(server.url, post),
+      ]);
+      expect(responses.map(response => response.status)).toEqual([200, 200, 200]);
+      expect(server.connections).toBe(3);
+    } finally {
+      tunnelFetch.close();
+    }
+  });
+
+  it('reads a chunked body', async () => {
+    server = await startDohServer(received => answerTo(received), { chunked: true });
+    const tunnelFetch = createTunnelFetch();
+    try {
+      const response = await tunnelFetch(server.url, post);
+      expect(response.headers.get('transfer-encoding')).toBe('chunked');
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(answerTo(query));
+      // and the connection is still good afterwards
+      await tunnelFetch(server.url, post);
+      expect(server.connections).toBe(1);
+    } finally {
+      tunnelFetch.close();
+    }
+  });
+
+  it('does not reuse a connection the server says it is closing', async () => {
+    server = await startDohServer(received => answerTo(received), { closeConnection: true });
+    const tunnelFetch = createTunnelFetch();
+    try {
+      await tunnelFetch(server.url, post);
+      await tunnelFetch(server.url, post);
+      expect(server.connections).toBe(2);
+    } finally {
+      tunnelFetch.close();
+    }
+  });
+
+  it('speaks TLS to an https URL', async () => {
+    server = await startDohServer(received => answerTo(received), { secure: true });
+    const tunnelFetch = createTunnelFetch({ tls: { ca: testCertificate().cert } });
+    try {
+      const response = await tunnelFetch(server.url, post);
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(answerTo(query));
+      await tunnelFetch(server.url, post);
+      expect(server.connections).toBe(1);
+    } finally {
+      tunnelFetch.close();
+    }
+  });
+
+  it('refuses a certificate it has no reason to trust', async () => {
+    server = await startDohServer(received => answerTo(received), { secure: true });
+    const tunnelFetch = createTunnelFetch();
+    try {
+      await expect(tunnelFetch(server.url, post)).rejects.toBeInstanceOf(ConnectionError);
+      expect(server.requests).toHaveLength(0);
+    } finally {
+      tunnelFetch.close();
+    }
+  });
+
+  it('stops when its signal aborts', async () => {
+    server = await startDohServer(() => undefined);
+    const tunnelFetch = createTunnelFetch();
+    const controller = new AbortController();
+    const reason = new Error('never mind');
+    try {
+      const pending = tunnelFetch(server.url, { ...post, signal: controller.signal });
+      setTimeout(() => controller.abort(reason), 30);
+      await expect(pending).rejects.toBe(reason);
+    } finally {
+      tunnelFetch.close();
+    }
+  });
+});
+
+describe('the Cloudflare connector', () => {
+  // the runtime is not here to test against, so this checks the calls the connector
+  // makes against the shape of the Workers socket API
+  it('opens a plain connection that can be upgraded to TLS', async () => {
+    const calls: unknown[] = [];
+    const socket = (label: string): CloudflareSocket => ({
+      readable: new ReadableStream<Uint8Array>(),
+      writable: new WritableStream<Uint8Array>(),
+      close: () => {
+        calls.push(`${label} closed`);
+        return Promise.resolve();
+      },
+      startTls: options => {
+        calls.push(['startTls', options]);
+        return socket('secure');
+      },
+    });
+    const connect = createCloudflareConnect((address, options) => {
+      calls.push(['connect', address, options]);
+      return socket('plain');
+    });
+
+    const plain = await connect({ hostname: 'dns.example', port: 853 });
+    const secure = await plain.startTls('dns.example');
+    await secure.close();
+    expect(calls).toEqual([
+      ['connect', { hostname: 'dns.example', port: 853 }, { secureTransport: 'starttls' }],
+      ['startTls', { expectedServerHostname: 'dns.example' }],
+      'secure closed',
+    ]);
+  });
+
+  it('carries DNS over TCP through a connect function the caller supplies', async () => {
+    const server = await startFixtureServer(({ query }) => ({ response: answerTo(query) }));
+    // a custom connect, built here on the Node connector, stands in for the runtime's
+    const { createNodeConnect } = await import('../src/transports/index');
+    const targets: string[] = [];
+    const node = createNodeConnect();
+    try {
+      const result = await exchange(QUESTION, server.address, {
+        transport: 'tcp',
+        port: server.port,
+        connect: target => {
+          targets.push(`${target.hostname}:${target.port}`);
+          return node(target);
+        },
+      });
+      expect(result.message.answers).toHaveLength(1);
+      expect(targets).toEqual([`127.0.0.1:${server.port}`]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('turns whatever a custom connect throws into a connection error', async () => {
+    const error = await exchange(QUESTION, '192.0.2.1', {
+      transport: 'tcp',
+      retries: 0,
+      connect: () => Promise.reject(new Error('no route')),
+    }).catch(caught => caught);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(error.message).toContain('no route');
+    expect(error.retryable).toBe(true);
+  });
+});
