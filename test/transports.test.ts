@@ -11,12 +11,8 @@ import { createCloudflareConnect } from '../src/transports/cloudflare';
 import type { CloudflareSocket } from '../src/transports/cloudflare';
 import { toBase64Url } from '../src/transports/doh';
 import { normalizeAddress, toEndpoint } from '../src/transports/endpoint';
-import {
-  createTcpTransport,
-  createTransports,
-  createTunnelFetch,
-  createUdpTransport,
-} from '../src/transports/index';
+import { createTcpTransport, createTransports, createUdpTransport } from '../src/transports/index';
+import { createProxyFetch } from '../src/transports/proxy-fetch';
 import type { Transports } from '../src/transports/index';
 import type { FetchLike, Transport } from '../src/transports/types';
 import { decodeMessage, encodeQuery } from '../src/wire/index';
@@ -410,7 +406,8 @@ describe('DNS over HTTPS', () => {
   });
 });
 
-describe('tunnelFetch', () => {
+// the fetch the DoH transport uses for itself when a proxy is set
+describe('the built-in proxied fetch', () => {
   let server: DohServer;
   const query = encodeQuery({ id: 0, name: 'example.com', type: 'A' });
   const post = { method: 'POST', body: query };
@@ -421,10 +418,10 @@ describe('tunnelFetch', () => {
 
   it('makes requests over a connection it keeps open', async () => {
     server = await startDohServer(received => answerTo(received));
-    const tunnelFetch = createTunnelFetch();
+    const proxyFetch = createProxyFetch();
     try {
       for (let round = 0; round < 3; round++) {
-        const response = await tunnelFetch(server.url, post);
+        const response = await proxyFetch(server.url, post);
         expect(response.status).toBe(200);
         expect(response.headers.get('content-type')).toBe('application/dns-message');
         expect(new Uint8Array(await response.arrayBuffer())).toEqual(answerTo(query));
@@ -432,88 +429,88 @@ describe('tunnelFetch', () => {
       expect(server.requests).toHaveLength(3);
       expect(server.connections).toBe(1);
     } finally {
-      tunnelFetch.close();
+      proxyFetch.close();
     }
   });
 
   it('opens more connections for requests made at once', async () => {
     server = await startDohServer(received => answerTo(received));
-    const tunnelFetch = createTunnelFetch();
+    const proxyFetch = createProxyFetch();
     try {
       const responses = await Promise.all([
-        tunnelFetch(server.url, post),
-        tunnelFetch(server.url, post),
-        tunnelFetch(server.url, post),
+        proxyFetch(server.url, post),
+        proxyFetch(server.url, post),
+        proxyFetch(server.url, post),
       ]);
       expect(responses.map(response => response.status)).toEqual([200, 200, 200]);
       expect(server.connections).toBe(3);
     } finally {
-      tunnelFetch.close();
+      proxyFetch.close();
     }
   });
 
   it('reads a chunked body', async () => {
     server = await startDohServer(received => answerTo(received), { chunked: true });
-    const tunnelFetch = createTunnelFetch();
+    const proxyFetch = createProxyFetch();
     try {
-      const response = await tunnelFetch(server.url, post);
+      const response = await proxyFetch(server.url, post);
       expect(response.headers.get('transfer-encoding')).toBe('chunked');
       expect(new Uint8Array(await response.arrayBuffer())).toEqual(answerTo(query));
       // and the connection is still good afterwards
-      await tunnelFetch(server.url, post);
+      await proxyFetch(server.url, post);
       expect(server.connections).toBe(1);
     } finally {
-      tunnelFetch.close();
+      proxyFetch.close();
     }
   });
 
   it('does not reuse a connection the server says it is closing', async () => {
     server = await startDohServer(received => answerTo(received), { closeConnection: true });
-    const tunnelFetch = createTunnelFetch();
+    const proxyFetch = createProxyFetch();
     try {
-      await tunnelFetch(server.url, post);
-      await tunnelFetch(server.url, post);
+      await proxyFetch(server.url, post);
+      await proxyFetch(server.url, post);
       expect(server.connections).toBe(2);
     } finally {
-      tunnelFetch.close();
+      proxyFetch.close();
     }
   });
 
   it('speaks TLS to an https URL', async () => {
     server = await startDohServer(received => answerTo(received), { secure: true });
-    const tunnelFetch = createTunnelFetch({ tls: { ca: testCertificate().cert } });
+    const proxyFetch = createProxyFetch({ tls: { ca: testCertificate().cert } });
     try {
-      const response = await tunnelFetch(server.url, post);
+      const response = await proxyFetch(server.url, post);
       expect(new Uint8Array(await response.arrayBuffer())).toEqual(answerTo(query));
-      await tunnelFetch(server.url, post);
+      await proxyFetch(server.url, post);
       expect(server.connections).toBe(1);
     } finally {
-      tunnelFetch.close();
+      proxyFetch.close();
     }
   });
 
   it('refuses a certificate it has no reason to trust', async () => {
     server = await startDohServer(received => answerTo(received), { secure: true });
-    const tunnelFetch = createTunnelFetch();
+    const proxyFetch = createProxyFetch();
     try {
-      await expect(tunnelFetch(server.url, post)).rejects.toBeInstanceOf(ConnectionError);
+      await expect(proxyFetch(server.url, post)).rejects.toBeInstanceOf(ConnectionError);
       expect(server.requests).toHaveLength(0);
     } finally {
-      tunnelFetch.close();
+      proxyFetch.close();
     }
   });
 
   it('stops when its signal aborts', async () => {
     server = await startDohServer(() => undefined);
-    const tunnelFetch = createTunnelFetch();
+    const proxyFetch = createProxyFetch();
     const controller = new AbortController();
     const reason = new Error('never mind');
     try {
-      const pending = tunnelFetch(server.url, { ...post, signal: controller.signal });
+      const pending = proxyFetch(server.url, { ...post, signal: controller.signal });
       setTimeout(() => controller.abort(reason), 30);
       await expect(pending).rejects.toBe(reason);
     } finally {
-      tunnelFetch.close();
+      proxyFetch.close();
     }
   });
 });
@@ -567,7 +564,7 @@ describe('the Cloudflare connector', () => {
 
     const viaProxy = await connect({ hostname: 'proxy.example', port: 1080 });
     expect(() => viaProxy.startTls('dns.example')).toThrow(DnsError);
-    expect(() => viaProxy.startTls('dns.example')).toThrow(/through a proxy/);
+    expect(() => viaProxy.startTls('dns.example')).toThrow(/Through a proxy there/);
     const byAddress = await connect({ hostname: '192.0.2.1', port: 853 });
     expect(() => byAddress.startTls('dns.example')).toThrow(DnsError);
     expect(upgrades).toBe(0);

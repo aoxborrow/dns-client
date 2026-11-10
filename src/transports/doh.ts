@@ -7,8 +7,8 @@ import {
 } from '../errors';
 import { toBase64 } from '../wire/bytes';
 import { parseDohUrl } from './endpoint';
-import { createTunnelFetch } from './tunnel-fetch';
-import type { TunnelFetch } from './tunnel-fetch';
+import { createProxyFetch } from './proxy-fetch';
+import type { ProxyFetch } from './proxy-fetch';
 import type { FetchLike, Transport, TransportOptions } from './types';
 
 // DNS over HTTPS (RFC 8484): the query is the body of a POST, or the `dns` parameter of
@@ -33,7 +33,7 @@ export function toBase64Url(bytes: Uint8Array): string {
 
 export function createDohTransport(options: DohTransportOptions = {}): Transport {
   const method = options.dohMethod ?? 'GET';
-  let tunnel: TunnelFetch | undefined;
+  let tunnel: ProxyFetch | undefined;
 
   return {
     name: 'doh',
@@ -63,7 +63,7 @@ export function createDohTransport(options: DohTransportOptions = {}): Transport
         if (options.fetch) {
           response = await options.fetch(url, { method, headers, ...(body && { body }), signal });
         } else if (options.proxy !== undefined) {
-          tunnel ??= createTunnelFetch(options);
+          tunnel ??= createProxyFetch(options);
           response = await tunnel(url, {
             method,
             headers,

@@ -1,5 +1,5 @@
 import { Resolver } from 'node:dns/promises';
-import { exchange } from '../src/index';
+import { exchange } from '../src/exchange';
 import { createTransports } from '../src/transports/index';
 import { answerTo } from '../test/support/answers';
 import { startFixtureServer } from '../test/support/fixture-server';
@@ -76,12 +76,12 @@ async function main() {
       ask: async name => (await resolver.resolve4(name)).length,
     },
     {
-      label: 'dns-client exchange, UDP',
+      label: 'dns-client, UDP',
       ask: async name =>
         (await exchange({ name, type: 'A' }, server.address, options)).message.answers.length,
     },
     {
-      label: 'dns-client exchange, TCP',
+      label: 'dns-client, TCP pipelined',
       ask: async name =>
         (await exchange({ name, type: 'A' }, server.address, { ...options, transport: 'tcp' }))
           .message.answers.length,

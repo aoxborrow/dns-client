@@ -37,8 +37,9 @@ function wrapSocket(socket: CloudflareSocket, connectedTo: string): Connection {
       if (!sameHost(hostname, connectedTo)) {
         throw new DnsError(
           `Cloudflare Workers cannot start TLS with ${hostname} on a connection opened to ` +
-            `${connectedTo}: DNS over TLS and DNS over HTTPS do not work through a proxy ` +
-            'there, and a DoT server has to be given by the name on its certificate'
+            `${connectedTo}. Through a proxy there, DNS over HTTPS needs a \`fetch\` that does ` +
+            'its own TLS (the tunnelfetch package is one) and DNS over TLS is not available; ' +
+            'without a proxy, a DoT server has to be given by the name on its certificate'
         );
       }
       return wrapSocket(socket.startTls({ expectedServerHostname: hostname }), connectedTo);
@@ -50,17 +51,28 @@ function wrapSocket(socket: CloudflareSocket, connectedTo: string): Connection {
 // runtime does not try to resolve a module that only exists on Workers
 const SOCKETS_MODULE = 'cloudflare:sockets';
 
-// pass the runtime's `connect` to skip the dynamic import:
+// pass the runtime's `connect`:
 //   import { connect } from 'cloudflare:sockets';
 //   createCloudflareConnect(connect)
+// without it the module is imported by name at run time, which a bundled Worker cannot do:
+// its bundler never saw the import, so there is nothing to load. Passing `connect` is the
+// way that always works
 export function createCloudflareConnect(connectFunction?: CloudflareConnectFunction): Connect {
   let loaded = connectFunction;
   return async target => {
     if (!loaded) {
-      const module = (await import(/* @vite-ignore */ SOCKETS_MODULE)) as {
-        connect: CloudflareConnectFunction;
-      };
-      loaded = module.connect;
+      try {
+        const module = (await import(/* @vite-ignore */ SOCKETS_MODULE)) as {
+          connect: CloudflareConnectFunction;
+        };
+        loaded = module.connect;
+      } catch (cause) {
+        throw new DnsError(
+          "Cannot load cloudflare:sockets. Import `connect` from 'cloudflare:sockets' " +
+            'yourself and pass it as the `connect` option',
+          { cause }
+        );
+      }
     }
     // every connection starts plain and may be upgraded, which is what 'starttls' allows
     return wrapSocket(loaded(target, { secureTransport: 'starttls' }), target.hostname);

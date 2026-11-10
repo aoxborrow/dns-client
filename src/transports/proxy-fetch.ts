@@ -7,10 +7,14 @@ import { defaultConnect } from './runtime';
 import { closeQuietly, StreamReader, writeBytes } from './stream';
 import type { Connect, Connection, OnEvent, ProxyInput, TlsOptions } from './types';
 
-// a small `fetch` that makes its requests over connections it opens itself, so they can
-// go through a proxy: HTTP/1.1 over a `Connection`, tunnelled and upgraded to TLS as
-// needed. It exists because a runtime's own `fetch` either cannot be pointed at a proxy
-// (Workers) or needs a dependency to do it (Node).
+// DoH through a proxy, where the runtime can do TLS inside a tunnel: a small `fetch` that
+// makes its requests over connections it opens itself. HTTP/1.1 over a `Connection`,
+// tunnelled through the proxy and upgraded to TLS by the runtime. It is what the DoH
+// transport uses when `proxy` is set and the caller gave no `fetch` of their own.
+//
+// that covers Node, Bun and Deno. It does not cover Cloudflare Workers, where the runtime
+// cannot start TLS with a host other than the one a socket was opened to. There the
+// caller passes a `fetch` that brings its own TLS, such as the `tunnelfetch` package.
 //
 // connections are kept open and reused. Without that, every DoH query would pay for a
 // proxy handshake and a TLS handshake.
@@ -18,7 +22,7 @@ import type { Connect, Connection, OnEvent, ProxyInput, TlsOptions } from './typ
 // it does what DoH needs and no more: GET and POST with a byte body, a response read
 // whole into memory, no redirects, no compression, no HTTP/2
 
-export interface TunnelFetchOptions {
+export interface ProxyFetchOptions {
   proxy?: ProxyInput;
   // how connections are opened. Default: the runtime's own
   connect?: Connect;
@@ -28,7 +32,7 @@ export interface TunnelFetchOptions {
   idleTimeout?: number;
 }
 
-export interface TunnelFetchInit {
+export interface ProxyFetchInit {
   method?: string;
   headers?: Record<string, string>;
   body?: Uint8Array;
@@ -36,8 +40,8 @@ export interface TunnelFetchInit {
   onEvent?: OnEvent;
 }
 
-export interface TunnelFetch {
-  (url: string | URL, init?: TunnelFetchInit): Promise<Response>;
+export interface ProxyFetch {
+  (url: string | URL, init?: ProxyFetchInit): Promise<Response>;
   // close the connections being kept
   close(): void;
 }
@@ -128,7 +132,7 @@ async function readResponse(reader: StreamReader, method: string): Promise<Parse
   return { status, statusText, headers, body, reusable };
 }
 
-function encodeRequest(url: URL, method: string, init: TunnelFetchInit): Uint8Array {
+function encodeRequest(url: URL, method: string, init: ProxyFetchInit): Uint8Array {
   const headers: Record<string, string> = {
     'Host': url.host,
     // the body is read as it arrives, with no decompression
@@ -147,7 +151,7 @@ function encodeRequest(url: URL, method: string, init: TunnelFetchInit): Uint8Ar
   return init.body ? concatBytes([head, init.body]) : head;
 }
 
-export function createTunnelFetch(options: TunnelFetchOptions = {}): TunnelFetch {
+export function createProxyFetch(options: ProxyFetchOptions = {}): ProxyFetch {
   const idleTimeout = options.idleTimeout ?? DEFAULT_IDLE_TIMEOUT;
   const idle = new Map<string, Kept[]>();
   const open = new Set<Kept>();
@@ -157,7 +161,7 @@ export function createTunnelFetch(options: TunnelFetchOptions = {}): TunnelFetch
     url: URL,
     port: number,
     proxy: Proxy | undefined,
-    init: TunnelFetchInit
+    init: ProxyFetchInit
   ): Promise<Kept> {
     const host = url.hostname.replace(/^\[|\]$/g, '');
     const where = formatHostPort(host, port);
@@ -253,7 +257,7 @@ export function createTunnelFetch(options: TunnelFetchOptions = {}): TunnelFetch
     }
   }
 
-  const tunnelFetch = async (input: string | URL, init: TunnelFetchInit = {}) => {
+  const proxyFetch = async (input: string | URL, init: ProxyFetchInit = {}) => {
     if (closed) throw new ConnectionError('This fetch was closed');
     if (init.signal?.aborted) throw init.signal.reason;
     const url = new URL(input);
@@ -293,7 +297,7 @@ export function createTunnelFetch(options: TunnelFetchOptions = {}): TunnelFetch
     });
   };
 
-  return Object.assign(tunnelFetch, {
+  return Object.assign(proxyFetch, {
     close() {
       closed = true;
       idle.clear();
