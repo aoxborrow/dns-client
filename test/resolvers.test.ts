@@ -565,6 +565,43 @@ describe('AuthoritativeResolver', () => {
     expect(answer.serverName).toBe('ns1.dnshost.net');
   });
 
+  it('asks a caller-supplied lookup for a nameserver address before resolving it', async () => {
+    const asked: string[] = [];
+    const answer = await resolver({
+      resolveNameserver: name => {
+        asked.push(name);
+        return name === 'ns1.dnshost.net' ? ['10.2.0.53'] : undefined;
+      },
+    }).query('glueless.com', 'A');
+    expect(asked).toEqual(['ns1.dnshost.net']);
+    // no walk from the root for the nameserver's own name
+    expect(network.log()).toEqual([
+      '10.0.0.1 glueless.com A',
+      '10.0.1.1 glueless.com A',
+      '10.2.0.53 glueless.com A',
+    ]);
+    expect(answer.serverName).toBe('ns1.dnshost.net');
+  });
+
+  it('falls back to resolving from the root when the lookup has nothing', async () => {
+    const answer = await resolver({ resolveNameserver: () => undefined }).query(
+      'glueless.com',
+      'A'
+    );
+    expect(answer.records).toHaveLength(1);
+    expect(network.queries.some(query => query.name === 'ns1.dnshost.net')).toBe(true);
+  });
+
+  it('tries nameservers in the order it is given', async () => {
+    // reverse order: ns2 before ns1
+    const answer = await resolver({ nameserverOrder: (a, b) => b.localeCompare(a) }).query(
+      'example.com',
+      'A'
+    );
+    expect(answer.server).toBe('10.1.0.2');
+    expect(answer.serverName).toBe('ns2.example.com');
+  });
+
   describe('servers that do not help', () => {
     it('moves on from one that cannot be reached, and says so in the trace', async () => {
       const answer = await resolver({}, { '10.1.0.1': undefined }).query('example.com', 'A');
@@ -593,6 +630,18 @@ describe('AuthoritativeResolver', () => {
       const answer = await resolver({}, { '10.0.0.1': undefined }).query('example.com', 'A');
       expect(answer.records).toHaveLength(1);
       expect(answer.trace?.map(hop => hop.server).slice(0, 2)).toEqual(['10.0.0.1', '10.0.0.2']);
+    });
+
+    it('does not ask the other addresses of a server that has answered with a refusal', async () => {
+      // ns1 has an IPv4 and an IPv6 address, and refuses on both
+      const lame = zoneServer({ zone: 'example.com', rcode: 5 });
+      const answer = await resolver(
+        { addressFamily: 'both' },
+        { '10.1.0.1': lame, '2001:db8::1': lame }
+      ).query('example.com', 'A');
+      expect(answer.server).toBe('10.1.0.2');
+      // refused once is refused: straight on to ns2
+      expect(network.queries.some(query => query.server === '2001:db8::1')).toBe(false);
     });
 
     it('returns the refusal when every server of the zone refuses', async () => {

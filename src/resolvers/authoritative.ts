@@ -47,6 +47,14 @@ export interface AuthoritativeResolverOptions
   // addresses for nameservers by name, used before asking for them. Also what puts a
   // name beside an address in the trace
   hosts?: Readonly<Record<string, string | readonly string[]>>;
+  // the order a zone's nameservers are tried in, as a comparator over their names.
+  // Default: canonical DNS name order, which is the same on every run
+  nameserverOrder?: (a: string, b: string) => number;
+  // find a nameserver's addresses some other way before it is resolved from the root: a
+  // local cache, another resolver. Return nothing to leave it to the resolver
+  resolveNameserver?: (
+    name: string
+  ) => Promise<readonly string[] | undefined> | readonly string[] | undefined;
   // remember delegations and nameserver addresses between queries, for as long as their
   // TTLs allow. Default true. With false every query starts again from the root
   cache?: boolean;
@@ -326,7 +334,9 @@ export class AuthoritativeResolver {
               };
               if (outcome.loop) loop = outcome.reason;
               else lastLame = result;
-              continue;
+              // it answered, so it can be reached, and its other addresses are the same
+              // server with the same thing to say: on to the zone's next nameserver
+              continue servers;
             }
             step = { result, outcome };
             break servers;
@@ -417,7 +427,7 @@ export class AuthoritativeResolver {
       .filter(record => canonicalName(record.name) === child)
       .map(record => canonicalName(record.target))
       .filter((target, index, all) => all.indexOf(target) === index)
-      .sort(compareNames)
+      .sort(this.options.nameserverOrder ?? compareNames)
       .map(target => {
         const addresses = glue
           .filter(
@@ -456,6 +466,20 @@ export class AuthoritativeResolver {
     if (run.resolving.has(name) || nesting >= MAX_NESTING) return [];
     run.resolving.add(name);
     try {
+      // the caller's own way of finding it comes first
+      if (this.options.resolveNameserver) {
+        const supplied = await this.options.resolveNameserver(name);
+        if (supplied?.length) {
+          const normalized = supplied.map(normalizeAddress);
+          for (const address of normalized) this.names.set(address, name);
+          const usable = this.usable(normalized);
+          run.knowledge.addresses.set(name, {
+            addresses: usable,
+            expires: Date.now() + DEFAULT_CUT_TTL * 1000,
+          });
+          return (server.addresses = usable);
+        }
+      }
       const family = this.options.addressFamily ?? 'ipv4';
       const types = family === 'ipv4' ? ['A'] : family === 'ipv6' ? ['AAAA'] : ['A', 'AAAA'];
       const found: string[] = [];
