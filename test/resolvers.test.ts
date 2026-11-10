@@ -612,6 +612,24 @@ describe('AuthoritativeResolver', () => {
     expect(answer.serverName).toBe('ns2.example.com');
   });
 
+  it('names the answering server as the nameserver it asked, when two share an address', async () => {
+    // ns1 and ns3 are the same machine. Asked as ns1, it is ns1 that answered
+    const shared = zoneServer({
+      zone: 'com',
+      delegations: {
+        'shared.com': { 'ns1.shared.com': ['10.5.0.1'], 'ns3.shared.com': ['10.5.0.1'] },
+      },
+    });
+    const zone = zoneServer({ zone: 'shared.com', records: [['shared.com', 'A', '192.0.2.5']] });
+    const answer = await resolver({}, { '10.0.1.1': shared, '10.5.0.1': zone }).query(
+      'shared.com',
+      'A'
+    );
+    expect(answer.server).toBe('10.5.0.1');
+    expect(answer.serverName).toBe('ns1.shared.com');
+    expect(answer.trace?.at(-1)?.serverName).toBe('ns1.shared.com');
+  });
+
   it('uses nothing but addresses as nameserver addresses', async () => {
     // a hint, a host map entry or a lookup result that is not an address is dropped: it
     // is never read as a name to resolve, or as a host with a port of its own

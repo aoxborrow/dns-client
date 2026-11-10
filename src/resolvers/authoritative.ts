@@ -236,7 +236,10 @@ export class AuthoritativeResolver {
           name: asked,
           before: aliases,
           trace,
-          serverName: this.names.get(normalizeAddress(result.server)),
+          // the name of the nameserver that was asked: two names can share an address
+          serverName:
+            trace.filter(hop => hop.server === result.server).at(-1)?.serverName ??
+            this.names.get(normalizeAddress(result.server)),
           elapsed: now() - started,
           attempts: run.attempts,
         });
