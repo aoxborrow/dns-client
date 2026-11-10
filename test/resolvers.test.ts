@@ -630,6 +630,40 @@ describe('AuthoritativeResolver', () => {
     expect(answer.trace?.at(-1)?.serverName).toBe('ns1.shared.com');
   });
 
+  it('tries the addresses of one nameserver in the same order on every run', async () => {
+    // glue arrives in whatever order the parent sends it: lowest address first, or the
+    // order the caller gives
+    const parent = (addresses: string[]) =>
+      zoneServer({ zone: 'com', delegations: { 'glued.com': { 'ns1.glued.com': addresses } } });
+    const zone = zoneServer({ zone: 'glued.com', records: [['glued.com', 'A', '192.0.2.6']] });
+    const servers = { '10.6.0.9': zone, '10.6.0.20': zone, '10.6.0.100': zone };
+
+    for (const glue of [
+      ['10.6.0.100', '10.6.0.9', '10.6.0.20'],
+      ['10.6.0.20', '10.6.0.100', '10.6.0.9'],
+    ]) {
+      const answer = await resolver({}, { '10.0.1.1': parent(glue), ...servers }).query(
+        'glued.com',
+        'A'
+      );
+      expect(answer.server).toBe('10.6.0.9');
+    }
+
+    const answer = await resolver(
+      { addressOrder: (a, b) => b.localeCompare(a) },
+      { '10.0.1.1': parent(['10.6.0.100', '10.6.0.9', '10.6.0.20']), ...servers }
+    ).query('glued.com', 'A');
+    expect(answer.server).toBe('10.6.0.9');
+    expect(
+      (
+        await resolver(
+          { addressOrder: (a, b) => a.localeCompare(b) },
+          { '10.0.1.1': parent(['10.6.0.100', '10.6.0.9', '10.6.0.20']), ...servers }
+        ).query('glued.com', 'A')
+      ).server
+    ).toBe('10.6.0.100');
+  });
+
   it('uses nothing but addresses as nameserver addresses', async () => {
     // a hint, a host map entry or a lookup result that is not an address is dropped: it
     // is never read as a name to resolve, or as a host with a port of its own

@@ -9,6 +9,7 @@ import { exchange, hasTransportOptions } from '../exchange';
 import type { ExchangeResult } from '../exchange';
 import { RCODES, rcodeName } from '../protocol/header';
 import { typeCode, typeName } from '../protocol/types';
+import { parseIpv4, parseIpv6 } from '../records/addresses';
 import { decodeRecords } from '../records/decode';
 import type { DnsRecord, KnownRecordType, RecordOf } from '../records/types';
 import { isIp, isIpv4, isIpv6, normalizeAddress } from '../transports/endpoint';
@@ -60,6 +61,9 @@ export interface AuthoritativeResolverOptions
   // the order a zone's nameservers are tried in, as a comparator over their names.
   // Default: canonical DNS name order, which is the same on every run
   nameserverOrder?: (a: string, b: string) => number;
+  // the order one nameserver's addresses are tried in, within a family. Default: by the
+  // address as a number, which is the same on every run whatever order they arrived in
+  addressOrder?: (a: string, b: string) => number;
   // find a nameserver's addresses some other way before it is resolved from the root: a
   // local cache, another resolver. Return nothing to leave it to the resolver
   resolveNameserver?: (
@@ -124,6 +128,17 @@ interface Run {
   attempts: number;
   // nameserver names being looked up right now, to notice a lookup that needs itself
   resolving: Set<string>;
+}
+
+// two addresses of one family by their value
+function compareAddresses(a: string, b: string): number {
+  const x = parseIpv4(a) ?? parseIpv6(a.split('%')[0]);
+  const y = parseIpv4(b) ?? parseIpv6(b.split('%')[0]);
+  if (!x || !y || x.length !== y.length) return 0;
+  for (let index = 0; index < x.length; index++) {
+    if (x[index] !== y[index]) return x[index] - y[index];
+  }
+  return 0;
 }
 
 const DEFAULT_MAX_HOPS = 40;
@@ -286,9 +301,10 @@ export class AuthoritativeResolver {
   // the addresses of a nameserver this resolver is willing to use
   private usable(addresses: readonly string[]): string[] {
     const family = this.options.addressFamily ?? 'ipv4';
-    const v4 = addresses.filter(isIpv4);
+    const order = this.options.addressOrder ?? compareAddresses;
+    const v4 = addresses.filter(isIpv4).sort(order);
     // only addresses: anything else here would be read as a name, or a host and a port
-    const v6 = addresses.filter(isIpv6);
+    const v6 = addresses.filter(isIpv6).sort(order);
     if (family === 'ipv4') return v4;
     if (family === 'ipv6') return v6;
     return [...v4, ...v6];
