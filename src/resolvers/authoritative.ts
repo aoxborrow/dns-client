@@ -1,4 +1,10 @@
-import { DnsError, errorData, InvalidQueryError, InvalidResponseError } from '../errors';
+import {
+  DnsError,
+  errorData,
+  InvalidQueryError,
+  InvalidResponseError,
+  TimeoutError,
+} from '../errors';
 import { exchange, hasTransportOptions } from '../exchange';
 import type { ExchangeResult } from '../exchange';
 import { RCODES, rcodeName } from '../protocol/header';
@@ -44,6 +50,10 @@ export interface AuthoritativeResolverOptions
   // how many servers may be asked on the way to one answer, nameserver address lookups
   // included. Default 40
   maxHops?: number;
+  // how long one answer may take altogether, in milliseconds. `timeout` is the patience
+  // with one server; a zone whose servers all stay silent would otherwise cost that for
+  // each address of each of them. Default 30000
+  totalTimeout?: number;
   // addresses for nameservers by name, used before asking for them. Also what puts a
   // name beside an address in the trace
   hosts?: Readonly<Record<string, string | readonly string[]>>;
@@ -76,6 +86,7 @@ export interface AuthoritativeQueryOptions extends Omit<
   'recursionDesired' | 'transport'
 > {
   transport?: 'udp' | 'tcp';
+  totalTimeout?: number;
   signal?: AbortSignal;
 }
 
@@ -105,6 +116,9 @@ interface Run {
   knowledge: Knowledge;
   settings: QuerySettings;
   signal: AbortSignal | undefined;
+  // when the whole query gives up, on the clock `now()` reads, and the time it was given
+  deadline: number;
+  totalTimeout: number;
   // servers asked so far, against `maxHops`
   hops: number;
   attempts: number;
@@ -113,6 +127,9 @@ interface Run {
 }
 
 const DEFAULT_MAX_HOPS = 40;
+const DEFAULT_TOTAL_TIMEOUT = 30_000;
+// the patience with one server when the caller names none: the same as `exchange` has
+const DEFAULT_TIMEOUT = 5000;
 const DEFAULT_MAX_ALIASES = 8;
 // how deep nameserver lookups may nest: a nameserver whose own nameserver needs looking up
 const MAX_NESTING = 4;
@@ -175,7 +192,8 @@ export class AuthoritativeResolver {
     type: string | number,
     options: AuthoritativeQueryOptions = {}
   ): Promise<Answer> {
-    const { signal, ...settings } = options;
+    const { signal, totalTimeout: perQuery, ...settings } = options;
+    const totalTimeout = perQuery ?? this.options.totalTimeout ?? DEFAULT_TOTAL_TIMEOUT;
     const started = now();
     let asked: string;
     try {
@@ -192,6 +210,8 @@ export class AuthoritativeResolver {
         this.options.cache === false ? { cuts: new Map(), addresses: new Map() } : this.knowledge,
       settings: { ...settings },
       signal,
+      deadline: started + totalTimeout,
+      totalTimeout,
       hops: 0,
       attempts: 0,
       resolving: new Set(),
@@ -203,7 +223,13 @@ export class AuthoritativeResolver {
     const visited = new Set([asked]);
     let current = asked;
     for (;;) {
-      const { result, outcome } = await this.resolve(run, current, typeText, trace, 0);
+      const { result, outcome } = await this.resolve(run, current, typeText, trace, 0).catch(
+        (error: unknown) => {
+          // a walk that fails still says how far it got
+          if (error instanceof DnsError) error.trace ??= trace;
+          throw error;
+        }
+      );
       if (outcome.kind !== 'alias' || this.options.followCnames !== true) {
         return buildAnswer(result, {
           strict: this.options.strict,
@@ -293,11 +319,15 @@ export class AuthoritativeResolver {
       let step: { result: ExchangeResult; outcome: Outcome } | undefined;
       let lastError: DnsError | undefined;
       let lastLame: ExchangeResult | undefined;
+      const refusals = new Set<number>();
       let loop: string | undefined;
 
       servers: for (const server of cut.servers) {
+        if (now() >= run.deadline) break;
         const addresses = await this.addressesOf(run, server, nesting);
         for (const address of addresses) {
+          // out of time: what the zone's servers have said so far is all there will be
+          if (now() >= run.deadline) break servers;
           if (++run.hops > maxHops) {
             throw new InvalidResponseError(
               `Gave up resolving ${name} after asking ${maxHops} servers`,
@@ -333,8 +363,18 @@ export class AuthoritativeResolver {
                 message: outcome.reason,
                 retryable: false,
               };
-              if (outcome.loop) loop = outcome.reason;
-              else lastLame = result;
+              if (outcome.loop) {
+                loop = outcome.reason;
+                continue servers;
+              }
+              lastLame = result;
+              // two of a zone's servers refusing the same way is the zone's answer. A
+              // type an operator will not serve (RRSIG, ANY) is refused by every one of
+              // its servers, and asking all eight costs more than the rare third opinion
+              // is worth
+              const rcode = result.message.rcode;
+              if (rcode !== 0 && refusals.has(rcode)) break servers;
+              refusals.add(rcode);
               // it answered, so it can be reached, and its other addresses are the same
               // server with the same thing to say: on to the zone's next nameserver
               continue servers;
@@ -363,6 +403,12 @@ export class AuthoritativeResolver {
         if (lastLame) return { result: lastLame, outcome: { kind: 'answer' } };
         if (loop) throw new InvalidResponseError(`Referral loop: ${loop}`, { query: name, type });
         if (lastError) throw lastError;
+        if (now() >= run.deadline) {
+          throw new TimeoutError(`No answer for ${name} ${type} within ${run.totalTimeout} ms`, {
+            query: name,
+            type,
+          });
+        }
         throw new InvalidResponseError(
           `No usable nameserver address for ${cut.zone === '.' ? 'the root' : cut.zone}`,
           { query: name, type }
@@ -535,7 +581,8 @@ export class AuthoritativeResolver {
           udpPayloadSize: merged.udpPayloadSize,
           ednsOptions: merged.ednsOptions,
           edns: merged.edns,
-          timeout: merged.timeout,
+          // no longer than what is left of the time for the whole query
+          timeout: Math.max(1, Math.min(merged.timeout ?? DEFAULT_TIMEOUT, run.deadline - now())),
           tcpFallback: merged.tcpFallback,
           // the zone has other servers to turn to, so less patience with each
           retries: merged.retries ?? 1,

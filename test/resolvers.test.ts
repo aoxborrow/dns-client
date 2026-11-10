@@ -8,7 +8,11 @@ import {
   TimeoutError,
 } from '../src/errors';
 import { AuthoritativeResolver, createLruCache, Resolver } from '../src/resolvers/index';
-import type { AuthoritativeResolverOptions, ResolverOptions } from '../src/resolvers/index';
+import type {
+  AuthoritativeResolverOptions,
+  ResolverOptions,
+  TraceHop,
+} from '../src/resolvers/index';
 import { cacheLifetime } from '../src/resolvers/resolver';
 import { toEndpoint } from '../src/transports/endpoint';
 import type { DnsEvent } from '../src/transports/types';
@@ -399,6 +403,12 @@ describe('AuthoritativeResolver', () => {
       },
       'glueless.com': { 'ns1.dnshost.net': [] },
       'loop.com': { 'ns.loop.com': ['10.9.0.1'] },
+      'many.com': {
+        'ns1.many.com': ['10.4.0.1'],
+        'ns2.many.com': ['10.4.0.2'],
+        'ns3.many.com': ['10.4.0.3'],
+        'ns4.many.com': ['10.4.0.4'],
+      },
       'selfhosted.com': { 'ns.selfhosted.com': [] },
     },
   });
@@ -678,11 +688,91 @@ describe('AuthoritativeResolver', () => {
       expect(answer.records).toEqual([]);
     });
 
+    it('takes two servers refusing the same way as the answer of the zone', async () => {
+      // four nameservers that all refuse, as an operator's servers do for a type it does
+      // not serve: the second one settles it
+      const refuses = zoneServer({ zone: 'many.com', rcode: 5 });
+      const answer = await resolver(
+        {},
+        { '10.4.0.1': refuses, '10.4.0.2': refuses, '10.4.0.3': refuses, '10.4.0.4': refuses }
+      ).query('many.com', 'RRSIG');
+      expect(answer.rcodeName).toBe('REFUSED');
+      expect(answer.server).toBe('10.4.0.2');
+      expect(network.log().slice(2)).toEqual([
+        '10.4.0.1 many.com RRSIG',
+        '10.4.0.2 many.com RRSIG',
+      ]);
+    });
+
+    it('keeps asking while the servers of a zone fail in different ways', async () => {
+      const many = zoneServer({ zone: 'many.com', records: [['many.com', 'A', '192.0.2.9']] });
+      const answer = await resolver(
+        {},
+        {
+          '10.4.0.1': zoneServer({ zone: 'many.com', rcode: 5 }),
+          '10.4.0.2': zoneServer({ zone: 'many.com', rcode: 2 }),
+          '10.4.0.3': many,
+          '10.4.0.4': many,
+        }
+      ).query('many.com', 'A');
+      expect(answer.server).toBe('10.4.0.3');
+      expect(answer.records.map(record => record.address)).toEqual(['192.0.2.9']);
+    });
+
     it('throws when no server of the zone can be reached', async () => {
       const error = await resolver({}, { '10.1.0.1': undefined, '10.1.0.2': undefined })
         .query('example.com', 'A')
         .catch(caught => caught);
       expect(error).toBeInstanceOf(ConnectionError);
+    });
+
+    it('says how far it got when it fails', async () => {
+      const error = await resolver({}, { '10.1.0.1': undefined, '10.1.0.2': undefined })
+        .query('example.com', 'A')
+        .catch(caught => caught);
+      expect(
+        error.trace.map((hop: TraceHop) => [hop.server, hop.rcodeName, hop.error?.name])
+      ).toEqual([
+        ['10.0.0.1', 'NOERROR', undefined],
+        ['10.0.1.1', 'NOERROR', undefined],
+        ['10.1.0.1', undefined, 'ConnectionError'],
+        ['10.1.0.2', undefined, 'ConnectionError'],
+      ]);
+    });
+
+    it('gives the whole query no longer than its total timeout', async () => {
+      // four servers that say nothing, 40 ms of patience with each, 60 ms altogether:
+      // the first is waited out, the second is cut short, and that is the time gone. A
+      // timer can fire a moment early, so one more may be asked for what is left of it
+      const silent = () => undefined;
+      const started = Date.now();
+      const error = await resolver(
+        { timeout: 40, totalTimeout: 60 },
+        { '10.4.0.1': silent, '10.4.0.2': silent, '10.4.0.3': silent, '10.4.0.4': silent }
+      )
+        .query('many.com', 'A')
+        .catch(caught => caught);
+      expect(error).toBeInstanceOf(TimeoutError);
+      expect(Date.now() - started).toBeLessThan(120);
+      const asked = network.log().slice(2);
+      expect(asked.slice(0, 2)).toEqual(['10.4.0.1 many.com A', '10.4.0.2 many.com A']);
+      expect(asked).not.toContain('10.4.0.4 many.com A');
+      expect(error.trace.length).toBeGreaterThanOrEqual(4);
+    });
+
+    it('takes the total timeout for one query as well', async () => {
+      const silent = () => undefined;
+      const started = Date.now();
+      const error = await resolver(
+        { timeout: 200 },
+        { '10.4.0.1': silent, '10.4.0.2': silent, '10.4.0.3': silent, '10.4.0.4': silent }
+      )
+        .query('many.com', 'A', { totalTimeout: 30 })
+        .catch(caught => caught);
+      expect(error).toBeInstanceOf(TimeoutError);
+      // far short of the 200 ms one server would have been given
+      expect(Date.now() - started).toBeLessThan(150);
+      expect(network.log()).not.toContain('10.4.0.3 many.com A');
     });
 
     it('times out on a server that says nothing, then tries the next', async () => {

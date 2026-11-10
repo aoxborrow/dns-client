@@ -1,5 +1,6 @@
 import { rcodeName } from './protocol/header';
 import type { ExtendedErrorOption } from './records/edns';
+import type { TraceHop } from './resolvers/answer';
 import type { TransportName } from './transports/types';
 
 // errors the library throws. Each carries `retryable`: whether trying the same thing
@@ -43,6 +44,8 @@ export class DnsError extends Error {
   rcode?: number;
   rcodeName?: string;
   extendedErrors?: ExtendedErrorOption[];
+  // from the authoritative resolver: the servers asked before the query failed
+  trace?: TraceHop[];
 
   constructor(message: string, options: DnsErrorOptions = {}) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });

@@ -61,7 +61,12 @@ Each resolver has one `query()`, and both return the same answer:
 
 A name that does not exist is an answer (`rcodeName: 'NXDOMAIN'`, no records), not an
 error. An error means no usable response arrived: a `DnsError` subclass with a `retryable`
-flag and the `server`, `query`, `type` and `transport` it came from.
+flag and the `server`, `query`, `type` and `transport` it came from. An error from
+`AuthoritativeResolver` also carries `trace`, the servers asked before it failed.
+
+`timeout` is the patience with one server. `AuthoritativeResolver` also takes
+`totalTimeout` (30 seconds by default), the time one answer may take altogether, since a
+zone whose servers all stay silent would otherwise cost a timeout for each of them.
 
 `Resolver` caches by TTL, shares one query between callers asking the same thing at once,
 and moves to the next server when one fails. `AuthoritativeResolver` remembers delegations,
