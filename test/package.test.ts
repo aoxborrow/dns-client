@@ -24,8 +24,10 @@ interface Manifest {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')) as Manifest;
 
-// './records' -> 'records/index', '.' -> 'index'
-const distBase = (subpath: string) => (subpath === '.' ? 'index' : `${subpath.slice(2)}/index`);
+// the build keeps the source layout: './src/records/index.ts' -> 'records/index',
+// './src/transports/udp.ts' -> 'transports/udp'
+const distBase = (subpath: string) =>
+  manifest.exports[subpath].replace(/^\.\/src\//, '').replace(/\.ts$/, '');
 
 describe('package manifest', () => {
   it('has no runtime dependencies', () => {

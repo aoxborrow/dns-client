@@ -12,7 +12,11 @@
   "exports": {
     ".": "./src/index.ts",
     "./records": "./src/records/index.ts",
-    "./wire": "./src/wire/index.ts"
+    "./wire": "./src/wire/index.ts",
+    "./transports/udp": "./src/transports/udp.ts",
+    "./transports/tcp": "./src/transports/tcp.ts",
+    "./transports/tls": "./src/transports/tls.ts",
+    "./transports/doh": "./src/transports/doh.ts"
   },
   "files": [
     "dist",
@@ -54,6 +58,46 @@
           "types": "./dist/wire/index.d.cts",
           "default": "./dist/wire/index.cjs"
         }
+      },
+      "./transports/udp": {
+        "import": {
+          "types": "./dist/transports/udp.d.ts",
+          "default": "./dist/transports/udp.js"
+        },
+        "require": {
+          "types": "./dist/transports/udp.d.cts",
+          "default": "./dist/transports/udp.cjs"
+        }
+      },
+      "./transports/tcp": {
+        "import": {
+          "types": "./dist/transports/tcp.d.ts",
+          "default": "./dist/transports/tcp.js"
+        },
+        "require": {
+          "types": "./dist/transports/tcp.d.cts",
+          "default": "./dist/transports/tcp.cjs"
+        }
+      },
+      "./transports/tls": {
+        "import": {
+          "types": "./dist/transports/tls.d.ts",
+          "default": "./dist/transports/tls.js"
+        },
+        "require": {
+          "types": "./dist/transports/tls.d.cts",
+          "default": "./dist/transports/tls.cjs"
+        }
+      },
+      "./transports/doh": {
+        "import": {
+          "types": "./dist/transports/doh.d.ts",
+          "default": "./dist/transports/doh.js"
+        },
+        "require": {
+          "types": "./dist/transports/doh.d.cts",
+          "default": "./dist/transports/doh.cjs"
+        }
       }
     }
   },
@@ -64,12 +108,13 @@
     "check:browser": "node scripts/browser-check.mjs",
     "check:pack": "node scripts/pack-check.mjs",
     "capture": "yarn run -T tsx scripts/capture-messages.ts",
+    "bench": "yarn run -T tsx bench/local.ts",
     "lint": "yarn typecheck && yarn eslint && yarn format",
     "lint:fix": "yarn eslint:fix && yarn format:fix",
     "eslint": "yarn run -T eslint --cache --cache-location .eslintcache --max-warnings 0 .",
     "eslint:fix": "yarn run -T eslint --cache --cache-location .eslintcache --max-warnings 0 . --fix",
-    "format": "yarn run -T prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"scripts/**/*.mjs\" eslint.config.mjs tsup.config.ts vitest.config.ts",
-    "format:fix": "yarn run -T prettier --write --list-different \"src/**/*.ts\" \"test/**/*.ts\" \"scripts/**/*.mjs\" eslint.config.mjs tsup.config.ts vitest.config.ts"
+    "format": "yarn run -T prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"bench/**/*.ts\" \"scripts/**/*.mjs\" eslint.config.mjs tsup.config.ts vitest.config.ts",
+    "format:fix": "yarn run -T prettier --write --list-different \"src/**/*.ts\" \"test/**/*.ts\" \"bench/**/*.ts\" \"scripts/**/*.mjs\" eslint.config.mjs tsup.config.ts vitest.config.ts"
   },
   "devDependencies": {
     "@types/dns-packet": "^5.6.5",
