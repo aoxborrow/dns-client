@@ -51,3 +51,76 @@ export function latin1Encode(text: string): Uint8Array {
   for (let i = 0; i < text.length; i++) out[i] = text.charCodeAt(i) & 0xff;
   return out;
 }
+
+const HEX = '0123456789abcdef';
+
+// lowercase hex
+export function toHex(bytes: Uint8Array): string {
+  let out = '';
+  for (const byte of bytes) out += HEX[byte >> 4] + HEX[byte & 0x0f];
+  return out;
+}
+
+// standard base64 with padding
+export function toBase64(bytes: Uint8Array): string {
+  return btoa(latin1Decode(bytes));
+}
+
+const BASE32HEX = '0123456789ABCDEFGHIJKLMNOPQRSTUV';
+
+// base32 with the extended hex alphabet and no padding (RFC 4648 §7), as NSEC3 uses it
+export function toBase32Hex(bytes: Uint8Array): string {
+  let out = '';
+  let buffer = 0;
+  let bits = 0;
+  for (const byte of bytes) {
+    buffer = (buffer << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += BASE32HEX[(buffer >>> (bits - 5)) & 0x1f];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) out += BASE32HEX[(buffer << (5 - bits)) & 0x1f];
+  return out;
+}
+
+const utf8 = new TextDecoder('utf-8');
+
+// text for people: UTF-8, with anything undecodable replaced rather than thrown
+export function utf8Decode(bytes: Uint8Array): string {
+  return utf8.decode(bytes);
+}
+
+export function formatIpv4(bytes: Uint8Array): string {
+  return `${bytes[0]}.${bytes[1]}.${bytes[2]}.${bytes[3]}`;
+}
+
+// the canonical text form of RFC 5952: lowercase, no leading zeros, and the longest run
+// of two or more zero groups (the first, on a tie) written as `::`
+export function formatIpv6(bytes: Uint8Array): string {
+  const groups: number[] = [];
+  for (let i = 0; i < 16; i += 2) groups.push(readU16(bytes, i));
+
+  let bestStart = -1;
+  let bestLength = 0;
+  for (let start = 0; start < 8;) {
+    if (groups[start] !== 0) {
+      start += 1;
+      continue;
+    }
+    let end = start;
+    while (end < 8 && groups[end] === 0) end += 1;
+    if (end - start > bestLength) {
+      bestStart = start;
+      bestLength = end - start;
+    }
+    start = end;
+  }
+
+  const text = groups.map(group => group.toString(16));
+  if (bestLength < 2) return text.join(':');
+  const head = text.slice(0, bestStart).join(':');
+  const tail = text.slice(bestStart + bestLength).join(':');
+  return `${head}::${tail}`;
+}

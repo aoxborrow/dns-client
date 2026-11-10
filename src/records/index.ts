@@ -7,3 +7,6 @@ export { HEADER_FLAGS, OPCODES, rcodeName, RCODES } from '../protocol/header';
 export type { RcodeName } from '../protocol/header';
 export { RECORD_TYPES, typeCode, typeName } from '../protocol/types';
 export type { RecordTypeName } from '../protocol/types';
+export { decodeRecord, decodeRecords, isKnownRecordType, serviceParamName } from './decode';
+export type { DecodeOptions } from './decode';
+export type * from './types';

@@ -10,22 +10,28 @@ export interface CorpusMessage {
   response: Uint8Array;
 }
 
-const file = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '..',
-  'fixtures',
-  'messages.json'
-);
+const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
 
 const fromBase64 = (text: string) => Uint8Array.from(Buffer.from(text, 'base64'));
 
-export const CORPUS: CorpusMessage[] = (
-  JSON.parse(readFileSync(file, 'utf8')) as { label: string; query: string; response: string }[]
-).map(entry => ({
-  label: entry.label,
-  query: fromBase64(entry.query),
-  response: fromBase64(entry.response),
-}));
+function load(name: string): CorpusMessage[] {
+  const entries = JSON.parse(readFileSync(path.join(fixtures, name), 'utf8')) as {
+    label: string;
+    query: string;
+    response: string;
+  }[];
+  return entries.map(entry => ({
+    label: entry.label,
+    query: fromBase64(entry.query),
+    response: fromBase64(entry.response),
+  }));
+}
+
+// responses recorded from the DNS.Tools resolver walking real delegations
+export const CORPUS: CorpusMessage[] = load('messages.json');
+
+// responses captured for the record types the corpus lacks (scripts/capture-messages.ts)
+export const CAPTURED: CorpusMessage[] = load('captured.json');
 
 // a small deterministic random source, so a failing fuzz case can be reproduced
 export function seededRandom(seed: number): () => number {

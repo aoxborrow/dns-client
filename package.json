@@ -63,6 +63,7 @@
     "test": "yarn run -T vitest run",
     "check:browser": "node scripts/browser-check.mjs",
     "check:pack": "node scripts/pack-check.mjs",
+    "capture": "yarn run -T tsx scripts/capture-messages.ts",
     "lint": "yarn typecheck && yarn eslint && yarn format",
     "lint:fix": "yarn eslint:fix && yarn format:fix",
     "eslint": "yarn run -T eslint --cache --cache-location .eslintcache --max-warnings 0 .",
