@@ -71,6 +71,8 @@ async function main() {
   resolver.setServers([`${server.address}:${server.port}`]);
 
   const transports = createTransports();
+  // TCP connections kept open and shared, which is opt-in
+  const pooled = createTransports({ pipeline: true });
   const options = { port: server.port, transports };
 
   // the cache is off, so every question goes to the server
@@ -97,8 +99,13 @@ async function main() {
     {
       label: 'dns-client single query, TCP pipelined',
       ask: async name =>
-        (await exchange({ name, type: 'A' }, server.address, { ...options, transport: 'tcp' }))
-          .message.answers.length,
+        (
+          await exchange({ name, type: 'A' }, server.address, {
+            ...options,
+            transports: pooled,
+            transport: 'tcp',
+          })
+        ).message.answers.length,
     },
   ];
 
@@ -107,6 +114,7 @@ async function main() {
   console.table(rows);
 
   transports.close();
+  pooled.close();
   await server.close();
 }
 

@@ -287,86 +287,123 @@ describe('exchange', () => {
       expect(result.bytes).toEqual(answerTo(result.query.bytes));
     });
 
-    it('pipelines a burst of queries over one connection', async () => {
+    it('gives each query a connection of its own by default', async () => {
       const options = tcp(await serve(({ query }) => ({ response: answerTo(query) })));
-      const results = await Promise.all(
-        Array.from({ length: 25 }, (_, index) =>
+      await Promise.all(
+        Array.from({ length: 4 }, (_, index) =>
           exchange({ name: `host${index}.example.com`, type: 'A' }, server.address, options)
         )
       );
-      results.forEach((result, index) => {
-        expect(result.message.questions[0].name).toBe(`host${index}.example.com`);
-      });
-      expect(server.tcpConnections).toBe(1);
+      await exchange(QUESTION, server.address, options);
+      // what dig does, and what every server can cope with
+      expect(server.tcpConnections).toBe(5);
     });
 
-    it('matches answers that come back out of order', async () => {
+    it('is not held up by a server that answers only the first query on a connection', async () => {
+      // the first query on each connection is answered, the rest are ignored, and the
+      // connection stays open: what some large authoritative servers do
+      const seen = new Map<string, number>();
       const options = tcp(
-        await serve(({ query }) => ({
-          response: answerTo(query),
-          delayMs: askedName(query) === 'slow.example.com' ? 60 : 0,
-        }))
+        await serve(({ query }) => {
+          const connection = String(server.tcpConnections);
+          const count = (seen.get(connection) ?? 0) + 1;
+          seen.set(connection, count);
+          return count === 1 ? { response: answerTo(query) } : undefined;
+        })
       );
-      const [slow, fast] = await Promise.all([
-        exchange({ name: 'slow.example.com', type: 'A' }, server.address, options),
-        exchange({ name: 'fast.example.com', type: 'A' }, server.address, options),
-      ]);
-      expect(slow.message.questions[0].name).toBe('slow.example.com');
-      expect(fast.message.questions[0].name).toBe('fast.example.com');
-      expect(fast.elapsed).toBeLessThan(slow.elapsed);
-    });
-
-    it('reuses the connection for a later query', async () => {
-      const options = tcp(await serve(({ query }) => ({ response: answerTo(query) })));
-      await exchange(QUESTION, server.address, options);
-      await exchange(QUESTION, server.address, options);
-      expect(server.tcpConnections).toBe(1);
-    });
-
-    it('opens a connection per query when the idle timeout is zero', async () => {
-      const options = tcp(await serve(({ query }) => ({ response: answerTo(query) })));
-      const own = createTransports({ idleTimeout: 0 });
-      try {
-        await exchange(QUESTION, server.address, { ...options, transports: own });
-        await exchange(QUESTION, server.address, { ...options, transports: own });
-      } finally {
-        own.close();
+      for (let index = 0; index < 3; index++) {
+        const result = await exchange(QUESTION, server.address, options);
+        expect(result.attempts).toBe(1);
       }
-      expect(server.tcpConnections).toBe(2);
     });
 
-    it('sends a query again when a reused connection turns out to be closed', async () => {
-      // answer, then close: the next query finds the connection gone
-      const options = tcp(
-        await serve(({ query }) => ({ response: answerTo(query), closeAfterBytes: 0xffff }))
-      );
-      const first = await exchange(QUESTION, server.address, options);
-      const second = await exchange(QUESTION, server.address, options);
-      expect(first.attempts).toBe(1);
-      expect(second.attempts).toBe(1);
-      expect(second.message.answers).toHaveLength(1);
-    });
-
-    it('recovers when a server closes on pipelined queries', async () => {
-      // one answer per connection, however many queries were sent on it
-      const options = tcp(
-        await serve(({ query }) => ({ response: answerTo(query), closeAfterBytes: 0xffff }))
-      );
-      const results = await Promise.all(
-        Array.from({ length: 6 }, (_, index) =>
-          exchange({ name: `host${index}.example.com`, type: 'A' }, server.address, options)
-        )
-      );
-      results.forEach((result, index) => {
-        expect(result.message.questions[0].name).toBe(`host${index}.example.com`);
+    describe('with pipelining on', () => {
+      beforeEach(() => {
+        transports.close();
+        transports = createTransports({ pipeline: true });
       });
-      // and from then on that server gets one query per connection
-      const before = server.tcpConnections;
-      await Promise.all([
-        exchange(QUESTION, server.address, options),
-        exchange(QUESTION, server.address, options),
-      ]);
-      expect(server.tcpConnections - before).toBe(2);
+
+      it('pipelines a burst of queries over one connection', async () => {
+        const options = tcp(await serve(({ query }) => ({ response: answerTo(query) })));
+        const results = await Promise.all(
+          Array.from({ length: 25 }, (_, index) =>
+            exchange({ name: `host${index}.example.com`, type: 'A' }, server.address, options)
+          )
+        );
+        results.forEach((result, index) => {
+          expect(result.message.questions[0].name).toBe(`host${index}.example.com`);
+        });
+        expect(server.tcpConnections).toBe(1);
+      });
+
+      it('matches answers that come back out of order', async () => {
+        const options = tcp(
+          await serve(({ query }) => ({
+            response: answerTo(query),
+            delayMs: askedName(query) === 'slow.example.com' ? 60 : 0,
+          }))
+        );
+        const [slow, fast] = await Promise.all([
+          exchange({ name: 'slow.example.com', type: 'A' }, server.address, options),
+          exchange({ name: 'fast.example.com', type: 'A' }, server.address, options),
+        ]);
+        expect(slow.message.questions[0].name).toBe('slow.example.com');
+        expect(fast.message.questions[0].name).toBe('fast.example.com');
+        expect(fast.elapsed).toBeLessThan(slow.elapsed);
+      });
+
+      it('reuses the connection for a later query', async () => {
+        const options = tcp(await serve(({ query }) => ({ response: answerTo(query) })));
+        await exchange(QUESTION, server.address, options);
+        await exchange(QUESTION, server.address, options);
+        expect(server.tcpConnections).toBe(1);
+      });
+
+      it('opens a connection per query when the idle timeout is zero', async () => {
+        const options = tcp(await serve(({ query }) => ({ response: answerTo(query) })));
+        const own = createTransports({ pipeline: true, idleTimeout: 0 });
+        try {
+          await exchange(QUESTION, server.address, { ...options, transports: own });
+          await exchange(QUESTION, server.address, { ...options, transports: own });
+        } finally {
+          own.close();
+        }
+        expect(server.tcpConnections).toBe(2);
+      });
+
+      it('sends a query again when a reused connection turns out to be closed', async () => {
+        // answer, then close: the next query finds the connection gone
+        const options = tcp(
+          await serve(({ query }) => ({ response: answerTo(query), closeAfterBytes: 0xffff }))
+        );
+        const first = await exchange(QUESTION, server.address, options);
+        const second = await exchange(QUESTION, server.address, options);
+        expect(first.attempts).toBe(1);
+        expect(second.attempts).toBe(1);
+        expect(second.message.answers).toHaveLength(1);
+      });
+
+      it('recovers when a server closes on pipelined queries', async () => {
+        // one answer per connection, however many queries were sent on it
+        const options = tcp(
+          await serve(({ query }) => ({ response: answerTo(query), closeAfterBytes: 0xffff }))
+        );
+        const results = await Promise.all(
+          Array.from({ length: 6 }, (_, index) =>
+            exchange({ name: `host${index}.example.com`, type: 'A' }, server.address, options)
+          )
+        );
+        results.forEach((result, index) => {
+          expect(result.message.questions[0].name).toBe(`host${index}.example.com`);
+        });
+        // and from then on that server gets one query per connection
+        const before = server.tcpConnections;
+        await Promise.all([
+          exchange(QUESTION, server.address, options),
+          exchange(QUESTION, server.address, options),
+        ]);
+        expect(server.tcpConnections - before).toBe(2);
+      });
     });
 
     it('reports a connection closed without an answer', async () => {

@@ -170,7 +170,7 @@ describe('UDP and TCP transports', () => {
 
   it.each([
     ['udp', () => createUdpTransport()],
-    ['tcp', () => createTcpTransport()],
+    ['tcp', () => createTcpTransport({ pipeline: true })],
   ] as const)('gives each of two queries with one ID its own answer over %s', async (_, make) => {
     // answer in the opposite order to the one they were asked in
     server = await startFixtureServer(({ query }) => ({

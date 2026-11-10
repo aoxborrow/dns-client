@@ -231,6 +231,7 @@ export function hasTransportOptions(options: TransportOptions): boolean {
     options.tls !== undefined ||
     options.udpSockets !== undefined ||
     options.idleTimeout !== undefined ||
+    options.pipeline !== undefined ||
     options.dohMethod !== undefined
   );
 }

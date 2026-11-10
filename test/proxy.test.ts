@@ -103,6 +103,7 @@ describe('proxies', () => {
       proxy: options.proxy,
       connect: options.connect,
       fetch: options.fetch,
+      pipeline: options.pipeline,
       tls: { ca: testCertificate().cert },
     });
     const common: ExchangeOptions = {
@@ -153,7 +154,7 @@ describe('proxies', () => {
       await startProxy(kind);
       for (const transport of ['tcp', 'tls'] as const) {
         proxy.requests.length = 0;
-        const first = await ask(transport, { proxy: proxyUrl(kind, proxy) });
+        const first = await ask(transport, { proxy: proxyUrl(kind, proxy), pipeline: true });
         const again = await exchange(QUESTION, first.server, {
           transport,
           transports,
@@ -376,7 +377,7 @@ describe('proxies', () => {
 
       // and the proxy is not asked for UDP a second time
       await exchange(QUESTION, dns.address, { port: dns.port, transports });
-      expect(proxy.requests.map(({ command }) => command)).toEqual(['connect']);
+      expect(proxy.requests.map(({ command }) => command)).toEqual(['connect', 'connect']);
     });
 
     it('always goes over TCP through an HTTP proxy, which cannot carry UDP', async () => {

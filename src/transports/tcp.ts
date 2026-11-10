@@ -19,19 +19,24 @@ import type {
 
 // DNS over TCP, and over TLS (DoT), which is the same framing on an encrypted stream.
 //
-// connections are kept per server and reused. Queries are pipelined (RFC 7766): several
-// can be in flight on one connection, each answer finding its query by ID, so a burst of
-// queries to one server costs one handshake. A connection with nothing in flight is
-// closed after an idle timeout.
+// by default a TCP query gets a connection of its own, closed when it is answered. That
+// is what `dig` does and it works everywhere.
 //
-// servers are not uniformly good at this. Some close a connection after one answer, some
-// drop an idle connection without saying so. A query caught on a connection that had
-// already been used is sent again once, on a connection of its own, and a server seen
-// closing on pipelined queries is given one query per connection from then on
+// with `pipeline` (the default for DoT) connections are kept per server and reused, and
+// queries are pipelined (RFC 7766): several can be in flight on one connection, each
+// answer finding its query by ID, so a burst of queries to one server costs one
+// handshake. A connection with nothing in flight is closed after an idle timeout.
+//
+// servers are not uniformly good at that, which is why it is opt-in for TCP. Some close
+// a connection after one answer, some drop an idle connection without saying so, and
+// some keep it open and never answer a second query. A query caught on a connection that
+// had already been used is sent again once, on a connection of its own, and a server
+// seen closing on pipelined queries is given one query per connection from then on. A
+// server that goes silent cannot be told from a slow one, and costs a timeout
 
 export interface TcpTransportOptions extends Pick<
   TransportOptions,
-  'proxy' | 'connect' | 'tls' | 'idleTimeout'
+  'proxy' | 'connect' | 'tls' | 'idleTimeout' | 'pipeline'
 > {
   // speak TLS on the connection: DNS over TLS
   secure?: boolean;
@@ -140,6 +145,7 @@ function connectionWire(connection: Connection, handlers: WireHandlers): Wire {
 export function createTcpTransport(options: TcpTransportOptions = {}): Transport {
   const name = options.secure ? 'tls' : 'tcp';
   const idleTimeout = options.idleTimeout ?? DEFAULT_IDLE_TIMEOUT;
+  const pipeline = options.pipeline ?? Boolean(options.secure);
   const channels = new Map<string, Set<Channel>>();
   // servers that closed a connection with pipelined queries still unanswered
   const onePerConnection = new Set<string>();
@@ -467,7 +473,7 @@ export function createTcpTransport(options: TcpTransportOptions = {}): Transport
           resent: false,
         };
         signal?.addEventListener('abort', onAbort, { once: true });
-        assign(waiter, false);
+        assign(waiter, !pipeline);
       });
     },
 

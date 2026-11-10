@@ -96,10 +96,17 @@ export interface TransportOptions {
   tls?: TlsOptions;
   // UDP sockets shared between queries, per address family. Default 4
   udpSockets?: number;
-  // how long an unused TCP or DoT connection is kept open, in
+  // with `pipeline`: how long an unused TCP or DoT connection is kept open, in
   // milliseconds. 0 closes each connection as soon as its queries are answered.
   // Default 5000
   idleTimeout?: number;
+  // keep TCP connections open and send several queries down one at a time (RFC 7766).
+  // Default false for TCP: each query gets a connection of its own, closed when it is
+  // answered. Plenty of authoritative servers, Cloudflare's among them, answer the first
+  // query on a connection and say nothing to the rest. Default true for DoT, where the
+  // handshake is dear and the servers are resolvers that expect it. Worth turning on for
+  // TCP to a resolver known to handle it
+  pipeline?: boolean;
   // DoH request method. Default GET
   dohMethod?: 'GET' | 'POST';
 }
