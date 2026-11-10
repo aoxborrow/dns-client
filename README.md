@@ -16,64 +16,76 @@ not compatible with the 0.x versions on npm.
 | `@aoxborrow/dns-client/transports/udp` | DNS over UDP on shared sockets | Node |
 | `@aoxborrow/dns-client/transports/tcp` | DNS over TCP, pooled and pipelined | Node, Workers |
 | `@aoxborrow/dns-client/transports/tls` | DNS over TLS | Node, Workers |
-| `@aoxborrow/dns-client/transports/doh` | DNS over HTTPS, and the tunnelling `fetch` | any |
+| `@aoxborrow/dns-client/transports/doh` | DNS over HTTPS | any |
 
 Entries are added as each layer lands. `test/package.test.ts` keeps the `exports` map, the
 published `exports` map and the build entries in step.
 
-## One question, one server
+## Asking questions
 
-`exchange` puts one question to one server and returns its answer, decoded and raw. It
-follows nothing, caches nothing and passes no judgement: NXDOMAIN and SERVFAIL are answers.
-
-By default it is an ordinary recursive query, what `dig` or `node:dns` would send:
+Not built yet. The resolvers arrive in the next milestone, and this is the shape they will
+have:
 
 ```ts
-import { exchange } from '@aoxborrow/dns-client';
+import { AuthoritativeResolver, Resolver } from '@aoxborrow/dns-client';
 
-const res = await exchange({ name: 'example.com', type: 'MX' }, '1.1.1.1');
-res.toDig(); // dig @1.1.1.1 example.com MX
+// an ordinary recursive query, like dig or node:dns, to the system's resolvers
+const resolver = new Resolver();
+const answer = await resolver.query('example.com', 'MX');
+answer.rcodeName; // 'NOERROR'
+answer.records; // MxRecord[]
+answer.toDig(); // dig @192.0.2.53 example.com MX
+
+// one particular server, for this call
+await resolver.query('example.com', 'MX', { server: '1.1.1.1' });
+
+// from the root, asking each zone's own servers
+const auth = new AuthoritativeResolver();
+await auth.query('example.com', 'MX');
 ```
 
-Asking an authoritative server directly is a setting:
+Each resolver has one `query()`, and both return the same answer: the response code, typed
+records, the decoded message and the raw bytes. NXDOMAIN is an answer, not an error.
+
+What is built is everything underneath: the wire codec, the typed records, the four
+transports with their proxy support, and the function that puts one question to one server
+and checks the response is the answer to it.
+
+## Proxies
+
+Every transport can go through a SOCKS5 or HTTP CONNECT proxy, and with `proxy` set nothing
+goes around it: a query that cannot go through the proxy fails.
+
+| Transport | Through the proxy |
+| --- | --- |
+| TCP, DoT | a tunnel to the server; DoT upgrades to TLS inside it |
+| DoH | HTTP over the tunnel, upgraded to TLS by the runtime |
+| UDP | a SOCKS5 UDP association where the proxy offers one, otherwise TCP through the tunnel; the answer says which |
+
+An explicit `fetch` (DoH) or `connect` (TCP, DoT) wins over `proxy` for its protocol.
+Credentials never appear in an error or an event.
+
+### Cloudflare Workers
+
+A deployed Worker cannot start TLS inside a tunnel, so the built-in path covers plain TCP
+through a proxy and nothing that needs TLS. For DoH through a proxy, pass a `fetch` that
+does its own TLS. The [`tunnelfetch`](https://github.com/latentharbor/tunnelfetch) package
+is one:
 
 ```ts
-import { decodeRecords, exchange } from '@aoxborrow/dns-client';
+import { createCloudflareConnect } from '@aoxborrow/dns-client';
+import { connect } from 'cloudflare:sockets';
+import { Client } from 'tunnelfetch';
 
-const res = await exchange({ name: 'example.com', type: 'DNSKEY' }, '199.43.135.53', {
-  transport: 'tcp', // 'udp' (default) | 'tcp' | 'tls' | 'doh'
-  recursionDesired: false, // the question as an authoritative server is asked it
-  checkingDisabled: true,
-  dnssecOk: true,
-});
-res.message.rcode; // 0
-res.message.answers[0].rdata; // Uint8Array, as signed
-decodeRecords(res.message.answers); // typed records
-res.transport; // the transport that carried the answer
-res.toDig(); // dig +dnssec +cd +norecurse +tcp @199.43.135.53 example.com DNSKEY
+const client = new Client({ connect, proxy: env.PROXY_URL });
+const options = {
+  connect: createCloudflareConnect(connect), // TCP: pass the runtime's connect in
+  fetch: (url, init) => client.fetch(url, init), // DoH: tunnelfetch does the TLS
+};
 ```
 
-A UDP answer that comes back truncated is asked again over TCP. A query that times out is
-sent again (`timeout` 5000 ms per attempt, `retries` 2). Errors are `DnsError` subclasses
-with a `retryable` flag and the `server`, `query`, `type` and `transport` they came from.
-
-Every query can go through a proxy, and with `proxy` set nothing goes around it:
-
-```ts
-await exchange({ name: 'example.com', type: 'A' }, 'https://dns.google/dns-query', {
-  proxy: 'socks5://user:pass@proxy.example:1080', // or http:// for an HTTP CONNECT proxy
-});
-```
-
-UDP uses a SOCKS5 UDP association where the proxy offers one and TCP through the tunnel
-where it does not; the result's `transport` says which. An explicit `fetch` (DoH) or
-`connect` (TCP, DoT) wins over `proxy` for its protocol. Credentials never appear in an
-error or an event.
-
-`onEvent` reports every network exchange, failures included, plus retries, TCP fallbacks
-and proxy handshakes. Calls share sockets and connections: pass
-`transports: createTransports({ proxy })` to reuse them across calls that set transport
-options.
+That combination has not been run with this library yet. DoT through a proxy is not
+available on Workers, and UDP is not available there at all.
 
 ## Rules
 
