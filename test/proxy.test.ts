@@ -61,7 +61,7 @@ describe('proxies', () => {
   beforeAll(async () => {
     dns = await startFixtureServer(({ query }) => ({ response: answerTo(query) }));
     dot = await startDotServer(query => answerTo(query));
-    doh = await startDohServer(query => answerTo(query), { secure: true });
+    doh = await startDohServer(query => answerTo(query));
   });
 
   afterAll(async () => {
@@ -123,7 +123,7 @@ describe('proxies', () => {
 
   describe.each(['socks5', 'http'] as const)('through a %s proxy', kind => {
     describe.each([false, true])('with credentials: %s', auth => {
-      it.each(['tcp', 'tls', 'doh'] as const)('carries %s', async transport => {
+      it.each(['tcp', 'tls'] as const)('carries %s', async transport => {
         await startProxy(kind, { auth });
         const result = await ask(transport, { proxy: proxyUrl(kind, proxy, auth) });
 
@@ -151,10 +151,10 @@ describe('proxies', () => {
 
     it('reuses the tunnel for the next query', async () => {
       await startProxy(kind);
-      for (const transport of ['tcp', 'tls', 'doh'] as const) {
+      for (const transport of ['tcp', 'tls'] as const) {
         proxy.requests.length = 0;
         const first = await ask(transport, { proxy: proxyUrl(kind, proxy) });
-        const again = await exchange(QUESTION, transport === 'doh' ? doh.url : first.server, {
+        const again = await exchange(QUESTION, first.server, {
           transport,
           transports,
           port: first.port,
@@ -168,7 +168,7 @@ describe('proxies', () => {
 
     it('reports a proxy that refuses the connection', async () => {
       await startProxy(kind, { refuseWith: kind === 'socks5' ? 0x02 : 403 });
-      for (const transport of ['tcp', 'tls', 'doh'] as const) {
+      for (const transport of ['tcp', 'tls'] as const) {
         const error = await ask(transport, { proxy: proxyUrl(kind, proxy) }).catch(
           caught => caught
         );
@@ -179,7 +179,7 @@ describe('proxies', () => {
         transports?.close();
       }
       expect(dns.received).toHaveLength(0);
-      expect(events.filter(event => event.event === 'proxy')).toHaveLength(3);
+      expect(events.filter(event => event.event === 'proxy')).toHaveLength(2);
       expect(events.find(event => event.event === 'proxy')).toMatchObject({
         error: { name: 'ProxyError', retryable: true },
       });
@@ -188,7 +188,7 @@ describe('proxies', () => {
     it('reports credentials the proxy rejects, without repeating them', async () => {
       await startProxy(kind, { auth: true });
       const wrong = proxyUrl(kind, proxy, true).replace('7f3a%20secret', 'wrong');
-      for (const transport of ['tcp', 'tls', 'doh', 'udp'] as const) {
+      for (const transport of ['tcp', 'tls', 'udp'] as const) {
         const error = await ask(transport, { proxy: wrong }).catch(caught => caught);
         expect(error).toBeInstanceOf(ProxyError);
         expect(error.message).toContain('rejected the credentials');
@@ -232,7 +232,7 @@ describe('proxies', () => {
       const dead = proxyUrl(kind, proxy, true);
       await proxy.close();
 
-      for (const transport of ['udp', 'tcp', 'tls', 'doh'] as const) {
+      for (const transport of ['udp', 'tcp', 'tls'] as const) {
         const error = await ask(transport, { proxy: dead }).catch(caught => caught);
         expect(error).toBeInstanceOf(ProxyError);
         expect(error.message).toContain('Cannot reach proxy');
@@ -244,6 +244,23 @@ describe('proxies', () => {
       expect(dot.received).toHaveLength(0);
       expect(doh.requests).toHaveLength(0);
       expectNoCredentials(JSON.stringify(events));
+    });
+  });
+
+  describe('DoH', () => {
+    it('refuses to go around a proxy it cannot use', async () => {
+      await startProxy('socks5', { auth: true });
+      const error = await ask('doh', { proxy: proxyUrl('socks5', proxy, true) }).catch(
+        caught => caught
+      );
+      // not a failure that may pass: the caller has to supply a fetch
+      expect(error).toBeInstanceOf(DnsError);
+      expect(error.retryable).toBe(false);
+      expect(error.message).toContain('pass a `fetch`');
+      expect(error.message).toContain(`socks5://127.0.0.1:${proxy.port}`);
+      expectNoCredentials(errorText(error));
+      expect(doh.requests).toHaveLength(0);
+      expect(proxy.requests).toHaveLength(0);
     });
   });
 

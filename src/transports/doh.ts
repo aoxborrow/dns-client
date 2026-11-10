@@ -7,20 +7,19 @@ import {
 } from '../errors';
 import { toBase64 } from '../wire/bytes';
 import { parseDohUrl } from './endpoint';
-import { createProxyFetch } from './proxy-fetch';
-import type { ProxyFetch } from './proxy-fetch';
+import { resolveProxy } from './proxy';
 import type { FetchLike, Transport, TransportOptions } from './types';
 
 // DNS over HTTPS (RFC 8484): the query is the body of a POST, or the `dns` parameter of
 // a GET, and the answer is the response body.
 //
-// requests are made with the caller's `fetch` if one was given, through the library's
-// own tunnelling fetch if a proxy was, and with the runtime's `fetch` otherwise
+// requests are made with the caller's `fetch` if one was given and the runtime's
+// otherwise. There is no proxy support of its own here: a runtime's `fetch` cannot be
+// pointed at a proxy, so with `proxy` set DoH needs a `fetch` that goes through it (on
+// Workers, the `tunnelfetch` package; on Node, undici's ProxyAgent). Without one the query
+// fails, so that nothing goes around the proxy
 
-export type DohTransportOptions = Pick<
-  TransportOptions,
-  'proxy' | 'fetch' | 'tls' | 'idleTimeout' | 'dohMethod'
->;
+export type DohTransportOptions = Pick<TransportOptions, 'proxy' | 'fetch' | 'dohMethod'>;
 
 const MEDIA_TYPE = 'application/dns-message';
 
@@ -33,7 +32,6 @@ export function toBase64Url(bytes: Uint8Array): string {
 
 export function createDohTransport(options: DohTransportOptions = {}): Transport {
   const method = options.dohMethod ?? 'GET';
-  let tunnel: ProxyFetch | undefined;
 
   return {
     name: 'doh',
@@ -45,6 +43,21 @@ export function createDohTransport(options: DohTransportOptions = {}): Transport
       // an endpoint may be handed straight to the transport, so the URL is checked here
       // as well as where servers are parsed
       parseDohUrl(endpoint.url);
+
+      if (!options.fetch) {
+        // a proxy function may say this server is not proxied, by returning nothing
+        const proxy = resolveProxy(options.proxy, {
+          host: endpoint.host,
+          port: endpoint.port,
+          transport: 'doh',
+        });
+        if (proxy) {
+          throw new DnsError(
+            `DNS over HTTPS cannot go through ${proxy.display} by itself: pass a \`fetch\` ` +
+              'that uses the proxy, or a `proxy` function that returns nothing for DoH'
+          );
+        }
+      }
 
       const headers: Record<string, string> = { Accept: MEDIA_TYPE };
       let url = endpoint.url;
@@ -62,15 +75,6 @@ export function createDohTransport(options: DohTransportOptions = {}): Transport
         let response: Awaited<ReturnType<FetchLike>>;
         if (options.fetch) {
           response = await options.fetch(url, { method, headers, ...(body && { body }), signal });
-        } else if (options.proxy !== undefined) {
-          tunnel ??= createProxyFetch(options);
-          response = await tunnel(url, {
-            method,
-            headers,
-            ...(body && { body }),
-            signal,
-            onEvent: request.onEvent,
-          });
         } else {
           response = await fetch(url, {
             method,
@@ -110,8 +114,7 @@ export function createDohTransport(options: DohTransportOptions = {}): Transport
     },
 
     close() {
-      tunnel?.close();
-      tunnel = undefined;
+      // nothing is held: the runtime's fetch, or the caller's, owns its connections
     },
   };
 }

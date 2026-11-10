@@ -59,18 +59,19 @@ goes around it: a query that cannot go through the proxy fails.
 | Transport | Through the proxy |
 | --- | --- |
 | TCP, DoT | a tunnel to the server; DoT upgrades to TLS inside it |
-| DoH | HTTP over the tunnel, upgraded to TLS by the runtime |
+| DoH | not by itself: pass a `fetch` that uses the proxy. Without one the query fails |
 | UDP | a SOCKS5 UDP association where the proxy offers one, otherwise TCP through the tunnel; the answer says which |
 
-An explicit `fetch` (DoH) or `connect` (TCP, DoT) wins over `proxy` for its protocol.
-Credentials never appear in an error or an event.
+An explicit `connect` (TCP, DoT) wins over `proxy` for its protocol, and a `proxy` function
+can leave a server unproxied by returning nothing for it. Credentials never appear in an
+error or an event.
 
 ### Cloudflare Workers
 
-A deployed Worker cannot start TLS inside a tunnel, so the built-in path covers plain TCP
-through a proxy and nothing that needs TLS. For DoH through a proxy, pass a `fetch` that
-does its own TLS. The [`tunnelfetch`](https://github.com/latentharbor/tunnelfetch) package
-is one:
+A deployed Worker cannot start TLS inside a tunnel, so through a proxy there the built-in
+tunnel carries plain TCP and nothing else. For DoH through a proxy, the `fetch` to pass is
+one that does its own TLS. The [`tunnelfetch`](https://github.com/latentharbor/tunnelfetch)
+package is one:
 
 ```ts
 import { createCloudflareConnect } from '@aoxborrow/dns-client';

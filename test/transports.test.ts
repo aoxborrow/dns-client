@@ -12,7 +12,6 @@ import type { CloudflareSocket } from '../src/transports/cloudflare';
 import { toBase64Url } from '../src/transports/doh';
 import { normalizeAddress, toEndpoint } from '../src/transports/endpoint';
 import { createTcpTransport, createTransports, createUdpTransport } from '../src/transports/index';
-import { createProxyFetch } from '../src/transports/proxy-fetch';
 import type { Transports } from '../src/transports/index';
 import type { FetchLike, Transport } from '../src/transports/types';
 import { decodeMessage, encodeQuery } from '../src/wire/index';
@@ -403,115 +402,6 @@ describe('DNS over HTTPS', () => {
     expect(error).toBeInstanceOf(ConnectionError);
     expect(error.retryable).toBe(true);
     expect(error.cause).toBeInstanceOf(TypeError);
-  });
-});
-
-// the fetch the DoH transport uses for itself when a proxy is set
-describe('the built-in proxied fetch', () => {
-  let server: DohServer;
-  const query = encodeQuery({ id: 0, name: 'example.com', type: 'A' });
-  const post = { method: 'POST', body: query };
-
-  afterEach(async () => {
-    await server?.close();
-  });
-
-  it('makes requests over a connection it keeps open', async () => {
-    server = await startDohServer(received => answerTo(received));
-    const proxyFetch = createProxyFetch();
-    try {
-      for (let round = 0; round < 3; round++) {
-        const response = await proxyFetch(server.url, post);
-        expect(response.status).toBe(200);
-        expect(response.headers.get('content-type')).toBe('application/dns-message');
-        expect(new Uint8Array(await response.arrayBuffer())).toEqual(answerTo(query));
-      }
-      expect(server.requests).toHaveLength(3);
-      expect(server.connections).toBe(1);
-    } finally {
-      proxyFetch.close();
-    }
-  });
-
-  it('opens more connections for requests made at once', async () => {
-    server = await startDohServer(received => answerTo(received));
-    const proxyFetch = createProxyFetch();
-    try {
-      const responses = await Promise.all([
-        proxyFetch(server.url, post),
-        proxyFetch(server.url, post),
-        proxyFetch(server.url, post),
-      ]);
-      expect(responses.map(response => response.status)).toEqual([200, 200, 200]);
-      expect(server.connections).toBe(3);
-    } finally {
-      proxyFetch.close();
-    }
-  });
-
-  it('reads a chunked body', async () => {
-    server = await startDohServer(received => answerTo(received), { chunked: true });
-    const proxyFetch = createProxyFetch();
-    try {
-      const response = await proxyFetch(server.url, post);
-      expect(response.headers.get('transfer-encoding')).toBe('chunked');
-      expect(new Uint8Array(await response.arrayBuffer())).toEqual(answerTo(query));
-      // and the connection is still good afterwards
-      await proxyFetch(server.url, post);
-      expect(server.connections).toBe(1);
-    } finally {
-      proxyFetch.close();
-    }
-  });
-
-  it('does not reuse a connection the server says it is closing', async () => {
-    server = await startDohServer(received => answerTo(received), { closeConnection: true });
-    const proxyFetch = createProxyFetch();
-    try {
-      await proxyFetch(server.url, post);
-      await proxyFetch(server.url, post);
-      expect(server.connections).toBe(2);
-    } finally {
-      proxyFetch.close();
-    }
-  });
-
-  it('speaks TLS to an https URL', async () => {
-    server = await startDohServer(received => answerTo(received), { secure: true });
-    const proxyFetch = createProxyFetch({ tls: { ca: testCertificate().cert } });
-    try {
-      const response = await proxyFetch(server.url, post);
-      expect(new Uint8Array(await response.arrayBuffer())).toEqual(answerTo(query));
-      await proxyFetch(server.url, post);
-      expect(server.connections).toBe(1);
-    } finally {
-      proxyFetch.close();
-    }
-  });
-
-  it('refuses a certificate it has no reason to trust', async () => {
-    server = await startDohServer(received => answerTo(received), { secure: true });
-    const proxyFetch = createProxyFetch();
-    try {
-      await expect(proxyFetch(server.url, post)).rejects.toBeInstanceOf(ConnectionError);
-      expect(server.requests).toHaveLength(0);
-    } finally {
-      proxyFetch.close();
-    }
-  });
-
-  it('stops when its signal aborts', async () => {
-    server = await startDohServer(() => undefined);
-    const proxyFetch = createProxyFetch();
-    const controller = new AbortController();
-    const reason = new Error('never mind');
-    try {
-      const pending = proxyFetch(server.url, { ...post, signal: controller.signal });
-      setTimeout(() => controller.abort(reason), 30);
-      await expect(pending).rejects.toBe(reason);
-    } finally {
-      proxyFetch.close();
-    }
   });
 });
 

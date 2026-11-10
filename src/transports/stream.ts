@@ -15,16 +15,9 @@ export class StreamReader {
   private readonly reader: ReadableStreamDefaultReader<Uint8Array>;
   private buffered: Uint8Array = new Uint8Array(0);
   private ended = false;
-  // every byte that has arrived, taken or not
-  received = 0;
 
   constructor(readable: ReadableStream<Uint8Array>) {
     this.reader = readable.getReader();
-  }
-
-  // how many bytes have arrived and not been taken
-  get pending(): number {
-    return this.buffered.length;
   }
 
   // pull one more chunk; false once the stream has ended
@@ -36,7 +29,6 @@ export class StreamReader {
       return false;
     }
     if (value.length) {
-      this.received += value.length;
       this.buffered = this.buffered.length ? concatBytes([this.buffered, value]) : value;
     }
     return true;
@@ -88,22 +80,11 @@ export class StreamReader {
     return this.take(this.buffered.length);
   }
 
-  // everything until the stream ends
-  async readAll(): Promise<Uint8Array> {
-    while (await this.fill());
-    return this.take(this.buffered.length);
-  }
-
   // stop reading and hand the stream back, returning bytes that arrived but were not
   // taken
   release(): Uint8Array {
     this.reader.releaseLock();
     return this.take(this.buffered.length);
-  }
-
-  // give up on the stream altogether
-  async cancel(): Promise<void> {
-    await this.reader.cancel().catch(() => undefined);
   }
 }
 

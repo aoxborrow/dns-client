@@ -77,8 +77,7 @@ export interface ProxyTarget {
 // picks one per target; returning nothing means no proxy for that target
 export type ProxyInput = string | URL | ((target: ProxyTarget) => string | URL | undefined);
 
-// TLS settings for DoT and for DoH through a proxy. Node only; other runtimes use their
-// own trust store
+// TLS settings for DoT. Node only; other runtimes use their own trust store
 export interface TlsOptions {
   // certificate authorities to trust instead of the runtime's, PEM
   ca?: string | readonly string[];
@@ -87,16 +86,17 @@ export interface TlsOptions {
 }
 
 export interface TransportOptions {
-  // send everything through this proxy. Nothing falls back to a direct connection
+  // send everything through this proxy. Nothing falls back to a direct connection. DoH
+  // has no proxy support of its own: with `proxy` set it needs `fetch` as well
   proxy?: ProxyInput;
-  // how DoH requests are made. Wins over `proxy` for DoH
+  // how DoH requests are made. Default: the runtime's `fetch`
   fetch?: FetchLike;
   // how TCP connections are opened. Wins over `proxy` for TCP and DoT
   connect?: Connect;
   tls?: TlsOptions;
   // UDP sockets shared between queries, per address family. Default 4
   udpSockets?: number;
-  // how long an unused TCP, DoT or tunnelled DoH connection is kept open, in
+  // how long an unused TCP or DoT connection is kept open, in
   // milliseconds. 0 closes each connection as soon as its queries are answered.
   // Default 5000
   idleTimeout?: number;
