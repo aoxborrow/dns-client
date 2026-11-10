@@ -1,5 +1,6 @@
 import { Resolver } from 'node:dns/promises';
 import { exchange } from '../src/exchange';
+import { Resolver as DnsClientResolver } from '../src/resolvers/index';
 import { createTransports } from '../src/transports/index';
 import { answerTo } from '../test/support/answers';
 import { startFixtureServer } from '../test/support/fixture-server';
@@ -16,7 +17,9 @@ const SEQUENTIAL = 2000;
 const BURST = 500;
 const ROUNDS = 15;
 
-const NAMES = Array.from({ length: 50 }, (_, index) => `host${index}.example.com`);
+// as many names as a burst has questions: a resolver that shares one query between callers
+// asking the same thing would otherwise be measured on a tenth of the work
+const NAMES = Array.from({ length: BURST }, (_, index) => `host${index}.example.com`);
 
 interface Contender {
   label: string;
@@ -70,18 +73,29 @@ async function main() {
   const transports = createTransports();
   const options = { port: server.port, transports };
 
+  // the cache is off, so every question goes to the server
+  const client = new DnsClientResolver({
+    servers: [`${server.address}:${server.port}`],
+    transports,
+    cache: false,
+  });
+
   const contenders: Contender[] = [
     {
       label: 'node:dns Resolver (c-ares, UDP)',
       ask: async name => (await resolver.resolve4(name)).length,
     },
     {
-      label: 'dns-client, UDP',
+      label: 'dns-client Resolver, UDP',
+      ask: async name => (await client.query(name, 'A')).records.length,
+    },
+    {
+      label: 'dns-client single query, UDP',
       ask: async name =>
         (await exchange({ name, type: 'A' }, server.address, options)).message.answers.length,
     },
     {
-      label: 'dns-client, TCP pipelined',
+      label: 'dns-client single query, TCP pipelined',
       ask: async name =>
         (await exchange({ name, type: 'A' }, server.address, { ...options, transport: 'tcp' }))
           .message.answers.length,

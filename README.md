@@ -23,9 +23,6 @@ published `exports` map and the build entries in step.
 
 ## Asking questions
 
-Not built yet. The resolvers arrive in the next milestone, and this is the shape they will
-have:
-
 ```ts
 import { AuthoritativeResolver, Resolver } from '@aoxborrow/dns-client';
 
@@ -33,23 +30,41 @@ import { AuthoritativeResolver, Resolver } from '@aoxborrow/dns-client';
 const resolver = new Resolver();
 const answer = await resolver.query('example.com', 'MX');
 answer.rcodeName; // 'NOERROR'
-answer.records; // MxRecord[]
+answer.records; // MxRecord[]: [{ preference: 10, exchange: 'mail.example.com', ttl: 300, … }]
 answer.toDig(); // dig @192.0.2.53 example.com MX
 
-// one particular server, for this call
+// named servers, tried in order
+const named = new Resolver({ servers: ['1.1.1.1', '8.8.8.8'] });
+
+// one particular server, for this call, outside the cache
 await resolver.query('example.com', 'MX', { server: '1.1.1.1' });
 
 // from the root, asking each zone's own servers
 const auth = new AuthoritativeResolver();
-await auth.query('example.com', 'MX');
+const traced = await auth.query('example.com', 'A');
+traced.trace; // every server asked: root, then com, then example.com's
 ```
 
-Each resolver has one `query()`, and both return the same answer: the response code, typed
-records, the decoded message and the raw bytes. NXDOMAIN is an answer, not an error.
+Each resolver has one `query()`, and both return the same answer:
 
-What is built is everything underneath: the wire codec, the typed records, the four
-transports with their proxy support, and the function that puts one question to one server
-and checks the response is the answer to it.
+| Field | |
+| --- | --- |
+| `rcode`, `rcodeName`, `flags` | what the server said about the question |
+| `records` | the records that answer it, typed by the type asked for |
+| `answers`, `authorities`, `additionals` | every record in each section, typed |
+| `message`, `bytes` | the response decoded from the wire, and exactly as it arrived |
+| `server`, `serverName`, `transport`, `elapsed`, `attempts` | who answered, and how |
+| `cached`, `timestamp` | whether it came from the cache, and when it arrived |
+| `trace` | `AuthoritativeResolver` only: every hop from the root |
+
+A name that does not exist is an answer (`rcodeName: 'NXDOMAIN'`, no records), not an
+error. An error means no usable response arrived: a `DnsError` subclass with a `retryable`
+flag and the `server`, `query`, `type` and `transport` it came from.
+
+`Resolver` caches by TTL, shares one query between callers asking the same thing at once,
+and moves to the next server when one fails. `AuthoritativeResolver` remembers delegations,
+looks up nameservers that come without an address, moves past servers that do not answer
+for their zone, and stops at an alias into another zone unless `followCnames` is set.
 
 ## Proxies
 
