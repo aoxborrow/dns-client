@@ -602,6 +602,30 @@ describe('AuthoritativeResolver', () => {
     expect(answer.serverName).toBe('ns2.example.com');
   });
 
+  it('uses nothing but addresses as nameserver addresses', async () => {
+    // a hint, a host map entry or a lookup result that is not an address is dropped: it
+    // is never read as a name to resolve, or as a host with a port of its own
+    const error = await resolver({
+      rootServers: [{ name: 'evil.test', ipv4: '10.0.0.1:6379' }, { ipv6: 'localhost' }],
+      addressFamily: 'both',
+    })
+      .query('example.com', 'A')
+      .catch(caught => caught);
+    expect(error).toBeInstanceOf(InvalidResponseError);
+    expect(error.message).toContain('No usable nameserver address for the root');
+    expect(network.queries).toHaveLength(0);
+
+    await resolver({
+      addressFamily: 'both',
+      resolveNameserver: () => ['10.2.0.53:6379', '10.2.0.53'],
+    }).query('glueless.com', 'A');
+    expect(network.queries.map(query => query.server)).toEqual([
+      '10.0.0.1',
+      '10.0.1.1',
+      '10.2.0.53',
+    ]);
+  });
+
   describe('servers that do not help', () => {
     it('moves on from one that cannot be reached, and says so in the trace', async () => {
       const answer = await resolver({}, { '10.1.0.1': undefined }).query('example.com', 'A');

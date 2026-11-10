@@ -5,7 +5,7 @@ import { RCODES, rcodeName } from '../protocol/header';
 import { typeCode, typeName } from '../protocol/types';
 import { decodeRecords } from '../records/decode';
 import type { DnsRecord, KnownRecordType, RecordOf } from '../records/types';
-import { isIp, isIpv4, normalizeAddress } from '../transports/endpoint';
+import { isIp, isIpv4, isIpv6, normalizeAddress } from '../transports/endpoint';
 import { createTransports, defaultTransports } from '../transports/index';
 import type { Transports } from '../transports/index';
 import { now } from '../transports/runtime';
@@ -258,7 +258,8 @@ export class AuthoritativeResolver {
   private usable(addresses: readonly string[]): string[] {
     const family = this.options.addressFamily ?? 'ipv4';
     const v4 = addresses.filter(isIpv4);
-    const v6 = addresses.filter(address => !isIpv4(address));
+    // only addresses: anything else here would be read as a name, or a host and a port
+    const v6 = addresses.filter(isIpv6);
     if (family === 'ipv4') return v4;
     if (family === 'ipv6') return v6;
     return [...v4, ...v6];
@@ -519,24 +520,30 @@ export class AuthoritativeResolver {
     const merged = { ...this.options, ...run.settings };
     await this.pace(address);
     const result = await this.limit(() =>
-      exchange({ name, type }, address, {
-        transport: merged.transport,
-        port: merged.port,
-        recursionDesired: false,
-        checkingDisabled: merged.checkingDisabled,
-        authenticData: merged.authenticData,
-        dnssecOk: merged.dnssecOk,
-        udpPayloadSize: merged.udpPayloadSize,
-        ednsOptions: merged.ednsOptions,
-        edns: merged.edns,
-        timeout: merged.timeout,
-        tcpFallback: merged.tcpFallback,
-        // the zone has other servers to turn to, so less patience with each
-        retries: merged.retries ?? 1,
-        transports: this.transports,
-        onEvent: this.options.onEvent,
-        signal: run.signal,
-      })
+      // as an object, so that the address is taken whole and nothing in it is read as a
+      // port: the port is the resolver's to choose
+      exchange(
+        { name, type },
+        { address },
+        {
+          transport: merged.transport,
+          port: merged.port,
+          recursionDesired: false,
+          checkingDisabled: merged.checkingDisabled,
+          authenticData: merged.authenticData,
+          dnssecOk: merged.dnssecOk,
+          udpPayloadSize: merged.udpPayloadSize,
+          ednsOptions: merged.ednsOptions,
+          edns: merged.edns,
+          timeout: merged.timeout,
+          tcpFallback: merged.tcpFallback,
+          // the zone has other servers to turn to, so less patience with each
+          retries: merged.retries ?? 1,
+          transports: this.transports,
+          onEvent: this.options.onEvent,
+          signal: run.signal,
+        }
+      )
     );
     run.attempts += result.attempts;
     return result;
