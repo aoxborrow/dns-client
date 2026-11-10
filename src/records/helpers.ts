@@ -5,13 +5,14 @@ import type { DnsRecord } from './types';
 
 // working with lists of records
 
-// a record reduced to four strings and a number, for showing in a table or writing a
-// zone file: the type-specific fields become one `content` string in presentation format
+// a record as text: the type-specific fields are one `data` string in presentation
+// format. This is the shape for showing a record in a table, writing a zone file, and
+// handing a record to the validators
 export interface FlatRecord {
   name: string;
   type: string;
   ttl: number;
-  content: string;
+  data: string;
 }
 
 export function flattenRecord(record: DnsRecord): FlatRecord {
@@ -19,7 +20,7 @@ export function flattenRecord(record: DnsRecord): FlatRecord {
     name: record.name,
     type: record.type,
     ttl: record.ttl,
-    content: formatRecordData(record),
+    data: formatRecordData(record),
   };
 }
 

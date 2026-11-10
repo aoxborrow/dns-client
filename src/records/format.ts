@@ -7,7 +7,13 @@ import type { DnsRecord, ServiceParams } from './types';
 // record. Names are written absolute, with a trailing dot. Hex is lowercase.
 
 // a name as it appears in a zone file
-const absolute = (name: string) => (name === '.' ? '.' : `${name}.`);
+const defaultName = (name: string) => (name === '.' ? '.' : `${name}.`);
+
+export interface FormatOptions {
+  // how to write a domain name inside the data. The default writes it absolute, with a
+  // trailing dot
+  formatName?: (name: string) => string;
+}
 
 // a <character-string> in quotes: backslash and quote escaped, control characters as \DDD
 function quote(text: string): string {
@@ -81,7 +87,8 @@ function serviceParams(params: ServiceParams): string[] {
 }
 
 // the data of a record in presentation format: everything after the type on a zone-file line
-export function formatRecordData(record: DnsRecord): string {
+export function formatRecordData(record: DnsRecord, options: FormatOptions = {}): string {
+  const absolute = options.formatName ?? defaultName;
   switch (record.type) {
     case 'A':
     case 'AAAA':
@@ -196,7 +203,7 @@ export function formatRecordData(record: DnsRecord): string {
 // a whole zone-file line: owner, TTL, class, type and data, separated by tabs
 export function formatRecord(record: DnsRecord): string {
   return [
-    absolute(record.name),
+    defaultName(record.name),
     record.ttl,
     record.class,
     record.type,

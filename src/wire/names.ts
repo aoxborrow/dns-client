@@ -212,3 +212,27 @@ export function compareNames(a: string, b: string): number {
   }
   return left.length - right.length;
 }
+
+// a name in its ASCII form. A name that is already ASCII is returned as it is; a Unicode
+// name (`münchen.de`) is converted to punycode (`xn--mnchen-3ya.de`) with the IDNA mapping
+// built into the runtime's URL parser, so the library ships no tables of its own.
+//
+// only names with non-ASCII characters go through that parser: it rewrites hosts that look
+// like numbers into IPv4 addresses, which must never happen to a DNS name. The label count
+// is checked afterwards for the same reason
+export function toAsciiName(name: string): string {
+  // eslint-disable-next-line no-control-regex
+  if (/^[\x00-\x7f]*$/.test(name)) return name;
+  let converted: string;
+  try {
+    converted = new URL(`http://${name}`).hostname;
+  } catch (error) {
+    throw new ParseError(`Name cannot be converted to ASCII: ${name}`, { cause: error });
+  }
+  if (splitName(converted).length !== splitName(name).length) {
+    throw new ParseError(`Name cannot be converted to ASCII: ${name}`);
+  }
+  // the usual length limits apply to the converted form
+  nameToLabels(converted);
+  return converted;
+}

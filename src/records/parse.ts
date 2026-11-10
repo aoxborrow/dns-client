@@ -89,13 +89,18 @@ function tokenize(data: string): Token[] {
   return tokens;
 }
 
+// a full name as written, without the dot that marks it as absolute
+const withoutTrailingDot = (text: string) =>
+  text !== '.' && text.endsWith('.') && !text.endsWith('\\.') ? text.slice(0, -1) : text;
+
 // a cursor over a record's tokens
 class Fields {
   private index = 0;
 
   constructor(
     private readonly tokens: Token[],
-    private readonly type: string
+    private readonly type: string,
+    private readonly readName?: (written: string) => string
   ) {}
 
   get remaining(): number {
@@ -132,7 +137,9 @@ class Fields {
   name(what: string): string {
     const text = this.word(what);
     try {
-      nameToLabels(text);
+      const name = this.readName ? this.readName(text) : withoutTrailingDot(text);
+      nameToLabels(name);
+      return name;
     } catch (error) {
       if (error instanceof ParseError) {
         throw new RecordSyntaxError(`${what} is not a valid name: ${error.message}`, {
@@ -141,8 +148,6 @@ class Fields {
       }
       throw error;
     }
-    if (text === '.') return '.';
-    return text.endsWith('.') && !text.endsWith('\\.') ? text.slice(0, -1) : text;
   }
 
   // a <character-string>, quoted or not: at most 255 bytes
@@ -687,6 +692,12 @@ function genericData(data: string): Uint8Array | undefined {
   return out;
 }
 
+export interface ParseOptions {
+  // turn a domain name, as it was written in the data, into the name to store. The
+  // default takes it as a full name and drops one trailing dot
+  readName?: (written: string) => string;
+}
+
 // whether the library can parse this type's own presentation format
 export function hasRecordParser(type: string): type is KnownRecordType {
   return Object.hasOwn(PARSERS, type.toUpperCase());
@@ -696,9 +707,21 @@ export function hasRecordParser(type: string): type is KnownRecordType {
 //
 // any type, known or not, may be given in the RFC 3597 generic form (`\# 4 c0000201`). A
 // type with no parser of its own can only be given that way, and comes back as hex `data`
-export function parseRecordData<T extends KnownRecordType>(type: T, data: string): RecordData<T>;
-export function parseRecordData(type: string, data: string): Record<string, unknown>;
-export function parseRecordData(type: string, data: string): Record<string, unknown> {
+export function parseRecordData<T extends KnownRecordType>(
+  type: T,
+  data: string,
+  options?: ParseOptions
+): RecordData<T>;
+export function parseRecordData(
+  type: string,
+  data: string,
+  options?: ParseOptions
+): Record<string, unknown>;
+export function parseRecordData(
+  type: string,
+  data: string,
+  options: ParseOptions = {}
+): Record<string, unknown> {
   let code: number;
   try {
     code = typeCode(type);
@@ -740,7 +763,7 @@ export function parseRecordData(type: string, data: string): Record<string, unkn
       `${mnemonic} records can only be given in the generic form: \\# <length> <hex>`
     );
   }
-  const fields = new Fields(tokenize(data), mnemonic);
+  const fields = new Fields(tokenize(data), mnemonic, options.readName);
   const parsed = PARSERS[mnemonic](fields, data);
   if (!SELF_TERMINATING.has(mnemonic)) fields.end();
   return parsed;

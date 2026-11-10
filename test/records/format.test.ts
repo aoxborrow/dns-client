@@ -26,7 +26,7 @@ const captured = (label: string) =>
     decodeMessage(CAPTURED.find(m => m.label === `captured: ${label}`)!.response).answers
   )
     .filter(record => record.type !== 'RRSIG')
-    .map(formatRecordData);
+    .map(record => formatRecordData(record));
 
 describe('formatRecordData against dig', () => {
   // each expectation is what `dig +short` printed for the same record when it was captured
@@ -266,14 +266,14 @@ describe('record lists', () => {
     address,
   });
 
-  it('flattens a record to name, type, TTL and content', () => {
+  it('flattens a record to name, type, TTL and data', () => {
     expect(
       flattenRecord({ ...base, type: 'MX', preference: 10, exchange: 'mail.example.net' })
     ).toEqual({
       name: 'example.com',
       type: 'MX',
       ttl: 300,
-      content: '10 mail.example.net.',
+      data: '10 mail.example.net.',
     });
   });
 

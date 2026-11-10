@@ -23,5 +23,6 @@ export {
   parentName,
   readName,
   splitName,
+  toAsciiName,
 } from './names';
 export type { NameRead } from './names';

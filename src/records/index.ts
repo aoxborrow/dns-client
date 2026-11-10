@@ -12,7 +12,24 @@ export type { DecodeOptions } from './decode';
 export type * from './types';
 export { parseIpv4, parseIpv6, reverseIp } from './addresses';
 export { formatRecord, formatRecordData, formatSignatureTime } from './format';
+export type { FormatOptions } from './format';
 export { deduplicateRecords, flattenRecord, flattenRecords, sortRecords } from './helpers';
 export type { FlatRecord } from './helpers';
 export { hasRecordParser, parseRecordData } from './parse';
-export type { RecordData } from './parse';
+export type { ParseOptions, RecordData } from './parse';
+export {
+  canonicalRecord,
+  diffRecords,
+  findCnameConflicts,
+  findRepeatedRecords,
+  parseRecord,
+  qualify,
+  relativize,
+} from './validate';
+export type {
+  DiffOptions,
+  QualifyOptions,
+  RecordClash,
+  RecordDiff,
+  ValidateOptions,
+} from './validate';
