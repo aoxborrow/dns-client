@@ -223,7 +223,7 @@ function checkResponse(
 
 // ---- the exchange
 
-function hasTransportOptions(options: ExchangeOptions): boolean {
+export function hasTransportOptions(options: TransportOptions): boolean {
   return (
     options.proxy !== undefined ||
     options.fetch !== undefined ||
