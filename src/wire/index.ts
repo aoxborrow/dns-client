@@ -14,6 +14,7 @@ export { encodeMessage, encodeQuery } from './encode';
 export type { EncodableMessage, Query, QueryEdns } from './encode';
 export {
   canonicalName,
+  compareNames,
   countLabels,
   encodeName,
   isSubdomain,

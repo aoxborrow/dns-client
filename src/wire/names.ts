@@ -182,3 +182,33 @@ export function isSubdomain(name: string, zone: string): boolean {
   const offset = child.length - parent.length;
   return parent.every((label, index) => label === child[offset + index]);
 }
+
+function foldLabel(label: Uint8Array): Uint8Array {
+  const out = Uint8Array.from(label);
+  for (let i = 0; i < out.length; i++) {
+    if (out[i] >= 0x41 && out[i] <= 0x5a) out[i] += 0x20;
+  }
+  return out;
+}
+
+function compareBytes(a: Uint8Array, b: Uint8Array): number {
+  const length = Math.min(a.length, b.length);
+  for (let i = 0; i < length; i++) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return a.length - b.length;
+}
+
+// canonical DNS name order (RFC 4034 §6.1): compare labels from the right, as lowercase
+// bytes; a name sorts before the names below it. Negative, zero or positive, like a
+// comparator
+export function compareNames(a: string, b: string): number {
+  const left = nameToLabels(a).map(foldLabel).reverse();
+  const right = nameToLabels(b).map(foldLabel).reverse();
+  const length = Math.min(left.length, right.length);
+  for (let i = 0; i < length; i++) {
+    const order = compareBytes(left[i], right[i]);
+    if (order !== 0) return order;
+  }
+  return left.length - right.length;
+}

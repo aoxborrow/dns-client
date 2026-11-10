@@ -10,3 +10,7 @@ export type { RecordTypeName } from '../protocol/types';
 export { decodeRecord, decodeRecords, isKnownRecordType, serviceParamName } from './decode';
 export type { DecodeOptions } from './decode';
 export type * from './types';
+export { parseIpv4, parseIpv6, reverseIp } from './addresses';
+export { formatRecord, formatRecordData, formatSignatureTime } from './format';
+export { deduplicateRecords, flattenRecord, flattenRecords, sortRecords } from './helpers';
+export type { FlatRecord } from './helpers';
