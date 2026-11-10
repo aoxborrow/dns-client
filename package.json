@@ -1,0 +1,77 @@
+{
+  "name": "@aoxborrow/dns-client",
+  "version": "1.0.0-dev",
+  "private": true,
+  "description": "Fully-typed DNS client: wire codec, typed records, resolvers and DNSSEC",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./records": "./src/records/index.ts",
+    "./wire": "./src/wire/index.ts"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "import": {
+          "types": "./dist/index.d.ts",
+          "default": "./dist/index.js"
+        },
+        "require": {
+          "types": "./dist/index.d.cts",
+          "default": "./dist/index.cjs"
+        }
+      },
+      "./records": {
+        "import": {
+          "types": "./dist/records/index.d.ts",
+          "default": "./dist/records/index.js"
+        },
+        "require": {
+          "types": "./dist/records/index.d.cts",
+          "default": "./dist/records/index.cjs"
+        }
+      },
+      "./wire": {
+        "import": {
+          "types": "./dist/wire/index.d.ts",
+          "default": "./dist/wire/index.js"
+        },
+        "require": {
+          "types": "./dist/wire/index.d.cts",
+          "default": "./dist/wire/index.cjs"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "yarn run -T tsc --noEmit",
+    "test": "yarn run -T vitest run",
+    "check:browser": "node scripts/browser-check.mjs",
+    "check:pack": "node scripts/pack-check.mjs",
+    "lint": "yarn typecheck && yarn eslint && yarn format",
+    "lint:fix": "yarn eslint:fix && yarn format:fix",
+    "eslint": "yarn run -T eslint --cache --cache-location .eslintcache --max-warnings 0 .",
+    "eslint:fix": "yarn run -T eslint --cache --cache-location .eslintcache --max-warnings 0 . --fix",
+    "format": "yarn run -T prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"scripts/**/*.mjs\" eslint.config.mjs tsup.config.ts vitest.config.ts",
+    "format:fix": "yarn run -T prettier --write --list-different \"src/**/*.ts\" \"test/**/*.ts\" \"scripts/**/*.mjs\" eslint.config.mjs tsup.config.ts vitest.config.ts"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "tsup": "^8.5.1"
+  }
+}
