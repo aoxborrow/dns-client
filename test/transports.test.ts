@@ -1,5 +1,6 @@
 import {
   ConnectionError,
+  DnsError,
   EmptyResponseError,
   InvalidResponseError,
   NoServerError,
@@ -547,6 +548,34 @@ describe('the Cloudflare connector', () => {
       ['startTls', { expectedServerHostname: 'dns.example' }],
       'secure closed',
     ]);
+  });
+
+  it('refuses a TLS upgrade to a host other than the one it connected to', async () => {
+    // deployed Workers close such a connection without an error, which is what a proxy
+    // tunnel or a server given by address would run into
+    let upgrades = 0;
+    const socket: CloudflareSocket = {
+      readable: new ReadableStream<Uint8Array>(),
+      writable: new WritableStream<Uint8Array>(),
+      close: () => Promise.resolve(),
+      startTls: () => {
+        upgrades++;
+        return socket;
+      },
+    };
+    const connect = createCloudflareConnect(() => socket);
+
+    const viaProxy = await connect({ hostname: 'proxy.example', port: 1080 });
+    expect(() => viaProxy.startTls('dns.example')).toThrow(DnsError);
+    expect(() => viaProxy.startTls('dns.example')).toThrow(/through a proxy/);
+    const byAddress = await connect({ hostname: '192.0.2.1', port: 853 });
+    expect(() => byAddress.startTls('dns.example')).toThrow(DnsError);
+    expect(upgrades).toBe(0);
+
+    // the same name, however it is written, is fine
+    const direct = await connect({ hostname: 'DNS.example.', port: 853 });
+    await direct.startTls('dns.example');
+    expect(upgrades).toBe(1);
   });
 
   it('carries DNS over TCP through a connect function the caller supplies', async () => {
