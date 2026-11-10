@@ -43,7 +43,8 @@ export interface DnsQuestion {
   class?: string | number;
 }
 
-// header flags a query can set: recursion desired, checking disabled, authentic data
+// the header flags a query was sent with: recursion desired, checking disabled,
+// authentic data
 export type QueryFlag = 'RD' | 'CD' | 'AD';
 
 export interface ExchangeOptions extends TransportOptions {
@@ -51,9 +52,14 @@ export interface ExchangeOptions extends TransportOptions {
   transport?: TransportName;
   // default: the transport's own. A port written into the server wins
   port?: number;
-  // default none: the question as an authoritative server is asked it. A recursive
-  // resolver wants 'RD'
-  flags?: readonly QueryFlag[];
+  // RD: ask the server to resolve the name on our behalf. Default true, the ordinary
+  // question a resolver is asked and what `dig` sends. False is for putting a question
+  // to an authoritative server directly
+  recursionDesired?: boolean;
+  // CD: ask a validating resolver for the data even if it fails validation
+  checkingDisabled?: boolean;
+  // AD: ask to be told whether the answer was authenticated
+  authenticData?: boolean;
   // set the DO bit: ask for DNSSEC records
   dnssecOk?: boolean;
   // the largest UDP response to accept. Default 1232
@@ -125,7 +131,10 @@ function randomId(): number {
 export interface DigOptions {
   transport?: TransportName;
   port?: number;
-  flags?: readonly QueryFlag[];
+  // default true, as in `exchange`
+  recursionDesired?: boolean;
+  checkingDisabled?: boolean;
+  authenticData?: boolean;
   dnssecOk?: boolean;
   udpPayloadSize?: number;
   edns?: boolean;
@@ -139,12 +148,11 @@ export function digCommand(
 ): string {
   const transport = options.transport ?? 'udp';
   const endpoint = toEndpoint(server, transport, options.port);
-  const flags = options.flags ?? [];
   const parts = ['dig'];
   if (options.dnssecOk) parts.push('+dnssec');
-  if (flags.includes('CD')) parts.push('+cd');
-  if (!flags.includes('RD')) parts.push('+norecurse');
-  if (flags.includes('AD')) parts.push('+adflag');
+  if (options.checkingDisabled) parts.push('+cd');
+  if (options.recursionDesired === false) parts.push('+norecurse');
+  if (options.authenticData) parts.push('+adflag');
   if (transport === 'tcp') parts.push('+tcp');
   if (transport === 'tls') parts.push('+tls');
   if (transport === 'doh') {
@@ -242,7 +250,13 @@ export async function exchange(
   const { signal, onEvent } = options;
   const timeout = options.timeout ?? DEFAULT_TIMEOUT;
   const retries = Math.max(0, options.retries ?? DEFAULT_RETRIES);
-  const flags = [...new Set(options.flags ?? [])];
+  const recursionDesired = options.recursionDesired ?? true;
+  const checkingDisabled = options.checkingDisabled ?? false;
+  const authenticData = options.authenticData ?? false;
+  const flags: QueryFlag[] = [];
+  if (recursionDesired) flags.push('RD');
+  if (checkingDisabled) flags.push('CD');
+  if (authenticData) flags.push('AD');
 
   // ---- the question, checked before anything touches the network
   let name: string;
@@ -267,9 +281,9 @@ export async function exchange(
       name,
       type,
       class: cls,
-      recursionDesired: flags.includes('RD'),
-      checkingDisabled: flags.includes('CD'),
-      authenticData: flags.includes('AD'),
+      recursionDesired,
+      checkingDisabled,
+      authenticData,
       edns: edns && { ...edns, ...(options.ednsOptions && { options: options.ednsOptions }) },
     });
 
@@ -441,7 +455,9 @@ export async function exchange(
           digCommand({ name, type, class: cls }, server, {
             transport: finalTransport,
             port: finalEndpoint.port,
-            flags,
+            recursionDesired,
+            checkingDisabled,
+            authenticData,
             edns: edns !== false,
             ...(edns && { dnssecOk: edns.dnssecOk, udpPayloadSize: edns.udpPayloadSize }),
           }),

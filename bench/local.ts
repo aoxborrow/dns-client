@@ -68,7 +68,7 @@ async function main() {
   resolver.setServers([`${server.address}:${server.port}`]);
 
   const transports = createTransports();
-  const options = { port: server.port, transports, flags: ['RD'] as const };
+  const options = { port: server.port, transports };
 
   const contenders: Contender[] = [
     {

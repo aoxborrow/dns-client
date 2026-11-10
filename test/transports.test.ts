@@ -180,7 +180,7 @@ describe('DNS over TLS', () => {
     expect(second.message.answers).toHaveLength(1);
     expect(server.received).toHaveLength(2);
     expect(server.connections).toBe(1);
-    expect(first.toDig()).toBe(`dig +norecurse +tls -p ${server.port} @127.0.0.1 example.com A`);
+    expect(first.toDig()).toBe(`dig +tls -p ${server.port} @127.0.0.1 example.com A`);
   });
 
   it('checks the certificate against the server name', async () => {
@@ -239,7 +239,7 @@ describe('DNS over HTTPS', () => {
     // ID 0, so HTTP caches can share the answer
     expect(result.query.id).toBe(0);
     expect(decodeMessage(request.query).id).toBe(0);
-    expect(result.toDig()).toBe(`dig +norecurse +https -p ${server.port} @127.0.0.1 example.com A`);
+    expect(result.toDig()).toBe(`dig +https -p ${server.port} @127.0.0.1 example.com A`);
   });
 
   it('sends the query as the body of a POST when asked to', async () => {

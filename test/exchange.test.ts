@@ -58,8 +58,10 @@ describe('exchange', () => {
       expect(server.received[0].transport).toBe('udp');
       const sent = decodeMessage(server.received[0].query);
       expect(sent.questions).toEqual([{ name: 'example.com', type: 1, class: 1 }]);
-      // nothing asked for: no flags, EDNS with the default payload size
-      expect(sent.flags.rd).toBe(false);
+      // nothing asked for: an ordinary recursive query, EDNS with the default payload size
+      expect(sent.flags).toMatchObject({ rd: true, cd: false, ad: false });
+      expect(result.query.flags).toEqual(['RD']);
+      expect(result.toDig()).toBe(`dig -p ${server.port} @127.0.0.1 example.com A`);
       expect(sent.edns).toMatchObject({ udpPayloadSize: 1232, dnssecOk: false });
     });
 
@@ -67,7 +69,8 @@ describe('exchange', () => {
       const options = await serve(({ query }) => ({ response: answerTo(query) }));
       const result = await exchange(QUESTION, server.address, {
         ...options,
-        flags: ['RD', 'CD', 'AD'],
+        checkingDisabled: true,
+        authenticData: true,
         dnssecOk: true,
         udpPayloadSize: 4096,
       });
@@ -554,7 +557,8 @@ describe('exchange', () => {
       const result = await exchange({ name: 'example.com', type: 'DNSKEY' }, server.address, {
         ...options,
         transport: 'tcp',
-        flags: ['CD'],
+        recursionDesired: false,
+        checkingDisabled: true,
         dnssecOk: true,
       });
       expect(result.toDig()).toBe(
@@ -569,42 +573,43 @@ describe('digCommand', () => {
     expect(
       digCommand({ name: 'example.com', type: 'DNSKEY' }, '199.43.135.53', {
         transport: 'tcp',
-        flags: ['CD'],
+        recursionDesired: false,
+        checkingDisabled: true,
         dnssecOk: true,
       })
     ).toBe('dig +dnssec +cd +norecurse +tcp @199.43.135.53 example.com DNSKEY');
   });
 
   it('asks a recursive resolver plainly', () => {
-    expect(digCommand({ name: 'example.com', type: 'mx' }, '1.1.1.1', { flags: ['RD'] })).toBe(
+    expect(digCommand({ name: 'example.com', type: 'mx' }, '1.1.1.1')).toBe(
       'dig @1.1.1.1 example.com MX'
     );
   });
 
   it('covers the other transports, ports, and EDNS settings', () => {
-    expect(digCommand({ name: '.', type: 'NS' }, '9.9.9.9', { transport: 'tls' })).toBe(
-      'dig +norecurse +tls @9.9.9.9 . NS'
-    );
+    expect(
+      digCommand({ name: '.', type: 'NS' }, '9.9.9.9', {
+        transport: 'tls',
+        recursionDesired: false,
+      })
+    ).toBe('dig +norecurse +tls @9.9.9.9 . NS');
     expect(
       digCommand({ name: 'example.com', type: 'A' }, 'https://dns.example/custom', {
-        flags: ['RD', 'AD'],
+        authenticData: true,
       })
     ).toBe('dig +adflag @dns.example example.com A');
     expect(
       digCommand({ name: 'example.com', type: 'A' }, 'https://dns.example/custom', {
         transport: 'doh',
-        flags: ['RD'],
       })
     ).toBe('dig +https=/custom @dns.example example.com A');
     expect(
       digCommand({ name: 'example.com', type: 'A' }, '[2001:db8::1]:5353', {
-        flags: ['RD'],
         udpPayloadSize: 4096,
       })
     ).toBe('dig +bufsize=4096 -p 5353 @2001:db8::1 example.com A');
     expect(
       digCommand({ name: 'example.com', type: 'TXT', class: 'CH' }, '192.0.2.1', {
-        flags: ['RD'],
         edns: false,
       })
     ).toBe('dig +noedns @192.0.2.1 example.com TXT CH');

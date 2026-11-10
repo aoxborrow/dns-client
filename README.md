@@ -26,12 +26,24 @@ published `exports` map and the build entries in step.
 `exchange` puts one question to one server and returns its answer, decoded and raw. It
 follows nothing, caches nothing and passes no judgement: NXDOMAIN and SERVFAIL are answers.
 
+By default it is an ordinary recursive query, what `dig` or `node:dns` would send:
+
+```ts
+import { exchange } from '@aoxborrow/dns-client';
+
+const res = await exchange({ name: 'example.com', type: 'MX' }, '1.1.1.1');
+res.toDig(); // dig @1.1.1.1 example.com MX
+```
+
+Asking an authoritative server directly is a setting:
+
 ```ts
 import { decodeRecords, exchange } from '@aoxborrow/dns-client';
 
 const res = await exchange({ name: 'example.com', type: 'DNSKEY' }, '199.43.135.53', {
   transport: 'tcp', // 'udp' (default) | 'tcp' | 'tls' | 'doh'
-  flags: ['CD'], // none by default; a recursive resolver wants 'RD'
+  recursionDesired: false, // the question as an authoritative server is asked it
+  checkingDisabled: true,
   dnssecOk: true,
 });
 res.message.rcode; // 0
