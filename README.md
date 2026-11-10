@@ -17,6 +17,8 @@ not compatible with the 0.x versions on npm.
 | `@aoxborrow/dns-client/transports/tcp` | DNS over TCP, pooled and pipelined | Node, Workers |
 | `@aoxborrow/dns-client/transports/tls` | DNS over TLS | Node, Workers |
 | `@aoxborrow/dns-client/transports/doh` | DNS over HTTPS | any |
+| `@aoxborrow/dns-client/dnssec` | `analyze()`, the chain-of-trust analysis, and its primitives | Node, Workers |
+| `@aoxborrow/dns-client/dnssec/types` | report types, status constants, finding catalog | any |
 
 Entries are added as each layer lands. `test/package.test.ts` keeps the `exports` map, the
 published `exports` map and the build entries in step.
@@ -65,6 +67,23 @@ flag and the `server`, `query`, `type` and `transport` it came from.
 and moves to the next server when one fails. `AuthoritativeResolver` remembers delegations,
 looks up nameservers that come without an address, moves past servers that do not answer
 for their zone, and stops at an alias into another zone unless `followCnames` is set.
+
+## DNSSEC
+
+```ts
+import { analyze } from '@aoxborrow/dns-client/dnssec';
+
+const report = await analyze('example.com');
+report.overallStatus; // 'secure' | 'insecure' | 'bogus' | 'indeterminate'
+report.chain; // every zone from the root down: keys, delegation, signatures, denial proofs
+report.findings; // what was found wrong or worth knowing, each with a stable slug
+```
+
+It asks the zones' own servers directly, with checking disabled, and verifies every
+signature itself: RSA, ECDSA and EdDSA through WebCrypto, DS digests and NSEC3 hashes with
+its own SHA-1, SHA-256 and SHA-384. An algorithm the runtime cannot verify is reported as
+not checked, never as a pass. `now` judges signatures against a time other than the
+present.
 
 ## Proxies
 

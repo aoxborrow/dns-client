@@ -1,10 +1,10 @@
-import { generateKeyPairSync, sign as cryptoSign, KeyObject } from 'crypto';
+import { generateKeyPairSync, sign as cryptoSign, KeyObject } from 'node:crypto';
 import {
   verifySignature,
   isAlgorithmVerifiable,
   algorithmName,
   keySizeBits,
-} from '@/tools/dnssec/crypto';
+} from '../../src/dnssec/crypto';
 
 // signature verification is checked against keys generated here rather than recorded packets:
 // a generated pair exercises the same DNSKEY wire encoding and the same node crypto path, and
@@ -96,77 +96,92 @@ describe('verifySignature', () => {
       const vector = build();
       const signature = vector.sign(SIGNED_DATA);
 
-      it('verifies a good signature', () => {
-        const outcome = verifySignature(vector.algorithm, vector.publicKey, SIGNED_DATA, signature);
+      it('verifies a good signature', async () => {
+        const outcome = await verifySignature(
+          vector.algorithm,
+          vector.publicKey,
+          SIGNED_DATA,
+          signature
+        );
         expect(outcome.verified).toBe(true);
         expect(outcome.reason).toBeUndefined();
       });
 
-      it('fails when a signature byte is flipped', () => {
+      it('fails when a signature byte is flipped', async () => {
         const corrupted = Buffer.from(signature);
         corrupted[corrupted.length - 1] ^= 0xff;
-        const outcome = verifySignature(vector.algorithm, vector.publicKey, SIGNED_DATA, corrupted);
+        const outcome = await verifySignature(
+          vector.algorithm,
+          vector.publicKey,
+          SIGNED_DATA,
+          corrupted
+        );
         expect(outcome.verified).toBe(false);
       });
 
-      it('fails when the signed data is altered', () => {
+      it('fails when the signed data is altered', async () => {
         const tampered = Buffer.concat([SIGNED_DATA, Buffer.from('!')]);
-        const outcome = verifySignature(vector.algorithm, vector.publicKey, tampered, signature);
+        const outcome = await verifySignature(
+          vector.algorithm,
+          vector.publicKey,
+          tampered,
+          signature
+        );
         expect(outcome.verified).toBe(false);
       });
 
-      it('reports the key size', () => {
+      it('reports the key size', async () => {
         expect(keySizeBits(vector.algorithm, vector.publicKey)).toBe(vector.expectedKeySize);
       });
     });
   }
 
-  it('names a wrong-length signature as its own fault, not a generic failure', () => {
+  it('names a wrong-length signature as its own fault, not a generic failure', async () => {
     const vector = VECTORS['ECDSAP256SHA256 (13)']();
-    const outcome = verifySignature(13, vector.publicKey, SIGNED_DATA, Buffer.alloc(32));
+    const outcome = await verifySignature(13, vector.publicKey, SIGNED_DATA, Buffer.alloc(32));
     expect(outcome.verified).toBe(false);
     expect(outcome.expectedSignatureLength).toBe(64);
     expect(outcome.reason).toMatch(/signature length 32 bytes, expected 64/);
   });
 
-  it('leaves an unverifiable algorithm unchecked rather than passing it', () => {
+  it('leaves an unverifiable algorithm unchecked rather than passing it', async () => {
     // GOST (12) is one this tool must never green-check
-    const outcome = verifySignature(12, Buffer.alloc(64), SIGNED_DATA, Buffer.alloc(64));
+    const outcome = await verifySignature(12, Buffer.alloc(64), SIGNED_DATA, Buffer.alloc(64));
     expect(outcome.verified).toBeUndefined();
     expect(outcome.reason).toMatch(/cannot be verified/);
   });
 
-  it('reports a malformed public key as failed, without throwing', () => {
+  it('reports a malformed public key as failed, without throwing', async () => {
     // a supported algorithm whose key will not import is a real failure, not an unsupported
     // algorithm: it must read as verified:false (bogus), not the undefined an unverifiable
     // algorithm returns, or an RRset signed only by an unusable key would pass as secure
-    const outcome = verifySignature(13, Buffer.alloc(7), SIGNED_DATA, Buffer.alloc(64));
+    const outcome = await verifySignature(13, Buffer.alloc(7), SIGNED_DATA, Buffer.alloc(64));
     expect(outcome.verified).toBe(false);
     expect(outcome.reason).toMatch(/expected 64/);
   });
 
-  it('does not verify a signature made by a different key', () => {
+  it('does not verify a signature made by a different key', async () => {
     const a = VECTORS['ED25519 (15)']();
     const b = VECTORS['ED25519 (15)']();
-    const outcome = verifySignature(15, a.publicKey, SIGNED_DATA, b.sign(SIGNED_DATA));
+    const outcome = await verifySignature(15, a.publicKey, SIGNED_DATA, b.sign(SIGNED_DATA));
     expect(outcome.verified).toBe(false);
   });
 });
 
 describe('algorithm support', () => {
-  it('marks the algorithms the tool can check', () => {
+  it('marks the algorithms the tool can check', async () => {
     for (const algorithm of [5, 7, 8, 10, 13, 14, 15, 16]) {
       expect(isAlgorithmVerifiable(algorithm)).toBe(true);
     }
   });
 
-  it('marks the algorithms it cannot', () => {
+  it('marks the algorithms it cannot', async () => {
     for (const algorithm of [1, 3, 6, 12, 23]) {
       expect(isAlgorithmVerifiable(algorithm)).toBe(false);
     }
   });
 
-  it('names an unknown algorithm rather than pretending it is fine', () => {
+  it('names an unknown algorithm rather than pretending it is fine', async () => {
     expect(isAlgorithmVerifiable(99)).toBe(false);
     expect(algorithmName(99)).toBe('UNKNOWN(99)');
   });

@@ -4,7 +4,7 @@ import {
   verifyNodataProof,
   verifyWildcardProof,
   assessNsec3Params,
-} from '@/tools/dnssec/nsec';
+} from '../../src/dnssec/nsec';
 import {
   encodeName,
   nsec3Hash,
@@ -12,8 +12,8 @@ import {
   TYPE_NSEC,
   TYPE_NSEC3,
   TYPE_A,
-} from '@/tools/dnssec/wire';
-import { PROOF_STATUSES, VERIFICATION_RESULTS } from '@tools/shared/dnssec/constants';
+} from '../../src/dnssec/wire';
+import { PROOF_STATUSES, VERIFICATION_RESULTS } from '../../src/dnssec/constants';
 
 const { VERIFIED, FAILED, UNCHECKED } = VERIFICATION_RESULTS;
 
@@ -223,7 +223,7 @@ describe('verifyNoDsProof — NSEC3', () => {
 
   it('leaves an unsupported NSEC3 hash algorithm unchecked', () => {
     const record = nsec3Record('aaaa', zone, 'vvvv', [TYPE_NS]);
-    record.rdata.writeUInt8(2, 0); // an algorithm RFC 5155 does not define
+    record.rdata[0] = 2; // an algorithm RFC 5155 does not define
     const proof = verifyNoDsProof('child.example', [record]);
     expect(proof.status).toBe(PROOF_STATUSES.UNSUPPORTED_ALGORITHM);
     expect(proof.result).toBe(UNCHECKED);

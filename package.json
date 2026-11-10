@@ -16,7 +16,9 @@
     "./transports/udp": "./src/transports/udp.ts",
     "./transports/tcp": "./src/transports/tcp.ts",
     "./transports/tls": "./src/transports/tls.ts",
-    "./transports/doh": "./src/transports/doh.ts"
+    "./transports/doh": "./src/transports/doh.ts",
+    "./dnssec": "./src/dnssec/index.ts",
+    "./dnssec/types": "./src/dnssec/types.ts"
   },
   "files": [
     "dist",
@@ -97,6 +99,26 @@
         "require": {
           "types": "./dist/transports/doh.d.cts",
           "default": "./dist/transports/doh.cjs"
+        }
+      },
+      "./dnssec": {
+        "import": {
+          "types": "./dist/dnssec/index.d.ts",
+          "default": "./dist/dnssec/index.js"
+        },
+        "require": {
+          "types": "./dist/dnssec/index.d.cts",
+          "default": "./dist/dnssec/index.cjs"
+        }
+      },
+      "./dnssec/types": {
+        "import": {
+          "types": "./dist/dnssec/types.d.ts",
+          "default": "./dist/dnssec/types.js"
+        },
+        "require": {
+          "types": "./dist/dnssec/types.d.cts",
+          "default": "./dist/dnssec/types.cjs"
         }
       }
     }

@@ -10,6 +10,8 @@ export const entries = [
   'src/transports/tcp.ts',
   'src/transports/tls.ts',
   'src/transports/doh.ts',
+  'src/dnssec/index.ts',
+  'src/dnssec/types.ts',
 ];
 
 export default defineConfig({

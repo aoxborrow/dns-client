@@ -124,3 +124,40 @@ export function formatIpv6(bytes: Uint8Array): string {
   const tail = text.slice(bestStart + bestLength).join(':');
   return `${head}::${tail}`;
 }
+
+const HEX_PAIR = /^[0-9a-fA-F]{2}$/;
+
+// hex text to bytes. Throws on anything that is not pairs of hex digits
+export function fromHex(text: string): Uint8Array {
+  if (text.length % 2 !== 0) throw new Error('hex text has an odd number of digits');
+  const out = new Uint8Array(text.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    const pair = text.slice(i * 2, i * 2 + 2);
+    if (!HEX_PAIR.test(pair)) throw new Error('not hex text');
+    out[i] = Number.parseInt(pair, 16);
+  }
+  return out;
+}
+
+// base64 text to bytes
+export function fromBase64(text: string): Uint8Array {
+  const binary = atob(text.replace(/\s+/g, ''));
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+export function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+// byte order: the first difference decides, then the shorter sorts first
+export function compareBytes(a: Uint8Array, b: Uint8Array): number {
+  const length = Math.min(a.length, b.length);
+  for (let i = 0; i < length; i++) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return a.length - b.length;
+}

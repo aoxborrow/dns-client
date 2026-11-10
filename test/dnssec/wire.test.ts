@@ -6,7 +6,6 @@ import {
   canonicalName,
   countLabels,
   parentName,
-  parseMessage,
   groupRrsets,
   buildSignedData,
   decodeRrsig,
@@ -19,8 +18,16 @@ import {
   TYPE_NS,
   TYPE_DNSKEY,
   WireRecord,
-} from '@/tools/dnssec/wire';
-import { ROOT_TRUST_ANCHORS } from '@/tools/dnssec/anchors';
+} from '../../src/dnssec/wire';
+import { ROOT_TRUST_ANCHORS } from '../../src/dnssec/anchors';
+import { toWireMessage } from '../../src/dnssec/wire';
+import { decodeMessage } from '../../src/wire/index';
+
+// a response as the DNSSEC code reads it: decoded by the library, then put in canonical form
+const parseMessage = (bytes: Uint8Array) => toWireMessage(decodeMessage(bytes));
+
+const hex = (bytes: Uint8Array | null | undefined) =>
+  bytes ? Buffer.from(bytes).toString('hex') : undefined;
 
 // the two IANA root KSKs, taken verbatim from root-anchors.xml. these are the reference
 // vectors for key tag and DS digest: if either drifts, every downstream check that joins on
@@ -63,13 +70,13 @@ describe('computeDsDigest', () => {
   it('reproduces the published SHA-256 digest for KSK-2017', () => {
     const anchor = ROOT_TRUST_ANCHORS.find(a => a.keyTag === 20326)!;
     const digest = computeDsDigest('.', dnskeyRdata(257, 3, 8, KSK_2017_KEY), 2);
-    expect(digest?.toString('hex')).toBe(anchor.digest);
+    expect(hex(digest)).toBe(anchor.digest);
   });
 
   it('reproduces the published SHA-256 digest for KSK-2024', () => {
     const anchor = ROOT_TRUST_ANCHORS.find(a => a.keyTag === 38696)!;
     const digest = computeDsDigest('.', dnskeyRdata(257, 3, 8, KSK_2024_KEY), 2);
-    expect(digest?.toString('hex')).toBe(anchor.digest);
+    expect(hex(digest)).toBe(anchor.digest);
   });
 
   it('returns null for a digest type it cannot compute rather than guessing', () => {
@@ -80,16 +87,16 @@ describe('computeDsDigest', () => {
 
   it('binds the digest to the owner name', () => {
     const rdata = dnskeyRdata(257, 3, 8, KSK_2017_KEY);
-    expect(computeDsDigest('example.com', rdata, 2)?.toString('hex')).not.toBe(
-      computeDsDigest('.', rdata, 2)?.toString('hex')
+    expect(hex(computeDsDigest('example.com', rdata, 2))).not.toBe(
+      hex(computeDsDigest('.', rdata, 2))
     );
   });
 });
 
 describe('encodeName', () => {
   it('encodes the root as a single zero octet', () => {
-    expect(encodeName('.')).toEqual(Buffer.from([0]));
-    expect(encodeName('')).toEqual(Buffer.from([0]));
+    expect(Buffer.from(encodeName('.'))).toEqual(Buffer.from([0]));
+    expect(Buffer.from(encodeName(''))).toEqual(Buffer.from([0]));
   });
 
   it('downcases for canonical form', () => {
@@ -97,7 +104,7 @@ describe('encodeName', () => {
   });
 
   it('is length-prefixed per label and root-terminated', () => {
-    expect(encodeName('a.bc')).toEqual(Buffer.from([1, 0x61, 2, 0x62, 0x63, 0]));
+    expect(Buffer.from(encodeName('a.bc'))).toEqual(Buffer.from([1, 0x61, 2, 0x62, 0x63, 0]));
   });
 
   it('tolerates a trailing dot', () => {
@@ -244,8 +251,8 @@ describe('buildSignedData', () => {
     const sig = decodeRrsig(rrsigRdata(2))!;
     const built = buildSignedData(sig, rrset)!;
     // the 1.1.1.1 record sorts before 9.9.9.9, so its RDATA appears first
-    const first = built.data.indexOf(Buffer.from([1, 1, 1, 1]));
-    const second = built.data.indexOf(Buffer.from([9, 9, 9, 9]));
+    const first = Buffer.from(built.data).indexOf(Buffer.from([1, 1, 1, 1]));
+    const second = Buffer.from(built.data).indexOf(Buffer.from([9, 9, 9, 9]));
     expect(first).toBeGreaterThan(0);
     expect(first).toBeLessThan(second);
   });
@@ -256,7 +263,7 @@ describe('buildSignedData', () => {
     // 77 appears as a 32-bit TTL in each RR header of the canonical form
     const ttlBytes = Buffer.alloc(4);
     ttlBytes.writeUInt32BE(77, 0);
-    expect(built.data.includes(ttlBytes)).toBe(true);
+    expect(Buffer.from(built.data).includes(ttlBytes)).toBe(true);
   });
 
   it('reconstructs the wildcard owner name when the label count is short', () => {
@@ -285,7 +292,7 @@ describe('decodeDnskey', () => {
     expect(decoded.flags).toBe(257);
     expect(decoded.protocol).toBe(3);
     expect(decoded.algorithm).toBe(8);
-    expect(decoded.publicKey.toString('base64')).toBe(KSK_2017_KEY);
+    expect(Buffer.from(decoded.publicKey).toString('base64')).toBe(KSK_2017_KEY);
   });
 });
 
