@@ -6,6 +6,7 @@ import {
   NoServerError,
 } from '../errors';
 import { toBase64 } from '../wire/bytes';
+import { parseDohUrl } from './endpoint';
 import { createTunnelFetch } from './tunnel-fetch';
 import type { TunnelFetch } from './tunnel-fetch';
 import type { FetchLike, Transport, TransportOptions } from './types';
@@ -41,6 +42,9 @@ export function createDohTransport(options: DohTransportOptions = {}): Transport
       const { endpoint, query, signal } = request;
       if (signal?.aborted) throw signal.reason;
       if (!endpoint.url) throw new NoServerError('No URL to send the DoH query to');
+      // an endpoint may be handed straight to the transport, so the URL is checked here
+      // as well as where servers are parsed
+      parseDohUrl(endpoint.url);
 
       const headers: Record<string, string> = { Accept: MEDIA_TYPE };
       let url = endpoint.url;

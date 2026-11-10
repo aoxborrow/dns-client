@@ -85,6 +85,63 @@ describe('toEndpoint', () => {
     expect(() => toEndpoint('192.0.2.1:70000', 'udp')).toThrow(NoServerError);
     expect(() => toEndpoint('[2001:db8::1', 'udp')).toThrow(NoServerError);
   });
+
+  it('accepts only an address or a host name as the host', () => {
+    // a line break in a host would split the request line sent to an HTTP proxy
+    const hostile = [
+      'evil.example\r\nX-Injected: 1',
+      'evil.example\nGET / HTTP/1.1',
+      'a b',
+      'a/b',
+      'a@b',
+    ];
+    for (const host of hostile) {
+      for (const transport of ['udp', 'tcp', 'tls', 'doh'] as const) {
+        expect(() => toEndpoint(host, transport), host).toThrow(NoServerError);
+        expect(() => toEndpoint({ address: host }, transport), host).toThrow(NoServerError);
+      }
+    }
+    expect(() =>
+      toEndpoint({ address: '192.0.2.1', serverName: 'dns.example\r\nX: 1' }, 'tls')
+    ).toThrow(NoServerError);
+    // names with underscores, trailing dots and Unicode are still names
+    expect(toEndpoint('_dns.resolver.arpa.', 'udp').host).toBe('_dns.resolver.arpa.');
+    expect(toEndpoint('dns.münchen.example', 'tcp').host).toBe('dns.xn--mnchen-3ya.example');
+    expect(toEndpoint('fe80::1%en0', 'udp').host).toBe('fe80::1%en0');
+  });
+
+  it('never repeats a server it cannot read, which may hold a secret', () => {
+    const secrets = [
+      'user:hunter2@192.0.2.1',
+      'https://user:hunter2@dns.example/dns-query',
+      'https://user:hunter2@bad host/',
+      '[hunter2',
+      '192.0.2.1:hunter2',
+    ];
+    for (const server of secrets) {
+      for (const transport of ['udp', 'doh'] as const) {
+        let error: unknown;
+        try {
+          toEndpoint(server, transport);
+        } catch (caught) {
+          error = caught;
+        }
+        expect(error, server).toBeInstanceOf(NoServerError);
+        const text = `${(error as Error).message} ${JSON.stringify(error)} ${String((error as Error).cause)}`;
+        expect(text).not.toContain('hunter2');
+      }
+    }
+  });
+
+  it('refuses a DoH URL that carries credentials or is not HTTP', () => {
+    expect(() => toEndpoint('https://token@dns.example/dns-query', 'doh')).toThrow(/credentials/);
+    expect(() =>
+      toEndpoint({ address: 'dns.example', url: 'https://u:p@dns.example/dns-query' }, 'doh')
+    ).toThrow(/credentials/);
+    expect(() => toEndpoint({ address: 'dns.example', url: 'ftp://dns.example/' }, 'doh')).toThrow(
+      NoServerError
+    );
+  });
 });
 
 describe('normalizeAddress', () => {
@@ -314,6 +371,31 @@ describe('DNS over HTTPS', () => {
     expect(result.message.answers).toHaveLength(1);
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatch(/^GET http:\/\/127\.0\.0\.1:\d+\/dns-query\?dns=/);
+  });
+
+  it('refuses a URL with credentials before fetch can repeat them in an error', async () => {
+    server = await startDohServer(query => answerTo(query));
+    const events: unknown[] = [];
+    const withToken = server.url.replace('http://', 'http://user:hunter2@');
+    transports = createTransports();
+    // through `exchange`, and straight into the transport with an endpoint of its own
+    const attempts = [
+      exchange(QUESTION, withToken, { transports, retries: 0, onEvent: e => events.push(e) }),
+      transports.get('doh').send({
+        endpoint: { host: '127.0.0.1', port: server.port, url: withToken },
+        query: encodeQuery({ id: 0, name: 'example.com', type: 'A' }),
+      }),
+    ];
+    for (const attempt of attempts) {
+      const error = await attempt.catch(caught => caught);
+      expect(error).toBeInstanceOf(NoServerError);
+      expect(error.retryable).toBe(false);
+      expect(
+        `${error.message} ${error.stack} ${JSON.stringify(error)} ${String(error.cause)}`
+      ).not.toContain('hunter2');
+    }
+    expect(JSON.stringify(events)).not.toContain('hunter2');
+    expect(server.requests).toHaveLength(0);
   });
 
   it('turns whatever a custom fetch throws into a connection error', async () => {

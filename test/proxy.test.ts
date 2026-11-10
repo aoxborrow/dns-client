@@ -1,10 +1,11 @@
-import { ConnectionError, DnsError, ProxyError } from '../src/errors';
+import { ConnectionError, DnsError, NoServerError, ProxyError } from '../src/errors';
 import { exchange } from '../src/exchange';
 import type { ExchangeOptions, ExchangeResult } from '../src/exchange';
 import { createNodeConnect, createTransports } from '../src/transports/index';
 import type { Transports } from '../src/transports/index';
 import { parseProxy, scrub } from '../src/transports/proxy';
 import type { DnsEvent, TransportName } from '../src/transports/types';
+import { encodeQuery } from '../src/wire/index';
 import { answerTo } from './support/answers';
 import { startFixtureServer } from './support/fixture-server';
 import type { FixtureServer } from './support/fixture-server';
@@ -243,6 +244,51 @@ describe('proxies', () => {
       expect(dot.received).toHaveLength(0);
       expect(doh.requests).toHaveLength(0);
       expectNoCredentials(JSON.stringify(events));
+    });
+  });
+
+  describe('a hostile server name', () => {
+    // an endpoint handed straight to a transport skips the parsing of servers, so the
+    // handshake has to refuse it on its own
+    it('cannot inject headers or a second request into an HTTP CONNECT', async () => {
+      await startProxy('http');
+      transports = createTransports({ proxy: proxyUrl('http', proxy) });
+      const hosts = [
+        '127.0.0.1\r\nProxy-Authorization: Basic aW5qZWN0ZWQ=',
+        `127.0.0.1:${dns.port} HTTP/1.1\r\n\r\nCONNECT 10.0.0.1:25`,
+        'evil.example\nX-Injected: 1',
+      ];
+      for (const host of hosts) {
+        for (const transport of ['tcp', 'tls', 'udp'] as const) {
+          const error = await transports
+            .get(transport)
+            .send({
+              endpoint: { host, port: dns.port },
+              query: encodeQuery({ id: 1, name: 'example.com', type: 'A' }),
+            })
+            .catch(caught => caught);
+          expect(error, host).toBeInstanceOf(NoServerError);
+        }
+      }
+      // the proxy never saw a request line, let alone a second one
+      expect(proxy.requests).toHaveLength(0);
+      expect(dns.received).toHaveLength(0);
+    });
+
+    it('is refused by exchange before anything is sent', async () => {
+      await startProxy('http');
+      const error = await ask('tcp', { proxy: proxyUrl('http', proxy) }).then(() =>
+        exchange(
+          QUESTION,
+          { address: 'evil.example\r\nX-Injected: 1', port: dns.port },
+          {
+            transport: 'tcp',
+            transports,
+          }
+        ).catch(caught => caught)
+      );
+      expect(error).toBeInstanceOf(NoServerError);
+      expect(proxy.requests).toHaveLength(1);
     });
   });
 

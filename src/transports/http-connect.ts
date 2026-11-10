@@ -1,6 +1,6 @@
-import { ConnectionError, ProxyError } from '../errors';
+import { ConnectionError, NoServerError, ProxyError } from '../errors';
 import { latin1Decode, latin1Encode } from '../wire/bytes';
-import { formatHostPort } from './endpoint';
+import { checkHost, formatHostPort } from './endpoint';
 import { basicCredentials } from './proxy';
 import type { Proxy } from './proxy';
 import { ConnectionClosedError, writeBytes } from './stream';
@@ -18,7 +18,12 @@ export async function httpConnectHandshake(
   proxy: Proxy,
   target: { host: string; port: number }
 ): Promise<void> {
-  const authority = formatHostPort(target.host, target.port);
+  // the host goes into the request line as written. One with a line break in it would end
+  // that line early and let whatever follows pass as headers, or as a second request
+  const authority = formatHostPort(checkHost(target.host), target.port);
+  if (!Number.isInteger(target.port) || target.port < 1 || target.port > 0xffff) {
+    throw new NoServerError('Invalid port in the server address');
+  }
   const lines = [`CONNECT ${authority} HTTP/1.1`, `Host: ${authority}`];
   if (proxy.username !== undefined) {
     lines.push(`Proxy-Authorization: ${basicCredentials(proxy)}`);
