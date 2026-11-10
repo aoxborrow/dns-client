@@ -33,3 +33,24 @@ export type {
   RecordDiff,
   ValidateOptions,
 } from './validate';
+export {
+  clientSubnetOption,
+  cookieOption,
+  decodeEdnsOption,
+  decodeEdnsOptions,
+  extendedErrors,
+  nsidOption,
+  paddingOption,
+} from './edns';
+export type {
+  AlgorithmsOption,
+  ClientSubnetOption,
+  CookieOption,
+  ExtendedErrorOption,
+  KeyTagOption,
+  NsidOption,
+  PaddingOption,
+  TcpKeepaliveOption,
+  TypedEdnsOption,
+  UnknownOption,
+} from './edns';
