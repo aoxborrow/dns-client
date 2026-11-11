@@ -187,6 +187,8 @@ export class DnssecEngine {
   private serverMatrix: ServerMatrixCell[] = [];
   private findings: DnssecFinding[] = [];
   private transport: DnsTransportType;
+  // names the walk could not get an answer about from their parent's servers
+  private unanswered: string[] = [];
   private timeoutMs: number;
   private deep: boolean;
   private crossCheckEnabled: boolean;
@@ -626,7 +628,18 @@ export class DnssecEngine {
     soa: Fetched;
   } | null> {
     const answer = await this.ask(parent.name, parent.serverIps, candidate, TYPE_NS, parentHosts);
-    if (!answer.message) return null;
+    if (!answer.message) {
+      // nobody answered, which is not the same as "there is no delegation here". Whether
+      // the name is a zone of its own is now unknown, and so is everything below it: the
+      // parent's verdict must not be handed down to a name it was never asked about
+      this.unanswered.push(candidate);
+      this.finding(
+        'zone-unreachable',
+        `The servers for ${parent.name === '.' ? 'the root' : parent.name} did not answer for ${candidate}, so it is not known whether ${candidate} is a zone of its own or how it is delegated.`,
+        { zone: candidate }
+      );
+      return null;
+    }
 
     // a referral puts the child's NS RRset in the authority section with AA unset; a server
     // authoritative for both sides answers directly instead. both are candidates
@@ -1368,11 +1381,23 @@ export class DnssecEngine {
 
     let verifiedTag: number | undefined;
     let sawUnsupported = false;
+    // signatures made by a key the parent vouches for: how many could be checked here, and
+    // how many could not because this runtime has no way to verify their algorithm
+    let vouchedChecked = 0;
+    let vouchedUnchecked = 0;
 
     for (const rr of sigs) {
       const described = await this.verifyOneSignature(zone, rr, rrset, dnskeys, fetched, false);
       zone.rrsigs.push(described);
       if (described.check.result === UNCHECKED) sawUnsupported = true;
+      const made = decodeRrsig(rr.rdata);
+      const byVouchedKey = authenticatedKeys.some(
+        key => key.keyTag === made?.keyTag && key.algorithm === made?.algorithm
+      );
+      if (byVouchedKey) {
+        if (described.check.result === UNCHECKED) vouchedUnchecked++;
+        else vouchedChecked++;
+      }
       // authenticate against the key MATERIAL the parent's DS (or the anchor) actually vouched for,
       // never the 16-bit tag: tags collide, and a lying child can publish a colliding key and sign
       // the DNSKEY RRset with it. verify the signature directly against a vouched key (RFC 4035 §5.2)
@@ -1414,6 +1439,19 @@ export class DnssecEngine {
         reason: sawUnsupported
           ? `No supported algorithm links ${build.name} to its parent.`
           : `No key in ${build.name}'s DNSKEY RRset is authenticated by its parent.`,
+      };
+    }
+
+    // the parent vouches for keys, and they did sign, but none of those signatures could
+    // be checked: the algorithm is one nothing verifies (GOST), or one this runtime lacks
+    // (Ed448 on Cloudflare Workers). There is no path that was checked and failed, which is
+    // what bogus means. Indeterminate, as a validator treats a zone whose DS set names no
+    // algorithm it supports (RFC 4035 §5.2)
+    if (vouchedUnchecked > 0 && vouchedChecked === 0) {
+      return {
+        verified: false,
+        indeterminate: true,
+        reason: `No supported algorithm links ${build.name} to its parent.`,
       };
     }
 
@@ -2184,7 +2222,12 @@ export class DnssecEngine {
   // path already established
   private rollup(chain: DnssecZone[]): DnssecStatus {
     if (chain.length === 0) return INDETERMINATE;
-    return chain[chain.length - 1].status;
+    const { status } = chain[chain.length - 1];
+    // a break that was found stands. Otherwise, a name the walk could not be asked about
+    // is not covered by the last zone it did reach: that zone being secure says nothing
+    // about a delegation nobody answered for
+    if (status !== BOGUS && this.unanswered.length > 0) return INDETERMINATE;
+    return status;
   }
 
   // -------------------------------------------------------------------------

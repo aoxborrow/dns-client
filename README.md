@@ -217,8 +217,10 @@ its own SHA-1, SHA-256 and SHA-384. An algorithm the runtime cannot verify is re
 not checked, never as a pass. The `now` option judges signatures against a time other than
 the present.
 
-This is an analysis, a full report on a zone. The resolvers do not validate answers yet:
-`dnssecOk` asks for signatures and `flags.ad` reports what a validating resolver decided.
+This is an analysis, a full report on the zone a name is in. It does not follow an alias
+into another zone: for a CNAME, analyze the target as well. The resolvers do not validate
+answers yet: `dnssecOk` asks for signatures and `flags.ad` reports what a validating
+resolver decided.
 
 ## The wire format
 

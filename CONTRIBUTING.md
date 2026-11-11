@@ -51,6 +51,15 @@ Unit tests use no network. Three things make that possible, all under `test/supp
 A change to how the library reads a response should come with a recorded response that
 shows it. A change to what it sends should assert the bytes.
 
+The DNSSEC analysis is tested over real zones, one per signing algorithm and failure
+state (`test/support/dnssec-cases.ts`). Their responses live in one recording,
+`test/fixtures/dnssec.json`, made with the clock it is replayed at, since signatures are
+only valid for a window of time. To add a zone or refresh the recording:
+
+```bash
+yarn run -T tsx scripts/record-dnssec.ts
+```
+
 ## Cloudflare Workers
 
 The parts of the suite that need no listening socket (the codec, the records, the
