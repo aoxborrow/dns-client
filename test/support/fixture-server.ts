@@ -57,6 +57,8 @@ export async function startFixtureServer(respond: Responder): Promise<FixtureSer
   const address = '127.0.0.1';
   const received: ReceivedQuery[] = [];
   const connections = new Set<net.Socket>();
+  // delayed UDP replies not yet sent, cancelled on close so none fires into a closed socket
+  const pendingReplies = new Set<NodeJS.Timeout>();
 
   // ---- TCP: two-byte length prefix, any number of queries per connection
   let tcpConnections = 0;
@@ -132,8 +134,13 @@ export async function startFixtureServer(respond: Responder): Promise<FixtureSer
         remote.port,
         remote.address
       );
-    if (reply.delayMs) setTimeout(send, reply.delayMs);
-    else send();
+    if (reply.delayMs) {
+      const timer = setTimeout(() => {
+        pendingReplies.delete(timer);
+        send();
+      }, reply.delayMs);
+      pendingReplies.add(timer);
+    } else send();
   });
   await new Promise<void>(resolve => otherSource.bind(0, address, resolve));
 
@@ -148,6 +155,8 @@ export async function startFixtureServer(respond: Responder): Promise<FixtureSer
       // closing twice is fine: a test may stop the server itself to see what a client does
       if (stopped) return;
       stopped = true;
+      for (const timer of pendingReplies) clearTimeout(timer);
+      pendingReplies.clear();
       for (const socket of connections) socket.destroy();
       await Promise.all([
         new Promise<void>(resolve => tcp.close(() => resolve())),

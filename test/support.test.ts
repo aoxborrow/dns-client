@@ -180,6 +180,27 @@ describe('fixture server', () => {
   });
 });
 
+describe('fixture server shutdown', () => {
+  it('cancels delayed replies on close instead of sending into closed sockets', async () => {
+    const server = await startFixtureServer(({ query }) => ({
+      response: buildResponse(query, 1),
+      delayMs: 80,
+    }));
+    const uncaught: Error[] = [];
+    const onUncaught = (error: Error) => uncaught.push(error);
+    process.on('uncaughtException', onUncaught);
+    try {
+      expect(await udpAsk(server.port, buildQuery(1, 'example.com'), 20)).toBeUndefined();
+      await server.close();
+      // outlast the delay the cancelled reply would have fired after
+      await new Promise(resolve => setTimeout(resolve, 150));
+      expect(uncaught).toEqual([]);
+    } finally {
+      process.off('uncaughtException', onUncaught);
+    }
+  });
+});
+
 describe('fixture server helpers', () => {
   it('replays recorded exchanges whatever their IDs, and drops unknown queries', async () => {
     const recordedQuery = buildQuery(0x7777, 'recorded.example');
