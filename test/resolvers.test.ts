@@ -185,6 +185,26 @@ describe('Resolver', () => {
       await stub.query('example.com', 'A', { dnssecOk: true });
       await stub.query('example.com', 'AAAA');
       await stub.query('EXAMPLE.com.', 'A');
+      await stub.query('example.com', 'A', { port: 5353 });
+      expect(network.queries).toHaveLength(4);
+    });
+
+    it('keeps questions with different EDNS options apart, in the cache and in flight', async () => {
+      // two client subnets (option 8) can get two different answers
+      const subnet = (last: number) => ({
+        code: 8,
+        data: Uint8Array.of(0, 1, 24, 0, 192, 0, 2, last),
+      });
+      const stub = resolver();
+      await Promise.all([
+        stub.query('example.com', 'A', { ednsOptions: [subnet(1)] }),
+        stub.query('example.com', 'A', { ednsOptions: [subnet(2)] }),
+        stub.query('example.com', 'A'),
+      ]);
+      expect(network.queries).toHaveLength(3);
+
+      const again = await stub.query('example.com', 'A', { ednsOptions: [subnet(2)] });
+      expect(again.cached).toBe(true);
       expect(network.queries).toHaveLength(3);
     });
 
