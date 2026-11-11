@@ -9,6 +9,7 @@ import {
   parentName,
   readName,
   splitName,
+  toAsciiName,
 } from '../../src/index';
 
 const bytes = (...values: (number | string)[]) =>
@@ -141,5 +142,33 @@ describe('name helpers', () => {
     expect(isSubdomain('notexample.com', 'example.com')).toBe(false);
     expect(isSubdomain('example.com', 'www.example.com')).toBe(false);
     expect(isSubdomain('anything.at.all', '.')).toBe(true);
+  });
+});
+
+describe('names in their ASCII form', () => {
+  it('converts a Unicode name to punycode and keeps a trailing dot', () => {
+    expect(toAsciiName('münchen.de')).toBe('xn--mnchen-3ya.de');
+    expect(toAsciiName('MÜNCHEN.de.')).toBe('xn--mnchen-3ya.de.');
+    expect(toAsciiName('example.com')).toBe('example.com');
+  });
+
+  it('leaves every ASCII label of a Unicode name exactly as written', () => {
+    expect(toAsciiName('*.münchen.de')).toBe('*.xn--mnchen-3ya.de');
+    expect(toAsciiName('_DMARC.münchen.DE')).toBe('_DMARC.xn--mnchen-3ya.DE');
+    // URL syntax in an ASCII label is just a character of the label
+    expect(toAsciiName('a@b.münchen.de')).toBe('a@b.xn--mnchen-3ya.de');
+  });
+
+  it('reads a label of digits as a label, not an address', () => {
+    // full-width digits map to ASCII digits, which a URL parser given the whole name would
+    // read as an address (127.0.0.1)
+    expect(toAsciiName('１２３.münchen.de')).toBe('123.xn--mnchen-3ya.de');
+    expect(toAsciiName('１２７.１')).toBe('127.1');
+  });
+
+  it('refuses a Unicode label the URL parser would read as more than a host', () => {
+    for (const name of ['ü@x.de', 'ü:80.de', 'ü/x.de', 'a。b.de']) {
+      expect(() => toAsciiName(name), name).toThrow(ParseError);
+    }
   });
 });
