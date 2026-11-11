@@ -769,6 +769,57 @@ describe('AuthoritativeResolver', () => {
       await iterative.query('example.com', 'A');
       expect(network.queries).toHaveLength(6);
     });
+
+    it('does not keep a delegation whose TTL is zero', async () => {
+      // com hands out example.com's servers with a TTL of 0
+      const forgetful: SimulatedServer = query => {
+        const reply = com(query);
+        if (!(reply instanceof Uint8Array)) return reply;
+        const message = decodeMessage(reply);
+        return encodeMessage({
+          ...message,
+          authorities: message.authorities.map(record => ({ ...record, ttl: 0 })),
+        });
+      };
+      const iterative = resolver({}, { '10.0.1.1': forgetful, '10.0.1.2': forgetful });
+      await iterative.query('example.com', 'A');
+      network.queries.length = 0;
+      await iterative.query('example.com', 'A');
+      // com is still known, example.com is asked about again
+      expect(network.log()).toEqual(['10.0.1.1 example.com A', '10.1.0.1 example.com A']);
+    });
+
+    it('looks up a nameserver address again once its own TTL runs out', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        const iterative = resolver();
+        await iterative.query('glueless.com', 'A');
+        network.queries.length = 0;
+        // ns1.dnshost.net's address has a TTL of 300; the delegation to it, two days
+        vi.setSystemTime(Date.now() + 299_000);
+        await iterative.query('glueless.com', 'A');
+        expect(network.log()).toEqual(['10.2.0.53 glueless.com A']);
+        network.queries.length = 0;
+        vi.setSystemTime(Date.now() + 2000);
+        await iterative.query('glueless.com', 'A');
+        expect(network.log()).toEqual(['10.2.0.1 ns1.dnshost.net A', '10.2.0.53 glueless.com A']);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('looks up a nameserver address again after a lookup that failed', async () => {
+      let down = true;
+      const flaky: SimulatedServer = query =>
+        down ? new ConnectionError('Cannot reach 10.2.0.1') : dnshost(query);
+      const iterative = resolver({}, { '10.2.0.1': flaky });
+      await expect(iterative.query('glueless.com', 'A')).rejects.toThrow(
+        'No usable nameserver address for glueless.com'
+      );
+      down = false;
+      const answer = await iterative.query('glueless.com', 'A');
+      expect(answer.records.map(record => record.address)).toEqual(['192.0.2.77']);
+    });
   });
 
   describe('addresses', () => {
