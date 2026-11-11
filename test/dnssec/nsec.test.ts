@@ -2,6 +2,7 @@ import {
   compareCanonicalNames,
   verifyNoDsProof,
   verifyNodataProof,
+  verifyNxdomainProof,
   verifyWildcardProof,
   assessNsec3Params,
 } from '../../src/dnssec/nsec';
@@ -114,6 +115,19 @@ describe('compareCanonicalNames', () => {
   it('is case-insensitive', () => {
     expect(compareCanonicalNames('EXAMPLE.com', 'example.COM')).toBe(0);
   });
+
+  it('keeps an escaped dot inside its label', () => {
+    // `b\.z` is one label, "b.z", which sorts before "y"; split on every dot it would compare
+    // as "z" and sort after
+    expect(compareCanonicalNames('b\\.z.example', 'y.example')).toBeLessThan(0);
+    expect(compareCanonicalNames('a\\.b.example', 'b.example')).toBeLessThan(0);
+  });
+
+  it('compares an escaped byte as the byte it stands for', () => {
+    // \255 is the octet 0xff, which sorts after "z" (0x7a), not the backslash (0x5c) it is
+    // spelled with
+    expect(compareCanonicalNames('\\255.example', 'z.example')).toBeGreaterThan(0);
+  });
 });
 
 describe('verifyNoDsProof — NSEC', () => {
@@ -158,6 +172,24 @@ describe('verifyNoDsProof — NSEC', () => {
     const proof = verifyNoDsProof('q.example', [nsecRecord('a.example', 'b.example', [TYPE_A])]);
     expect(proof.result).toBe(FAILED);
     expect(proof.status).toBe(PROOF_STATUSES.INCOMPLETE);
+  });
+
+  it('does not let an escaped dot in the next name stretch the range', () => {
+    // the range a.example .. "b.z".example ends before y.example in canonical order. Read as
+    // a split string the next name ends in "z" and the range would swallow y.example, proving
+    // a delegation that exists has no DS
+    const proof = verifyNoDsProof('y.example', [
+      nsecRecord('a.example', 'b\\.z.example', [TYPE_A]),
+    ]);
+    expect(proof.result).toBe(FAILED);
+    expect(proof.status).toBe(PROOF_STATUSES.INCOMPLETE);
+  });
+
+  it('accepts a range whose owner has an escaped dot when it really covers the name', () => {
+    const proof = verifyNoDsProof('b.example', [
+      nsecRecord('a\\.z.example', 'c.example', [TYPE_A]),
+    ]);
+    expect(proof.result).toBe(VERIFIED);
   });
 
   it('fails when no denial records are returned at all', () => {
@@ -260,6 +292,30 @@ describe('verifyNodataProof', () => {
   });
 });
 
+describe('verifyNxdomainProof', () => {
+  it('checks the wildcard at the real closest encloser when a label holds a dot', () => {
+    // the covering NSEC's owner is "a.b".example, so the closest encloser of x.b.example is
+    // example and *.example must be proven absent. Splitting on every dot reads the shared
+    // suffix as b.example and checks *.b.example instead, which this same range covers
+    const proof = verifyNxdomainProof('x.b.example', [
+      nsecRecord('example', '*.example', [TYPE_SOA, TYPE_NS]),
+      nsecRecord('*.example', 'a\\.b.example', [TYPE_A]),
+      nsecRecord('a\\.b.example', 'c.example', [TYPE_A]),
+    ]);
+    expect(proof.result).toBe(FAILED);
+    expect(proof.steps[1].detail).toContain('*.example');
+    expect(proof.steps[1].result).toBe(FAILED);
+  });
+
+  it('accepts the proof once *.example is shown absent', () => {
+    const proof = verifyNxdomainProof('x.b.example', [
+      nsecRecord('example', 'a\\.b.example', [TYPE_SOA, TYPE_NS]),
+      nsecRecord('a\\.b.example', 'c.example', [TYPE_A]),
+    ]);
+    expect(proof.result).toBe(VERIFIED);
+  });
+});
+
 describe('assessNsec3Params', () => {
   it('passes the RFC 9276 recommendation of no iterations and no salt', () => {
     const params = assessNsec3Params(1, 0, Buffer.alloc(0), false);
@@ -359,5 +415,26 @@ describe('verifyWildcardProof', () => {
     ]);
     expect(proof.result).toBe(VERIFIED);
     expect(proof.status).toBe(PROOF_STATUSES.VERIFIED);
+  });
+
+  it('takes the next closer name label by label when a label holds a dot', () => {
+    // a.b\.c.example is three labels, so the next closer under example is "b.c".example,
+    // not c.example. A range over c.example alone proves nothing about it
+    const encloser = nsec3Hash('example', Buffer.alloc(0), 0)!;
+    const wrong = nsec3Hash('c.example', Buffer.alloc(0), 0)!;
+    const right = nsec3Hash('b\\.c.example', Buffer.alloc(0), 0)!;
+    const apex = nsec3Record(encloser, 'example', incrementHash(encloser), [TYPE_SOA]);
+
+    const rejected = verifyWildcardProof('a.b\\.c.example', [
+      apex,
+      nsec3Record(decrementHash(wrong), 'example', incrementHash(wrong), []),
+    ]);
+    expect(rejected.result).toBe(FAILED);
+
+    const accepted = verifyWildcardProof('a.b\\.c.example', [
+      apex,
+      nsec3Record(decrementHash(right), 'example', incrementHash(right), []),
+    ]);
+    expect(accepted.result).toBe(VERIFIED);
   });
 });

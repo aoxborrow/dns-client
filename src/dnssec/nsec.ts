@@ -1,4 +1,5 @@
-import { compareBytes, latin1Encode, toHex } from '../wire/bytes';
+import { toHex } from '../wire/bytes';
+import { compareNames, splitName } from '../wire/names';
 import {
   WireRecord,
   decodeNsec,
@@ -42,31 +43,27 @@ const { VERIFIED, FAILED, UNCHECKED } = VERIFICATION_RESULTS;
 // canonical name ordering (RFC 4034 §6.1)
 // ---------------------------------------------------------------------------
 
-// names sort by label, right to left, each label compared as unsigned octets
+// names sort by label, right to left, each label compared as lowercase unsigned octets. The
+// labels are read from the presentation form the way the wire decoder writes it, so an
+// escaped dot stays inside its label and `\255` compares as the octet 0xff. Throws for a
+// name that cannot be written in wire form
 export function compareCanonicalNames(a: string, b: string): number {
-  const al = canonicalName(a) === '.' ? [] : canonicalName(a).split('.');
-  const bl = canonicalName(b) === '.' ? [] : canonicalName(b).split('.');
-  let i = al.length - 1;
-  let j = bl.length - 1;
-
-  while (i >= 0 && j >= 0) {
-    const cmp = compareBytes(latin1Encode(al[i]), latin1Encode(bl[j]));
-    if (cmp !== 0) return cmp;
-    i -= 1;
-    j -= 1;
-  }
-  // the shorter name sorts first when one is a suffix of the other
-  return al.length - bl.length;
+  return compareNames(a, b);
 }
 
 // does the half-open NSEC interval (owner, next] cover `name`? the last NSEC in a zone wraps
-// around to the apex, so `next <= owner` means the range runs past the end of the zone
+// around to the apex, so `next <= owner` means the range runs past the end of the zone. A
+// name that cannot be written in wire form is never covered
 function nsecCovers(owner: string, next: string, name: string): boolean {
-  const afterOwner = compareCanonicalNames(name, owner) > 0;
-  const beforeNext = compareCanonicalNames(name, next) < 0;
-  return compareCanonicalNames(next, owner) <= 0
-    ? afterOwner || beforeNext
-    : afterOwner && beforeNext;
+  try {
+    const afterOwner = compareCanonicalNames(name, owner) > 0;
+    const beforeNext = compareCanonicalNames(name, next) < 0;
+    return compareCanonicalNames(next, owner) <= 0
+      ? afterOwner || beforeNext
+      : afterOwner && beforeNext;
+  } catch {
+    return false;
+  }
 }
 
 // the same wrap-aware range test over base32hex NSEC3 labels, which are plain ASCII and so
@@ -163,12 +160,12 @@ function collectNsec3(records: WireRecord[]): Nsec3Entry[] {
     if (rr.type !== TYPE_NSEC3) continue;
     const decoded = decodeNsec3(rr.rdata);
     if (!decoded) continue;
-    const dot = rr.name.indexOf('.');
-    if (dot < 0) continue;
+    const [ownerHash, ...zone] = splitName(rr.name);
+    if (zone.length === 0) continue;
     out.push({
       record: rr,
-      ownerHash: rr.name.slice(0, dot).toLowerCase(),
-      zone: rr.name.slice(dot + 1),
+      ownerHash: ownerHash.toLowerCase(),
+      zone: zone.join('.'),
       nextHash: toNsec3Label(decoded.nextHashed),
       types: decoded.types,
       hashAlgorithm: decoded.hashAlgorithm,
@@ -541,7 +538,7 @@ function nextCloserName(name: string, closestEncloser: string): string {
   const nameLabels = countLabels(name);
   const encloserLabels = countLabels(closestEncloser);
   if (nameLabels <= encloserLabels + 1) return name;
-  const parts = canonicalName(name).split('.');
+  const parts = splitName(canonicalName(name));
   return parts.slice(parts.length - (encloserLabels + 1)).join('.');
 }
 
@@ -848,17 +845,26 @@ export function verifyWildcardProof(qname: string, records: WireRecord[]): Denia
   };
 }
 
-// the deepest name that is a suffix of both — the closest encloser in the NSEC case
+// the deepest name that is a suffix of both — the closest encloser in the NSEC case. Labels
+// are split on unescaped dots only and compared as octets, however they were escaped
 function longestCommonSuffix(a: string, b: string): string {
-  const al = canonicalName(a).split('.');
-  const bl = canonicalName(b).split('.');
+  const al = splitName(canonicalName(a));
+  const bl = splitName(canonicalName(b));
   const shared: string[] = [];
   let i = al.length - 1;
   let j = bl.length - 1;
-  while (i >= 0 && j >= 0 && al[i] === bl[j]) {
+  while (i >= 0 && j >= 0 && sameLabel(al[i], bl[j])) {
     shared.unshift(al[i]);
     i -= 1;
     j -= 1;
   }
   return shared.length ? shared.join('.') : '.';
+}
+
+function sameLabel(a: string, b: string): boolean {
+  try {
+    return compareNames(a, b) === 0;
+  } catch {
+    return a === b;
+  }
 }
