@@ -2225,10 +2225,11 @@ export class DnssecEngine {
   private rollup(chain: DnssecZone[]): DnssecStatus {
     if (chain.length === 0) return INDETERMINATE;
     const { status } = chain[chain.length - 1];
-    // a break that was found stands. Otherwise, a name the walk could not be asked about
-    // is not covered by the last zone it did reach: that zone being secure says nothing
-    // about a delegation nobody answered for
-    if (status !== BOGUS && this.unanswered.length > 0) return INDETERMINATE;
+    // a break that was found stands, and so does a proven insecure delegation: nothing
+    // below an unsigned zone can be part of a chain of trust, whatever was not answered.
+    // Only a secure verdict can be undone by a name the walk could not be asked about,
+    // since that zone being secure says nothing about a delegation nobody answered for
+    if (status === SECURE && this.unanswered.length > 0) return INDETERMINATE;
     return status;
   }
 

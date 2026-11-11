@@ -103,6 +103,24 @@ describe('analyze, and what it cannot reach', () => {
     const report = await analyze('cloudflare.com', { now: recordedAt, transports });
     expect(report.overallStatus).not.toBe('secure');
   });
+
+  // the recording holds nothing about a name below either zone, so the zone's servers
+  // are never answered about it
+  it('does not call a name secure when its secure zone was not answered about it', async () => {
+    const { report } = await run('unrecorded.cloudflare.com');
+    expect(report.chain.at(-1)).toMatchObject({ zone: 'cloudflare.com', status: 'secure' });
+    expect(report.overallStatus).toBe('indeterminate');
+    expect(report.findings.map(finding => finding.slug)).toContain('zone-unreachable');
+  });
+
+  it('keeps a name insecure below an insecure zone that was not answered about it', async () => {
+    // nothing below a proven insecure delegation can be secure or bogus, so an unanswered
+    // question there leaves nothing in doubt
+    const { report } = await run('unrecorded.github.com');
+    expect(report.chain.at(-1)).toMatchObject({ zone: 'github.com', status: 'insecure' });
+    expect(report.findings.map(finding => finding.slug)).toContain('zone-unreachable');
+    expect(report.overallStatus).toBe('insecure');
+  });
 });
 
 describe('analyze, and an alias into another zone', () => {
