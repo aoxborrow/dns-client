@@ -662,6 +662,34 @@ describe('AuthoritativeResolver', () => {
     expect(error.server).toBe('ns1.dnshost.net');
   });
 
+  it('names the nameserver when its lookup ends a moment before the clock reaches the deadline', async () => {
+    // a clock that runs slow, so the lookup's timer for the rest of the time fires with the
+    // clock still short of the deadline, as a timer firing a few milliseconds early does
+    const real = performance.now.bind(performance);
+    const origin = real();
+    const clock = vi
+      .spyOn(performance, 'now')
+      .mockImplementation(() => origin + (real() - origin) * 0.8);
+    try {
+      const error = await resolver({
+        totalTimeout: 100,
+        resolveNameserver: async (_name, { timeout }) => {
+          // a lookup that is given the rest of the time, runs it out and finds nothing
+          await new Promise(resolve => setTimeout(resolve, timeout));
+          return undefined;
+        },
+      })
+        .query('glueless.com', 'A')
+        .catch(caught => caught);
+      expect(error).toBeInstanceOf(TimeoutError);
+      expect(error.server).toBe('ns1.dnshost.net');
+      // the time is gone, so the nameserver is not looked for from the root as well
+      expect(network.queries.some(query => query.name === 'ns1.dnshost.net')).toBe(false);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('falls back to resolving from the root when the lookup has nothing', async () => {
     const answer = await resolver({ resolveNameserver: () => undefined }).query(
       'glueless.com',

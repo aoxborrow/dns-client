@@ -137,6 +137,8 @@ interface Run {
   // when the whole query gives up, on the clock `now()` reads, and the time it was given
   deadline: number;
   totalTimeout: number;
+  // a timer the walk set for what was left of its time has run out
+  expired: boolean;
   // servers asked so far, against `maxHops`
   hops: number;
   attempts: number;
@@ -245,6 +247,7 @@ export class AuthoritativeResolver {
       signal,
       deadline: started + totalTimeout,
       totalTimeout,
+      expired: false,
       hops: 0,
       attempts: 0,
       resolving: new Set(),
@@ -376,14 +379,14 @@ export class AuthoritativeResolver {
         for (const turn of turns) {
           if (turn.done) continue;
           // out of time: what the zone's servers have said so far is all there will be
-          if (now() >= run.deadline) {
+          if (outOfTime(run)) {
             stalled = turn.server;
             break servers;
           }
           const { server } = turn;
           turn.addresses ??= await this.addressesOf(run, server, nesting);
           // finding the address may have been what took the time
-          if (now() >= run.deadline) {
+          if (outOfTime(run)) {
             stalled = server;
             break servers;
           }
@@ -470,7 +473,7 @@ export class AuthoritativeResolver {
         if (lastLame) return { result: lastLame, outcome: { kind: 'answer' } };
         if (loop) throw new InvalidResponseError(`Referral loop: ${loop}`, { query: name, type });
         if (firstError) throw firstError;
-        if (now() >= run.deadline) {
+        if (outOfTime(run)) {
           const at = stalled && (stalled.written ?? (stalled.name || stalled.addresses?.[0]));
           throw new TimeoutError(`No answer for ${name} ${type} within ${run.totalTimeout} ms`, {
             ...(at && { server: at }),
@@ -599,12 +602,12 @@ export class AuthoritativeResolver {
     run.resolving.add(name);
     try {
       // the caller's own way of finding it comes first
-      if (this.options.resolveNameserver) {
-        const supplied = await this.options.resolveNameserver(server.written ?? name, {
-          // no more than the walk has left
-          timeout: Math.max(1, run.deadline - now()),
-          ...(run.signal && { signal: run.signal }),
-        });
+      const lookup = this.options.resolveNameserver;
+      if (lookup) {
+        // no more than the walk has left
+        const supplied = await withRest(run, async timeout =>
+          lookup(server.written ?? name, { timeout, ...(run.signal && { signal: run.signal }) })
+        );
         if (supplied?.length) {
           const normalized = supplied.map(normalizeAddress);
           for (const address of normalized) this.names.set(address, server.written ?? name);
@@ -616,6 +619,8 @@ export class AuthoritativeResolver {
           run.lookedUp.set(name, usable);
           return usable;
         }
+        // the lookup took the rest of the time: there is none left to look further
+        if (outOfTime(run)) return [];
       }
       const family = this.options.addressFamily ?? 'ipv4';
       const types = family === 'ipv4' ? ['A'] : family === 'ipv6' ? ['AAAA'] : ['A', 'AAAA'];
@@ -659,32 +664,34 @@ export class AuthoritativeResolver {
     const merged = { ...this.options, ...run.settings };
     await this.pace(address);
     const result = await this.limit(() =>
-      // as an object, so that the address is taken whole and nothing in it is read as a
-      // port: the port is the resolver's to choose
-      exchange(
-        { name, type },
-        { address },
-        {
-          transport: merged.transport,
-          port: merged.port,
-          recursionDesired: false,
-          checkingDisabled: merged.checkingDisabled,
-          authenticData: merged.authenticData,
-          dnssecOk: merged.dnssecOk,
-          udpPayloadSize: merged.udpPayloadSize,
-          ednsOptions: merged.ednsOptions,
-          edns: merged.edns,
-          timeout: merged.timeout ?? DEFAULT_TIMEOUT,
-          // no longer than what is left of the time for the whole query, retries and a
-          // TCP fallback included
-          totalTimeout: Math.max(1, run.deadline - now()),
-          tcpFallback: merged.tcpFallback,
-          // the zone has other servers to turn to, so less patience with each
-          retries: merged.retries ?? 1,
-          transports: this.transports,
-          onEvent: this.options.onEvent,
-          signal: run.signal,
-        }
+      withRest(run, left =>
+        // as an object, so that the address is taken whole and nothing in it is read as a
+        // port: the port is the resolver's to choose
+        exchange(
+          { name, type },
+          { address },
+          {
+            transport: merged.transport,
+            port: merged.port,
+            recursionDesired: false,
+            checkingDisabled: merged.checkingDisabled,
+            authenticData: merged.authenticData,
+            dnssecOk: merged.dnssecOk,
+            udpPayloadSize: merged.udpPayloadSize,
+            ednsOptions: merged.ednsOptions,
+            edns: merged.edns,
+            timeout: merged.timeout ?? DEFAULT_TIMEOUT,
+            // no longer than what is left of the time for the whole query, retries and a
+            // TCP fallback included
+            totalTimeout: left,
+            tcpFallback: merged.tcpFallback,
+            // the zone has other servers to turn to, so less patience with each
+            retries: merged.retries ?? 1,
+            transports: this.transports,
+            onEvent: this.options.onEvent,
+            signal: run.signal,
+          }
+        )
       )
     );
     run.attempts += result.attempts;
@@ -693,3 +700,30 @@ export class AuthoritativeResolver {
 }
 
 const isString = (value: string | undefined): value is string => typeof value === 'string';
+
+// the longest a timer can be set for; anything longer fires at once
+const MAX_TIMER = 2_147_483_647;
+
+// the walk is out of time: the clock has reached the deadline, or a call given the rest of
+// the time has run it out
+function outOfTime(run: Run): boolean {
+  return run.expired || now() >= run.deadline;
+}
+
+// make a call capped at what is left of the walk's time, and time it from the walk as well.
+// A timer can fire a few milliseconds early by the clock, so a call that ran out the rest of
+// the time can end with the clock still short of the deadline, and the walk would carry on
+// with what looks left and fail some other way than by running out of time
+async function withRest<T>(run: Run, call: (left: number) => Promise<T>): Promise<T> {
+  const left = Math.max(1, run.deadline - now());
+  if (left > MAX_TIMER) return call(left);
+  // set just before the call sets its own, for the same time, so it fires first
+  const timer = setTimeout(() => {
+    run.expired = true;
+  }, left);
+  try {
+    return await call(left);
+  } finally {
+    clearTimeout(timer);
+  }
+}
