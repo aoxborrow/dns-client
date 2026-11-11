@@ -248,6 +248,34 @@ describe('proxies', () => {
     });
   });
 
+  describe('SOCKS5 authentication', () => {
+    it('does not let a proxy skip the credentials it was given', async () => {
+      // a proxy that says "no authentication" though only username/password was offered
+      proxy = await startSocks5Mock({ auth: CREDENTIALS, chooseMethod: 0x00 });
+      for (const transport of ['tcp', 'udp'] as const) {
+        const error = await ask(transport, { proxy: proxyUrl('socks5', proxy, true) }).catch(
+          caught => caught
+        );
+        expect(error).toBeInstanceOf(ProxyError);
+        expect(error.message).toContain('chose an authentication method not offered');
+        transports?.close();
+      }
+      // no request got as far as the proxy, and nothing reached the server
+      expect(proxy.requests).toHaveLength(0);
+      expect(dns.received).toHaveLength(0);
+    });
+
+    it('does not use a proxy that wants no credentials when some were given', async () => {
+      proxy = await startSocks5Mock();
+      const error = await ask('tcp', { proxy: proxyUrl('socks5', proxy, true) }).catch(
+        caught => caught
+      );
+      expect(error).toBeInstanceOf(ProxyError);
+      expect(error.message).toContain('accepts none of the offered authentication methods');
+      expect(dns.received).toHaveLength(0);
+    });
+  });
+
   describe('DoH', () => {
     it('refuses to go around a proxy it cannot use', async () => {
       await startProxy('socks5', { auth: true });

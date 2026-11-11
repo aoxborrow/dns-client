@@ -102,9 +102,10 @@ export async function socks5Handshake(
 ): Promise<{ host: string; port: number }> {
   const hasCredentials = proxy.username !== undefined;
   try {
-    // greeting: the authentication methods on offer
-    const methods = hasCredentials ? [METHOD_NONE, METHOD_PASSWORD] : [METHOD_NONE];
-    await writeBytes(connection, Uint8Array.of(VERSION, methods.length, ...methods));
+    // greeting: the one authentication method on offer. With credentials that is
+    // username/password alone, so a proxy cannot skip checking them
+    const offered = hasCredentials ? METHOD_PASSWORD : METHOD_NONE;
+    await writeBytes(connection, Uint8Array.of(VERSION, 1, offered));
     const [version, method] = await reader.read(2);
     if (version !== VERSION) {
       throw new ProxyError(`${proxy.display} is not a SOCKS5 proxy`);
@@ -115,6 +116,10 @@ export async function socks5Handshake(
           ? `Proxy ${proxy.display} accepts none of the offered authentication methods`
           : `Proxy ${proxy.display} requires authentication`
       );
+    }
+
+    if (method !== offered) {
+      throw new ProxyError(`Proxy ${proxy.display} chose an authentication method not offered`);
     }
 
     if (method === METHOD_PASSWORD) {
@@ -136,8 +141,6 @@ export async function socks5Handshake(
       if (status !== 0x00) {
         throw new ProxyError(`Proxy ${proxy.display} rejected the credentials`);
       }
-    } else if (method !== METHOD_NONE) {
-      throw new ProxyError(`Proxy ${proxy.display} chose an authentication method not offered`);
     }
 
     // the request itself

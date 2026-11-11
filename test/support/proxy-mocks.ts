@@ -108,6 +108,9 @@ export interface Socks5Options {
   udpAssociate?: boolean;
   // refuse every CONNECT with this reply code (0x05 is "connection refused")
   refuseWith?: number;
+  // answer the greeting with this method whatever the client offered, the way a proxy
+  // that skips authentication would
+  chooseMethod?: number;
 }
 
 const SOCKS_VERSION = 0x05;
@@ -153,8 +156,8 @@ export async function startSocks5Mock(options: Socks5Options = {}): Promise<Prox
       return;
     }
 
-    const wanted = options.auth ? 0x02 : 0x00;
-    if (!methods.includes(wanted)) {
+    const wanted = options.chooseMethod ?? (options.auth ? 0x02 : 0x00);
+    if (options.chooseMethod === undefined && !methods.includes(wanted)) {
       socket.end(Buffer.from([SOCKS_VERSION, 0xff])); // no acceptable method
       return;
     }
@@ -162,7 +165,7 @@ export async function startSocks5Mock(options: Socks5Options = {}): Promise<Prox
 
     let username: string | undefined;
     let password: string | undefined;
-    if (options.auth) {
+    if (wanted === 0x02 && options.auth) {
       // RFC 1929: version 1, username, password, each length-prefixed
       const [, userLength] = await input.take(2);
       username = (await input.take(userLength)).toString('utf8');
