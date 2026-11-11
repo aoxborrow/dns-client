@@ -1,4 +1,4 @@
-import { typeCode, typeName } from '../protocol/types';
+import { typeName } from '../protocol/types';
 import {
   compareBytes,
   concatBytes,
@@ -25,15 +25,6 @@ import { sha1, sha256, sha384 } from './hash';
 
 export function recordTypeName(type: number): string {
   return typeName(type);
-}
-
-// the code for a type mnemonic, or 0 for one that is not known
-export function recordTypeCode(name: string): number {
-  try {
-    return typeCode(name);
-  } catch {
-    return 0;
-  }
 }
 
 export const TYPE_A = 1;
@@ -607,82 +598,6 @@ export function decodeTypeBitmap(buf: Uint8Array): number[] {
     pos += length;
   }
   return types;
-}
-
-// ---------------------------------------------------------------------------
-// response comparison
-// ---------------------------------------------------------------------------
-
-// the record types whose divergence between a zone's nameservers is a DNSSEC fault. this is a
-// deliberately narrow list, because most disagreement between nameservers is normal: SOA
-// serials differ constantly while a zone propagates, and A/AAAA sets differ by design at any
-// provider doing anycast or geo load balancing — the plan's own guidance is "never pin a
-// load-balanced A record". Reporting either as an error would be alarmist and wrong, and it is
-// the DNS tool's territory in any case. What matters here is material that makes validation
-// succeed against one server and fail against another
-const FINGERPRINT_TYPES = new Set([
-  TYPE_DS,
-  TYPE_RRSIG,
-  TYPE_NSEC,
-  TYPE_DNSKEY,
-  TYPE_NSEC3,
-  TYPE_NSEC3PARAM,
-  TYPE_CDS,
-  TYPE_CDNSKEY,
-]);
-
-// a fingerprint of the DNSSEC-relevant material in one server's response, used to spot a
-// nameserver whose keys or signatures have drifted from its peers'.
-//
-// Two things are deliberately left out beyond the type filter, and both matter:
-//
-// **TTL**, because it counts down independently on every server — including it would report
-// every healthy multi-server zone as divergent.
-//
-// **The RRSIG signature blob and its validity window**, because neither is reproducible at a
-// live-signing provider. Cloudflare signs per query with ECDSA, which is non-deterministic —
-// the *same server queried twice* returns different bytes — and it derives the window from the
-// clock at signing time, so peers observed 13 seconds apart legitimately publish
-// `inception=…745` and `inception=…758` for identical data. Comparing either flags every
-// live-signed zone as divergent.
-//
-// What is compared for an RRSIG is *which key signed what*: type covered, algorithm, labels,
-// original TTL, key tag and signer. That still catches a server signing with a key its peers
-// have rolled away from, or missing a signature its peers publish.
-//
-// The gap this leaves is a server serving a genuinely *expired* signature while its peers are
-// fresh. Equality of windows cannot detect that without false-positiving on live signers; the
-// sharper form is a per-server validity check — verify each server's response rather than only
-// the first good one — which is follow-up work, not something equality comparison can do.
-export function responseFingerprint(answers: WireRecord[], authorities: WireRecord[] = []): string {
-  // when there is an answer, the authority section is discretionary: some servers attach the
-  // zone's NS RRset to a positive answer and some do not (BIND's `minimal-responses`), and
-  // `nic.cz` really does run both in the same set. that is a configuration difference, not a
-  // data difference. when the answer is empty the authority section IS the payload — the
-  // referral, or the NSEC/NSEC3 proof — so it is what gets compared
-  const relevant = answers.length > 0 ? answers : authorities;
-  const lines = relevant
-    .filter(rr => FINGERPRINT_TYPES.has(rr.type))
-    .map(rr => `${rr.name}/${rr.class}/${rr.type}/${fingerprintRdata(rr)}`)
-    .sort();
-  return toHex(sha256(new TextEncoder().encode(lines.join('\n'))));
-}
-
-// the comparable part of a record's RDATA — everything for most types, everything but the
-// signature bytes for an RRSIG
-function fingerprintRdata(rr: WireRecord): string {
-  if (rr.type !== TYPE_RRSIG) return toHex(rr.rdata);
-  const sig = decodeRrsig(rr.rdata);
-  if (!sig) return toHex(rr.rdata);
-  // note the absence of inception/expiration — see the comment on responseFingerprint
-  return [
-    sig.typeCovered,
-    sig.algorithm,
-    sig.labels,
-    sig.originalTtl,
-    sig.keyTag,
-    sig.signerName,
-  ].join(':');
 }
 
 // ---------------------------------------------------------------------------

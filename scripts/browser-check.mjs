@@ -11,7 +11,7 @@ import { dirname, resolve } from 'node:path';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 // add an entry here when it is meant to run in a browser
-const browserSafeEntries = ['src/records/index.ts', 'src/wire/index.ts', 'src/dnssec/types.ts'];
+const browserSafeEntries = ['src/records/index.ts', 'src/wire/index.ts', 'src/dnssec/index.ts'];
 
 try {
   await build({

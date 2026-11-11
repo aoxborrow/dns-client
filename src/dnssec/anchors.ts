@@ -33,10 +33,6 @@ export const ROOT_TRUST_ANCHORS: TrustAnchor[] = [
   },
 ];
 
-// milestone dates for the rollover in progress, surfaced as an informational finding
-export const KSK_2024_SIGNING_DATE = '2026-10-11';
-export const KSK_2017_REVOCATION_DATE = '2027-01-11';
-
 // an anchor is usable when the scan time falls inside its published validity window
 export function isAnchorCurrent(anchor: TrustAnchor, at: Date): boolean {
   if (anchor.validFrom && at < anchor.validFrom) return false;
