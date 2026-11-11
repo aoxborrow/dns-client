@@ -237,8 +237,9 @@ for (const record of answers.filter(rr => rr.typeName === 'RRSIG')) {
 
 These are the pieces a validator is built from, each checking one thing.
 `verifySignature` checks RSA, ECDSA and EdDSA signatures through WebCrypto; an algorithm
-the runtime cannot verify comes back not checked, never as a pass. `computeDsDigest` and
-`computeKeyTag` match a DS record to the key it names. `verifyNoDsProof`,
+the runtime cannot verify comes back not checked, never as a pass, and
+`isAlgorithmSupported` says beforehand whether it can (a WebCrypto may lack Ed25519 or
+Ed448). `computeDsDigest` and `computeKeyTag` match a DS record to the key it names. `verifyNoDsProof`,
 `verifyNxdomainProof`, `verifyNodataProof` and `verifyWildcardProof` check NSEC and NSEC3
 denial proofs and return the reasoning step by step. `ROOT_TRUST_ANCHORS` holds the IANA
 root keys, and `isAnchorCurrent` says whether one is valid at a given time. Digests and

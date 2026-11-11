@@ -1,5 +1,6 @@
 import {
   verifySignature,
+  isAlgorithmSupported,
   isAlgorithmVerifiable,
   algorithmName,
   keySizeBits,
@@ -202,5 +203,21 @@ describe('algorithm support', () => {
   it('names an unknown algorithm rather than pretending it is fine', async () => {
     expect(isAlgorithmVerifiable(99)).toBe(false);
     expect(algorithmName(99)).toBe('UNKNOWN(99)');
+  });
+
+  it('says which algorithms this runtime can verify, not only which the tool knows', async () => {
+    const canMake = (name: string) =>
+      crypto.subtle.generateKey({ name }, false, ['sign', 'verify']).then(
+        () => true,
+        () => false
+      );
+    for (const algorithm of [5, 7, 8, 10, 13, 14]) {
+      expect(await isAlgorithmSupported(algorithm)).toBe(true);
+    }
+    expect(await isAlgorithmSupported(15)).toBe(await canMake('Ed25519'));
+    expect(await isAlgorithmSupported(16)).toBe(await canMake('Ed448'));
+    for (const algorithm of [1, 3, 6, 12, 23, 99]) {
+      expect(await isAlgorithmSupported(algorithm)).toBe(false);
+    }
   });
 });

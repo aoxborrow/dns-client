@@ -8,7 +8,13 @@ export {
   ROOT_TRUST_ANCHORS_REFRESHED,
   isAnchorCurrent,
 } from './anchors';
-export { algorithmName, isAlgorithmVerifiable, keySizeBits, verifySignature } from './crypto';
+export {
+  algorithmName,
+  isAlgorithmSupported,
+  isAlgorithmVerifiable,
+  keySizeBits,
+  verifySignature,
+} from './crypto';
 export type { VerifyOutcome } from './crypto';
 export {
   assessNsec3Params,
