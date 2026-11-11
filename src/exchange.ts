@@ -332,9 +332,15 @@ export async function exchange(
       attempt++;
       const attemptStarted = now();
       const current = (attemptAbort = new AbortController());
-      // no longer than what is left of the time for the whole exchange
-      const wait = Math.max(1, Math.min(timeout, deadline - now()));
+      // no longer than what is left of the time for the whole exchange. A timer that runs
+      // out the rest of that time has reached the deadline, whatever the clock reads: timers
+      // can fire a millisecond early, and another attempt would be sent for what is left
+      const left = deadline - now();
+      const wait = Math.max(1, Math.min(timeout, left));
+      const clamped = left <= timeout;
+      let deadlineHit = false;
       const timer = setTimeout(() => {
+        if (clamped) deadlineHit = true;
         current.abort(
           new TimeoutError(`No answer from ${endpoint.host} within ${wait} ms`, context())
         );
@@ -393,7 +399,7 @@ export async function exchange(
         report(undefined, undefined, error);
 
         const retryable = error instanceof DnsError && error.retryable;
-        if (!retryable || failures >= retries || now() >= deadline) throw error;
+        if (!retryable || failures >= retries || deadlineHit || now() >= deadline) throw error;
         failures++;
         onEvent?.({
           event: 'retry',
@@ -426,7 +432,7 @@ export async function exchange(
         }
         if (options.tcpFallback !== false) {
           // out of time to ask again: the answer is not complete, and none came in time
-          if (now() >= deadline) {
+          if (deadlineHit || now() >= deadline) {
             throw new TimeoutError(
               `No complete answer from ${endpoint.host} within ${options.totalTimeout} ms`,
               { ...context(), transport: response.transport }

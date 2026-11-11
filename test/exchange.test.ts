@@ -267,8 +267,31 @@ describe('exchange', () => {
       }).catch(caught => caught);
       expect(error).toBeInstanceOf(TimeoutError);
       expect(Date.now() - started).toBeLessThan(180);
-      // a timer can fire a moment early, so one more may be sent for what is left
-      expect(server.received.length).toBeLessThan(3);
+      // the first attempt used up the time, so there is no second
+      expect(server.received).toHaveLength(1);
+    });
+
+    it('does not ask again when a timer fires before the clock reaches the deadline', async () => {
+      const options = await serve(() => undefined);
+      // a clock that runs slow, so the timer for the rest of the time fires with the
+      // clock still short of the deadline, as a timer firing a millisecond early does
+      const real = performance.now.bind(performance);
+      const origin = real();
+      const clock = vi
+        .spyOn(performance, 'now')
+        .mockImplementation(() => origin + (real() - origin) * 0.8);
+      try {
+        const error = await exchange(QUESTION, server.address, {
+          ...options,
+          timeout: 1000,
+          retries: 2,
+          totalTimeout: 50,
+        }).catch(caught => caught);
+        expect(error).toBeInstanceOf(TimeoutError);
+        expect(server.received).toHaveLength(1);
+      } finally {
+        clock.mockRestore();
+      }
     });
 
     it('asks again over TCP when the answer is truncated', async () => {
