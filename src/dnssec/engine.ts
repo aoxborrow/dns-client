@@ -89,7 +89,13 @@ import {
   TYPE_RRSIG,
   TYPE_NSEC3PARAM,
 } from './wire';
-import { verifySignature, isAlgorithmVerifiable, algorithmName, keySizeBits } from './crypto';
+import {
+  verifySignature,
+  isAlgorithmSupported,
+  isAlgorithmVerifiable,
+  algorithmName,
+  keySizeBits,
+} from './crypto';
 import {
   verifyNoDsProof,
   verifyNodataProof,
@@ -986,6 +992,9 @@ export class DnssecEngine {
     // everywhere else. track the specific KEY MATERIAL each entry point vouches for, not the 16-bit
     // tag — tags collide, so a tag alone cannot decide which key the DNSKEY RRset must be signed by
     const authenticatedKeys: DnssecDnskey[] = [];
+    // the algorithms the entry points name: the anchored keys' at the root, and elsewhere
+    // those of the DS records the digest selection kept (RFC 6840 §5.2)
+    let entryAlgorithms: number[] = [];
     if (trustAnchor) {
       // a published key is an entry point only if its own MATERIAL hashes to a current IANA anchor,
       // never merely because it shares a tag with one — otherwise a colliding-tag key added to a
@@ -994,6 +1003,7 @@ export class DnssecEngine {
       for (const key of dnskeys) {
         if (this.keyMatchesAnchor(key)) authenticatedKeys.push(key);
       }
+      entryAlgorithms = authenticatedKeys.map(key => key.algorithm);
     } else if (delegation) {
       // the DS authenticates the child only if the parent's own response was validly signed. a
       // secure parent serving an unsigned or tampered DS RRset anchors nothing, so a digest match
@@ -1006,6 +1016,7 @@ export class DnssecEngine {
         );
       } else {
         authenticatedKeys.push(...this.checkDelegationDigests(delegation, dnskeys, build.name));
+        entryAlgorithms = delegation.dsRecords.filter(ds => ds.selected).map(ds => ds.algorithm);
       }
     }
 
@@ -1016,6 +1027,7 @@ export class DnssecEngine {
       build,
       dnskeys,
       authenticatedKeys,
+      entryAlgorithms,
       dnskeyFetch
     );
 
@@ -1341,6 +1353,7 @@ export class DnssecEngine {
     build: ZoneBuild,
     dnskeys: DnssecDnskey[],
     authenticatedKeys: DnssecDnskey[],
+    entryAlgorithms: number[],
     fetched?: Fetched
   ): Promise<{ verified: boolean; indeterminate?: boolean; reason?: string; keyTag?: number }> {
     if (!fetched?.message) {
@@ -1384,9 +1397,8 @@ export class DnssecEngine {
 
     let verifiedTag: number | undefined;
     let sawUnsupported = false;
-    // signatures made by a key the parent vouches for: how many could be checked here, and
-    // how many could not because this runtime has no way to verify their algorithm
-    let vouchedChecked = 0;
+    // signatures made by a key the parent vouches for that could not be checked, because
+    // this runtime has no way to verify their algorithm
     let vouchedUnchecked = 0;
 
     for (const rr of sigs) {
@@ -1397,10 +1409,7 @@ export class DnssecEngine {
       const byVouchedKey = authenticatedKeys.some(
         key => key.keyTag === made?.keyTag && key.algorithm === made?.algorithm
       );
-      if (byVouchedKey) {
-        if (described.check.result === UNCHECKED) vouchedUnchecked++;
-        else vouchedChecked++;
-      }
+      if (byVouchedKey && described.check.result === UNCHECKED) vouchedUnchecked++;
       // authenticate against the key MATERIAL the parent's DS (or the anchor) actually vouched for,
       // never the 16-bit tag: tags collide, and a lying child can publish a colliding key and sign
       // the DNSKEY RRset with it. verify the signature directly against a vouched key (RFC 4035 §5.2)
@@ -1445,12 +1454,14 @@ export class DnssecEngine {
       };
     }
 
-    // the parent vouches for keys, and they did sign, but none of those signatures could
-    // be checked: the algorithm is one nothing verifies (GOST), or one this runtime lacks
-    // (Ed448 on Cloudflare Workers). There is no path that was checked and failed, which is
-    // what bogus means. Indeterminate, as a validator treats a zone whose DS set names no
-    // algorithm it supports (RFC 4035 §5.2)
-    if (vouchedUnchecked > 0 && vouchedChecked === 0) {
+    // the parent vouches for keys, and they did sign, but every algorithm the entry points
+    // name is one nothing verifies (GOST) or one this runtime lacks (Ed448 on Cloudflare
+    // Workers). There is no path that was checked and failed, which is what bogus means.
+    // Indeterminate, as a validator treats a zone whose DS set names no algorithm it
+    // supports (RFC 4035 §5.2). One supported algorithm in the set is enough to make the
+    // missing or failed signature by it a break (RFC 6840 §5.2), whatever else signed
+    const supported = await Promise.all(entryAlgorithms.map(isAlgorithmSupported));
+    if (vouchedUnchecked > 0 && !supported.includes(true)) {
       return {
         verified: false,
         indeterminate: true,
