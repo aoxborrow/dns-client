@@ -2,6 +2,7 @@ import { ROOT_HINTS } from '../resolvers/root-hints';
 import type { Transports } from '../transports/index';
 import type { OnEvent } from '../transports/types';
 import { concatBytes, fromBase64, toBase64, toHex, readU16, writeU16 } from '../wire/bytes';
+import { splitName } from '../wire/names';
 import type { DnssecTransport } from './types';
 import {
   DnssecFinding,
@@ -72,6 +73,7 @@ import {
   canonicalName,
   countLabels,
   parentName,
+  isInZone,
   presentRecord,
   responseFingerprint,
   recordTypeName,
@@ -524,7 +526,8 @@ export class DnssecEngine {
     let parentBuild = rootBuild;
     let parentServerHosts = rootHosts;
 
-    const labels = target === '.' ? [] : target.split('.');
+    // split on unescaped dots only, so a label holding a dot is never taken for a zone cut
+    const labels = splitName(target);
     for (let i = labels.length - 1; i >= 0; i--) {
       const candidate = labels.slice(i).join('.');
       const cut = await this.discoverZoneCut(candidate, parentBuild, parentServerHosts);
@@ -1872,8 +1875,7 @@ export class DnssecEngine {
         Boolean(context.delegationOf) &&
         canonicalName(rrset.name) === canonicalName(context.delegationOf!);
       const isGlue =
-        (rrset.type === TYPE_A || rrset.type === TYPE_AAAA) &&
-        !isInZoneApexScope(rrset.name, zone.zone);
+        (rrset.type === TYPE_A || rrset.type === TYPE_AAAA) && !isInZone(rrset.name, zone.zone);
       const authoritative = !isDelegationNs && !isGlue;
 
       const described: DnssecRrset = {
@@ -2356,13 +2358,6 @@ function formatIpv6(rdata: Uint8Array): string {
   const groups: string[] = [];
   for (let i = 0; i < 16; i += 2) groups.push(readU16(rdata, i).toString(16));
   return groups.join(':');
-}
-
-// glue and out-of-zone addresses are not this zone's authoritative data
-function isInZoneApexScope(name: string, zone: string): boolean {
-  const n = canonicalName(name);
-  const z = canonicalName(zone);
-  return z === '.' ? true : n === z || n.endsWith(`.${z}`);
 }
 
 function describeAge(ms: number): string {

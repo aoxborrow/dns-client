@@ -6,6 +6,7 @@ import {
   canonicalName,
   countLabels,
   parentName,
+  isInZone,
   groupRrsets,
   buildSignedData,
   decodeRrsig,
@@ -129,6 +130,16 @@ describe('name helpers', () => {
     expect(parentName('www.example.com')).toBe('example.com');
     expect(parentName('com')).toBe('.');
     expect(parentName('.')).toBe('.');
+  });
+
+  it('places a name in a zone label by label', () => {
+    expect(isInZone('www.example.com', 'example.com')).toBe(true);
+    expect(isInZone('EXAMPLE.com', 'example.COM.')).toBe(true);
+    expect(isInZone('anything', '.')).toBe(true);
+    expect(isInZone('badexample.com', 'example.com')).toBe(false);
+    // `a.example` is one label, so this name sits directly under com
+    expect(isInZone('a\\.example.com', 'example.com')).toBe(false);
+    expect(isInZone('a\\.example.com', 'com')).toBe(true);
   });
 });
 

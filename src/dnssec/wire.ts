@@ -12,6 +12,7 @@ import {
   writeU32,
 } from '../wire/bytes';
 import type { Message, ResourceRecord } from '../wire/message';
+import { isSubdomain } from '../wire/names';
 import { sha1, sha256, sha384 } from './hash';
 
 // the DNSSEC view of a DNS message, and the RFC 4034 primitives built on it: key tag, DS
@@ -267,12 +268,10 @@ export function parentName(name: string): string {
   return parts.length <= 1 ? '.' : parts.slice(1).join('.');
 }
 
-// true when `name` is at or below `zone`
+// true when `name` is at or below `zone`, label by label: `a\.example.com` is not below
+// example.com, since `a.example` is one label
 export function isInZone(name: string, zone: string): boolean {
-  const n = canonicalName(name);
-  const z = canonicalName(zone);
-  if (z === '.') return true;
-  return n === z || n.endsWith(`.${z}`);
+  return isSubdomain(canonicalName(name), canonicalName(zone));
 }
 
 // ---------------------------------------------------------------------------
