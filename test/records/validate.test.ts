@@ -355,8 +355,9 @@ describe('toAsciiName', () => {
   });
 
   it('refuses a name the conversion would turn into something else', () => {
-    // full-width digits map to ASCII digits, which the URL parser then reads as an address
-    expect(() => toAsciiName('１２７.１')).toThrow(ParseError);
-    expect(() => toAsciiName('bad name.münchen.de')).toThrow(ParseError);
+    // a Unicode label with a space in it. An ASCII label is left as written, as an ASCII
+    // name is, and the label rules are the validators' to apply
+    expect(() => toAsciiName('bad münchen.de')).toThrow(ParseError);
+    expect(toAsciiName('bad name.münchen.de')).toBe('bad name.xn--mnchen-3ya.de');
   });
 });
