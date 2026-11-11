@@ -357,11 +357,28 @@ export class AuthoritativeResolver {
       const refusals = new Set<number>();
       let loop: string | undefined;
 
-      servers: for (const server of cut.servers) {
-        if (now() >= run.deadline) break;
-        const addresses = await this.addressesOf(run, server, nesting);
-        for (const address of addresses) {
+      // each of the zone's servers is asked at its first address before any is asked at a
+      // second. A server that cannot be reached at one address may be at another, but the
+      // zone's next server is the better bet, and with a total timeout it may be the only
+      // one left time for: a dead dual-stack server would otherwise spend it on both its
+      // addresses. A server's addresses are looked up when it is first needed
+      const turns = cut.servers.map(server => ({
+        server,
+        addresses: undefined as string[] | undefined,
+        done: false,
+      }));
+      servers: for (let round = 0; turns.some(turn => !turn.done); round++) {
+        for (const turn of turns) {
+          if (turn.done) continue;
           // out of time: what the zone's servers have said so far is all there will be
+          if (now() >= run.deadline) break servers;
+          const { server } = turn;
+          turn.addresses ??= await this.addressesOf(run, server, nesting);
+          const address = turn.addresses[round];
+          if (address === undefined) {
+            turn.done = true;
+            continue;
+          }
           if (now() >= run.deadline) break servers;
           if (++run.hops > maxHops) {
             throw new InvalidResponseError(
@@ -400,7 +417,8 @@ export class AuthoritativeResolver {
               };
               if (outcome.loop) {
                 loop = outcome.reason;
-                continue servers;
+                turn.done = true;
+                continue;
               }
               lastLame = result;
               // two of a zone's servers refusing the same way is the zone's answer. A
@@ -412,7 +430,8 @@ export class AuthoritativeResolver {
               refusals.add(rcode);
               // it answered, so it can be reached, and its other addresses are the same
               // server with the same thing to say: on to the zone's next nameserver
-              continue servers;
+              turn.done = true;
+              continue;
             }
             step = { result, outcome };
             break servers;
@@ -637,8 +656,10 @@ export class AuthoritativeResolver {
           udpPayloadSize: merged.udpPayloadSize,
           ednsOptions: merged.ednsOptions,
           edns: merged.edns,
-          // no longer than what is left of the time for the whole query
-          timeout: Math.max(1, Math.min(merged.timeout ?? DEFAULT_TIMEOUT, run.deadline - now())),
+          timeout: merged.timeout ?? DEFAULT_TIMEOUT,
+          // no longer than what is left of the time for the whole query, retries and a
+          // TCP fallback included
+          totalTimeout: Math.max(1, run.deadline - now()),
           tcpFallback: merged.tcpFallback,
           // the zone has other servers to turn to, so less patience with each
           retries: merged.retries ?? 1,

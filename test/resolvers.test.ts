@@ -911,6 +911,23 @@ describe('AuthoritativeResolver', () => {
       expect(network.log()).not.toContain('10.4.0.3 many.com A');
     });
 
+    it('counts retries against the total timeout', async () => {
+      // every server silent, a second of patience with each and two retries, 100 ms
+      // altogether: the first server's retries are cut off with the rest
+      const silent = () => undefined;
+      const started = Date.now();
+      const error = await resolver(
+        { timeout: 1000, retries: 2, totalTimeout: 100 },
+        { '10.0.0.1': silent, '10.0.0.2': silent }
+      )
+        .query('example.com', 'A')
+        .catch(caught => caught);
+      expect(error).toBeInstanceOf(TimeoutError);
+      expect(Date.now() - started).toBeLessThan(180);
+      // a timer can fire a moment early, so one more may be sent for what is left
+      expect(network.log().length).toBeLessThan(3);
+    });
+
     it('times out on a server that says nothing, then tries the next', async () => {
       const answer = await resolver({ timeout: 30 }, { '10.1.0.1': () => undefined }).query(
         'example.com',
@@ -1110,12 +1127,40 @@ describe('AuthoritativeResolver', () => {
     });
 
     it('uses both families when told to, IPv4 first', async () => {
-      const answer = await resolver({ addressFamily: 'both' }, { '10.1.0.1': undefined }).query(
-        'example.com',
-        'A'
-      );
+      const answer = await resolver(
+        { addressFamily: 'both' },
+        { '10.1.0.1': undefined, '10.1.0.2': undefined }
+      ).query('example.com', 'A');
       expect(answer.server).toBe('2001:db8::1');
       expect(answer.serverName).toBe('ns1.example.com');
+    });
+
+    it("asks the zone's next server before a server's second address", async () => {
+      // ns1 has an IPv4 and an IPv6 address and says nothing on either. The time it is
+      // given would be gone on its two addresses, so ns2 is asked after its first
+      const silent = () => undefined;
+      const answer = await resolver(
+        { addressFamily: 'both', timeout: 50, totalTimeout: 90 },
+        { '10.1.0.1': silent, '2001:db8::1': silent }
+      ).query('example.com', 'A');
+      expect(answer.server).toBe('10.1.0.2');
+      expect(answer.trace?.map(hop => [hop.server, hop.error?.name]).slice(2)).toEqual([
+        ['10.1.0.1', 'TimeoutError'],
+        ['10.1.0.2', undefined],
+      ]);
+    });
+
+    it("comes back to a server's second address when the zone's others fail", async () => {
+      const answer = await resolver(
+        { addressFamily: 'both' },
+        { '10.1.0.1': undefined, '10.1.0.2': undefined }
+      ).query('example.com', 'A');
+      expect(network.log().slice(2)).toEqual([
+        '10.1.0.1 example.com A',
+        '10.1.0.2 example.com A',
+        '2001:db8::1 example.com A',
+      ]);
+      expect(answer.server).toBe('2001:db8::1');
     });
   });
 

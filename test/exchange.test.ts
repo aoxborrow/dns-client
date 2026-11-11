@@ -255,6 +255,22 @@ describe('exchange', () => {
       expect(server.received).toHaveLength(3);
     });
 
+    it('keeps every attempt inside the total timeout', async () => {
+      const options = await serve(() => undefined);
+      const started = Date.now();
+      // a second of patience for each of three attempts, 100 ms for all of them
+      const error = await exchange(QUESTION, server.address, {
+        ...options,
+        timeout: 1000,
+        retries: 2,
+        totalTimeout: 100,
+      }).catch(caught => caught);
+      expect(error).toBeInstanceOf(TimeoutError);
+      expect(Date.now() - started).toBeLessThan(180);
+      // a timer can fire a moment early, so one more may be sent for what is left
+      expect(server.received.length).toBeLessThan(3);
+    });
+
     it('asks again over TCP when the answer is truncated', async () => {
       const events: DnsEvent[] = [];
       const options = await serve(({ transport, query }) => ({
