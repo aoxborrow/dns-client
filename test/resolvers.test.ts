@@ -217,6 +217,26 @@ describe('Resolver', () => {
       expect(second.records.map(record => record.address)).toEqual(['192.0.2.1', '192.0.2.2']);
     });
 
+    it('hands out a raw response nobody else holds', async () => {
+      const stub = resolver(undefined, { cache: createLruCache({ max: 10 }) });
+      const [first, shared] = await Promise.all([
+        stub.query('example.com', 'A'),
+        stub.query('example.com', 'A'),
+      ]);
+      expect(network.queries).toHaveLength(1);
+      first.message.answers[0].rdata.set([203, 0, 113, 1]);
+      first.message.answers.length = 0;
+      first.bytes.fill(0);
+
+      const cached = await stub.query('example.com', 'A');
+      expect(cached.cached).toBe(true);
+      for (const answer of [shared, cached]) {
+        expect(answer.records.map(record => record.address)).toEqual(['192.0.2.1', '192.0.2.2']);
+        expect(answer.message.answers).toHaveLength(2);
+        expect(decodeMessage(answer.bytes).answers).toHaveLength(2);
+      }
+    });
+
     it('can be turned off, or replaced', async () => {
       const uncached = resolver(undefined, { cache: false });
       await uncached.query('example.com', 'A');
