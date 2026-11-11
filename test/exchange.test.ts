@@ -606,7 +606,7 @@ describe('exchange', () => {
 });
 
 describe('digCommand', () => {
-  it('matches the form DNS.Tools already prints', () => {
+  it('prints the dig command that asks the same question', () => {
     expect(
       digCommand({ name: 'example.com', type: 'DNSKEY' }, '199.43.135.53', {
         transport: 'tcp',

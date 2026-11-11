@@ -3,7 +3,7 @@
 //   node scripts/import-messages.mjs <directory of recordings>
 //
 // a recording is a JSON file with an `exchanges` array, each entry holding a base64 `query`
-// and `outcomes` with base64 `response`s (the format DNS.Tools' dns:ab writes). Only the
+// and `outcomes` with base64 `response`s, as a wire-level recording harness writes it. Only the
 // wire bytes are kept. Responses that are byte-identical apart from their ID are kept once.
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';

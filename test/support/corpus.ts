@@ -27,7 +27,7 @@ function load(name: string): CorpusMessage[] {
   }));
 }
 
-// responses recorded from the DNS.Tools resolver walking real delegations
+// responses recorded from a resolver walking real delegations
 export const CORPUS: CorpusMessage[] = load('messages.json');
 
 // responses captured for the record types the corpus lacks (scripts/capture-messages.ts)
