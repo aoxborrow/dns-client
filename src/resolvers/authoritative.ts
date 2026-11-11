@@ -17,7 +17,14 @@ import { createTransports, defaultTransports } from '../transports/index';
 import type { Transports } from '../transports/index';
 import { now } from '../transports/runtime';
 import type { OnEvent, TransportOptions } from '../transports/types';
-import { canonicalName, compareNames, isSubdomain, parentName, toAsciiName } from '../wire/names';
+import {
+  canonicalName,
+  comparableName,
+  compareNames,
+  isSubdomain,
+  parentName,
+  toAsciiName,
+} from '../wire/names';
 import { buildAnswer } from './answer';
 import type { Answer, QuerySettings, TraceHop } from './answer';
 import { createLimiter, createPacer } from './limiter';
@@ -99,7 +106,9 @@ interface Nameserver {
   name: string;
   // the name as the delegation wrote it, where its letter case differs
   written?: string;
-  // undefined until looked up; empty when the lookup found none
+  // the addresses that came with the name: glue, or a root hint. Without them the name
+  // is looked up when the server is needed, and what is found is kept in `Knowledge`
+  // for as long as its own TTL says
   addresses?: string[];
 }
 
@@ -130,6 +139,9 @@ interface Run {
   attempts: number;
   // nameserver names being looked up right now, to notice a lookup that needs itself
   resolving: Set<string>;
+  // nameserver addresses looked up during this call, found or not, so no name is looked
+  // up twice for one answer
+  lookedUp: Map<string, string[]>;
 }
 
 // two addresses of one family by their value
@@ -150,8 +162,9 @@ const DEFAULT_TIMEOUT = 5000;
 const DEFAULT_MAX_ALIASES = 8;
 // how deep nameserver lookups may nest: a nameserver whose own nameserver needs looking up
 const MAX_NESTING = 4;
-// a delegation with no TTL to go by is kept this long, in seconds
-const DEFAULT_CUT_TTL = 3600;
+// addresses from the caller's `resolveNameserver` come with no TTL, so are kept this
+// long, in seconds
+const SUPPLIED_ADDRESS_TTL = 3600;
 
 // rcodes that mean this server is not going to help with this zone: ask its neighbour
 const LAME = new Set<number>([RCODES.SERVFAIL, RCODES.REFUSED, RCODES.NOTIMP, RCODES.NOTAUTH]);
@@ -214,7 +227,7 @@ export class AuthoritativeResolver {
     const started = now();
     let asked: string;
     try {
-      asked = canonicalName(toAsciiName(name));
+      asked = comparableName(toAsciiName(name));
     } catch (cause) {
       throw new InvalidQueryError(cause instanceof Error ? cause.message : String(cause), {
         cause,
@@ -232,6 +245,7 @@ export class AuthoritativeResolver {
       hops: 0,
       attempts: 0,
       resolving: new Set(),
+      lookedUp: new Map(),
     };
 
     const trace: TraceHop[] = [];
@@ -439,7 +453,8 @@ export class AuthoritativeResolver {
       if (step.outcome.kind !== 'referral') return step;
 
       cut = step.outcome.cut;
-      run.knowledge.cuts.set(cut.zone, cut);
+      // a delegation with a TTL of zero is used for this walk and not kept
+      if (cut.expires > Date.now()) run.knowledge.cuts.set(cut.zone, cut);
     }
   }
 
@@ -522,7 +537,7 @@ export class AuthoritativeResolver {
         };
       });
 
-    const ttl = Math.min(...delegations.map(record => record.ttl)) || DEFAULT_CUT_TTL;
+    const ttl = Math.min(...delegations.map(record => record.ttl));
     return {
       kind: 'referral',
       cut: { zone: child, servers, expires: Date.now() + ttl * 1000 },
@@ -537,9 +552,13 @@ export class AuthoritativeResolver {
     if (isIp(name)) return this.usable([normalizeAddress(name)]);
 
     const known = this.hosts.get(name);
-    if (known) return (server.addresses = this.usable(known));
+    if (known) return this.usable(known);
+    // what was learned is checked against its own TTL every time: a nameserver's address
+    // can change long before the delegation naming it runs out
     const learned = run.knowledge.addresses.get(name);
-    if (learned && learned.expires > Date.now()) return (server.addresses = learned.addresses);
+    if (learned && learned.expires > Date.now()) return learned.addresses;
+    const tried = run.lookedUp.get(name);
+    if (tried) return tried;
 
     // a nameserver that can only be found by asking itself, or a chain of them too deep
     // to be worth following, is skipped: the zone's other servers may do
@@ -555,15 +574,16 @@ export class AuthoritativeResolver {
           const usable = this.usable(normalized);
           run.knowledge.addresses.set(name, {
             addresses: usable,
-            expires: Date.now() + DEFAULT_CUT_TTL * 1000,
+            expires: Date.now() + SUPPLIED_ADDRESS_TTL * 1000,
           });
-          return (server.addresses = usable);
+          run.lookedUp.set(name, usable);
+          return usable;
         }
       }
       const family = this.options.addressFamily ?? 'ipv4';
       const types = family === 'ipv4' ? ['A'] : family === 'ipv6' ? ['AAAA'] : ['A', 'AAAA'];
       const found: string[] = [];
-      let ttl = DEFAULT_CUT_TTL;
+      let ttl = Infinity;
       for (const type of types) {
         try {
           const { result } = await this.resolve(run, name, type, undefined, nesting + 1);
@@ -580,10 +600,13 @@ export class AuthoritativeResolver {
       }
       for (const address of found) this.names.set(address, server.written ?? name);
       const addresses = this.usable(found);
-      if (addresses.length > 0) {
+      // only what was found is kept past this call. A lookup that failed, or found
+      // nothing, is tried again by the next query
+      if (addresses.length > 0 && ttl > 0) {
         run.knowledge.addresses.set(name, { addresses, expires: Date.now() + ttl * 1000 });
       }
-      return (server.addresses = addresses);
+      run.lookedUp.set(name, addresses);
+      return addresses;
     } finally {
       run.resolving.delete(name);
     }

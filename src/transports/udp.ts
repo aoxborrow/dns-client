@@ -71,6 +71,17 @@ interface Association {
   relay: { host: string; port: number };
 }
 
+// an association being set up, and the callers waiting on it. Each caller can give up on
+// its own; the setup is abandoned only when every one of them has
+interface Setup {
+  promise: Promise<Association>;
+  opening: AbortController;
+  // callers still waiting and not given up
+  waiting: number;
+  // set up, or failed: from then on nobody can call it off
+  settled: boolean;
+}
+
 const DEFAULT_SOCKETS = 4;
 const UNSPECIFIED = new Set(['0.0.0.0', '::']);
 
@@ -80,7 +91,7 @@ const messageOf = (error: unknown) => (error instanceof Error ? error.message : 
 export function createUdpTransport(options: UdpTransportOptions = {}): Transport {
   const size = Math.max(1, options.udpSockets ?? DEFAULT_SOCKETS);
   const pools: Record<Family, (SharedSocket | undefined)[]> = { udp4: [], udp6: [] };
-  const associations = new Map<string, Promise<Association>>();
+  const associations = new Map<string, Setup>();
   // proxies that turned down UDP ASSOCIATE: no point asking again
   const withoutUdp = new Set<string>();
   let dgram: typeof import('node:dgram') | undefined;
@@ -269,10 +280,12 @@ export function createUdpTransport(options: UdpTransportOptions = {}): Transport
     };
   }
 
-  // `drop` forgets this association, so the next query sets up a new one
+  // `drop` forgets this association, so the next query sets up a new one. `signal` aborts
+  // the setup, which ends the control connection whatever the handshake is waiting on
   async function associate(
     proxy: Proxy,
     request: TransportRequest,
+    signal: AbortSignal,
     drop: () => void
   ): Promise<Association> {
     const module = dgram ?? (await loadDgram());
@@ -288,15 +301,24 @@ export function createUdpTransport(options: UdpTransportOptions = {}): Transport
       });
 
     let control: Connection | undefined;
+    const onAbort = () => {
+      if (control) void closeQuietly(control);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    const stopIfAborted = () => {
+      if (signal.aborted) throw signal.reason;
+    };
     try {
       try {
         control = await defaultConnect(options.tls)({ hostname: proxy.host, port: proxy.port });
       } catch (cause) {
+        stopIfAborted();
         throw new ProxyError(
           `Cannot reach proxy ${proxy.display}: ${scrub(messageOf(cause), proxy)}`,
           { cause }
         );
       }
+      stopIfAborted();
       const reader = new StreamReader(control.readable);
       // the address the client will send from is not known to it, so it is left unspecified
       const bound = await socks5Handshake(reader, control, proxy, SOCKS5_COMMANDS.udpAssociate, {
@@ -305,6 +327,7 @@ export function createUdpTransport(options: UdpTransportOptions = {}): Transport
       });
       // an unspecified relay address means "the address you reached me on"
       const relayHost = await resolveHost(UNSPECIFIED.has(bound.host) ? proxy.host : bound.host);
+      stopIfAborted();
       const relay = { host: relayHost, port: bound.port };
 
       const association: Association = {
@@ -340,6 +363,8 @@ export function createUdpTransport(options: UdpTransportOptions = {}): Transport
       return association;
     } catch (error) {
       if (control) void closeQuietly(control);
+      // everyone waiting gave up, and the handshake failed because of it
+      if (signal.aborted) throw signal.reason;
       const wrapped =
         error instanceof DnsError
           ? error
@@ -349,21 +374,72 @@ export function createUdpTransport(options: UdpTransportOptions = {}): Transport
             );
       report('0.0.0.0:0', wrapped);
       throw wrapped;
+    } finally {
+      signal.removeEventListener('abort', onAbort);
     }
   }
 
+  // the association for a proxy, set up by the first query that needs it and shared by
+  // the rest. A query that gives up stops waiting at once; the setup goes on for whoever
+  // is still waiting, and stops when nobody is
   function association(proxy: Proxy, request: TransportRequest): Promise<Association> {
-    const existing = associations.get(proxy.key);
-    if (existing) return existing;
-    const entry: { promise?: Promise<Association> } = {};
-    const drop = () => {
-      if (associations.get(proxy.key) === entry.promise) associations.delete(proxy.key);
-    };
-    const created = associate(proxy, request, drop);
-    entry.promise = created;
-    associations.set(proxy.key, created);
-    created.catch(drop);
-    return created;
+    let setup = associations.get(proxy.key);
+    if (!setup) {
+      const created: Setup = {
+        promise: undefined as unknown as Promise<Association>,
+        opening: new AbortController(),
+        waiting: 0,
+        settled: false,
+      };
+      const drop = () => {
+        if (associations.get(proxy.key) === created) associations.delete(proxy.key);
+      };
+      created.promise = associate(proxy, request, created.opening.signal, drop).then(
+        joined => {
+          created.settled = true;
+          return joined;
+        },
+        (error: unknown) => {
+          created.settled = true;
+          drop();
+          throw error;
+        }
+      );
+      // the callers each hear about a failure; this copy of it is nobody's
+      created.promise.catch(() => undefined);
+      associations.set(proxy.key, created);
+      setup = created;
+    }
+    return join(proxy, setup, request.signal);
+  }
+
+  function join(proxy: Proxy, setup: Setup, signal: AbortSignal | undefined): Promise<Association> {
+    if (signal?.aborted) return Promise.reject(signal.reason);
+    if (setup.settled) return setup.promise;
+    setup.waiting++;
+    // a caller that cannot give up keeps the setup going until it ends
+    if (!signal) return setup.promise;
+    return new Promise((resolve, reject) => {
+      const onAbort = () => {
+        if (!setup.settled && --setup.waiting === 0) {
+          // forgotten first, so a query arriving now starts afresh
+          if (associations.get(proxy.key) === setup) associations.delete(proxy.key);
+          setup.opening.abort(signal.reason);
+        }
+        reject(signal.reason);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      setup.promise.then(
+        joined => {
+          signal.removeEventListener('abort', onAbort);
+          resolve(joined);
+        },
+        error => {
+          signal.removeEventListener('abort', onAbort);
+          reject(error);
+        }
+      );
+    });
   }
 
   function overTcp(request: TransportRequest): Promise<TransportResponse> {
@@ -434,8 +510,10 @@ export function createUdpTransport(options: UdpTransportOptions = {}): Transport
       for (const pool of Object.values(pools)) {
         for (const shared of pool.splice(0)) if (shared) failAll(shared, error);
       }
-      for (const joining of associations.values()) {
-        joining.then(
+      for (const setup of associations.values()) {
+        // one still being set up stops, and its callers hear why
+        setup.opening.abort(error);
+        setup.promise.then(
           joined => {
             failAll(joined.shared, error);
             void closeQuietly(joined.control);

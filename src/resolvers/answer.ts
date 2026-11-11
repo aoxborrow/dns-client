@@ -6,8 +6,8 @@ import { extendedErrors } from '../records/edns';
 import type { ExtendedErrorOption } from '../records/edns';
 import type { DnsRecord } from '../records/types';
 import type { TransportName } from '../transports/types';
-import type { HeaderFlags, Message } from '../wire/message';
-import { canonicalName } from '../wire/names';
+import type { HeaderFlags, Message, ResourceRecord } from '../wire/message';
+import { canonicalName, comparableName } from '../wire/names';
 
 // the answer both resolvers return: what the server said, typed and raw
 
@@ -143,8 +143,32 @@ export interface AnswerExtras {
   before?: DnsRecord[];
 }
 
-// build an answer from a response. Decoding is done here, every time, so no two answers
-// share a record object and nothing a caller does to one reaches another
+const copyRecord = (record: ResourceRecord): ResourceRecord => ({
+  ...record,
+  rdata: record.rdata.slice(),
+});
+
+// a copy of a message that shares nothing with it, down to the bytes
+function copyMessage(message: Message): Message {
+  return {
+    ...message,
+    flags: { ...message.flags },
+    questions: message.questions.map(question => ({ ...question })),
+    answers: message.answers.map(copyRecord),
+    authorities: message.authorities.map(copyRecord),
+    additionals: message.additionals.map(copyRecord),
+    ...(message.edns && {
+      edns: {
+        ...message.edns,
+        options: message.edns.options.map(option => ({ ...option, data: option.data.slice() })),
+      },
+    }),
+  };
+}
+
+// build an answer from a response. Decoding is done here, every time, and the raw
+// response is copied, so no two answers share an object and nothing a caller does to one
+// reaches another, or the cache
 export function buildAnswer(result: ExchangeResult, extras: AnswerExtras = {}): Answer {
   const { message } = result;
   const options = { lenient: !extras.strict };
@@ -163,13 +187,13 @@ export function buildAnswer(result: ExchangeResult, extras: AnswerExtras = {}): 
     rcode: message.rcode,
     rcodeName: rcodeName(message.rcode),
     flags: { ...message.flags },
-    records: matchingRecords(name, result.query.type, answers),
+    records: matchingRecords(comparableName(name), result.query.type, answers),
     answers,
     authorities: aged(decodeRecords(message.authorities, options)),
     additionals: aged(decodeRecords(message.additionals, options)),
     extendedErrors: extendedErrors(message.edns),
-    message,
-    bytes: result.bytes,
+    message: copyMessage(message),
+    bytes: result.bytes.slice(),
     server: result.server,
     ...(extras.serverName && { serverName: extras.serverName }),
     port: result.port,

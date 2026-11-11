@@ -163,6 +163,13 @@ export function canonicalName(name: string): string {
   return trimmed.replace(/[A-Z]/g, char => char.toLowerCase());
 }
 
+// a name for comparing, however it was escaped: `\101xample.com` and `example.com` come
+// out the same, spelled as a decoded message spells them. Throws for a name that cannot
+// be written
+export function comparableName(name: string): string {
+  return canonicalName(labelsToName(nameToLabels(name)));
+}
+
 // the number of labels, not counting the root (RFC 4034 §3.1.3)
 export function countLabels(name: string): number {
   return splitName(name).length;

@@ -114,6 +114,11 @@ describe('Resolver', () => {
     expect(answer.name).toBe('xn--mnchen-3ya.example');
   });
 
+  it('finds the records for a name written with escapes', async () => {
+    const answer = await resolver().query('\\101xample.com', 'A');
+    expect(answer.records.map(record => record.address)).toEqual(['192.0.2.1', '192.0.2.2']);
+  });
+
   it('rejects a question that cannot be asked', async () => {
     await expect(resolver().query('example.com', 'NOPE')).rejects.toBeInstanceOf(InvalidQueryError);
     expect(network.queries).toHaveLength(0);
@@ -189,6 +194,26 @@ describe('Resolver', () => {
       await stub.query('example.com', 'A', { dnssecOk: true });
       await stub.query('example.com', 'AAAA');
       await stub.query('EXAMPLE.com.', 'A');
+      await stub.query('example.com', 'A', { port: 5353 });
+      expect(network.queries).toHaveLength(4);
+    });
+
+    it('keeps questions with different EDNS options apart, in the cache and in flight', async () => {
+      // two client subnets (option 8) can get two different answers
+      const subnet = (last: number) => ({
+        code: 8,
+        data: Uint8Array.of(0, 1, 24, 0, 192, 0, 2, last),
+      });
+      const stub = resolver();
+      await Promise.all([
+        stub.query('example.com', 'A', { ednsOptions: [subnet(1)] }),
+        stub.query('example.com', 'A', { ednsOptions: [subnet(2)] }),
+        stub.query('example.com', 'A'),
+      ]);
+      expect(network.queries).toHaveLength(3);
+
+      const again = await stub.query('example.com', 'A', { ednsOptions: [subnet(2)] });
+      expect(again.cached).toBe(true);
       expect(network.queries).toHaveLength(3);
     });
 
@@ -199,6 +224,26 @@ describe('Resolver', () => {
       first.records.length = 0;
       const second = await stub.query('example.com', 'A');
       expect(second.records.map(record => record.address)).toEqual(['192.0.2.1', '192.0.2.2']);
+    });
+
+    it('hands out a raw response nobody else holds', async () => {
+      const stub = resolver(undefined, { cache: createLruCache({ max: 10 }) });
+      const [first, shared] = await Promise.all([
+        stub.query('example.com', 'A'),
+        stub.query('example.com', 'A'),
+      ]);
+      expect(network.queries).toHaveLength(1);
+      first.message.answers[0].rdata.set([203, 0, 113, 1]);
+      first.message.answers.length = 0;
+      first.bytes.fill(0);
+
+      const cached = await stub.query('example.com', 'A');
+      expect(cached.cached).toBe(true);
+      for (const answer of [shared, cached]) {
+        expect(answer.records.map(record => record.address)).toEqual(['192.0.2.1', '192.0.2.2']);
+        expect(answer.message.answers).toHaveLength(2);
+        expect(decodeMessage(answer.bytes).answers).toHaveLength(2);
+      }
     });
 
     it('can be turned off, or replaced', async () => {
@@ -531,6 +576,12 @@ describe('AuthoritativeResolver', () => {
     expect(answer.trace?.[2]).not.toHaveProperty('referral');
     expect(answer.trace?.[2].bytes).toBe(answer.bytes.length);
     expect(answer.toDig()).toBe('dig +norecurse @10.1.0.1 example.com A');
+  });
+
+  it('resolves a name written with escapes', async () => {
+    const answer = await resolver().query('\\101xample.com', 'A');
+    expect(answer.name).toBe('example.com');
+    expect(answer.records.map(record => record.address)).toEqual(['192.0.2.1']);
   });
 
   it('returns a missing name and a missing type as answers', async () => {
@@ -996,6 +1047,57 @@ describe('AuthoritativeResolver', () => {
       iterative.clearCache();
       await iterative.query('example.com', 'A');
       expect(network.queries).toHaveLength(6);
+    });
+
+    it('does not keep a delegation whose TTL is zero', async () => {
+      // com hands out example.com's servers with a TTL of 0
+      const forgetful: SimulatedServer = query => {
+        const reply = com(query);
+        if (!(reply instanceof Uint8Array)) return reply;
+        const message = decodeMessage(reply);
+        return encodeMessage({
+          ...message,
+          authorities: message.authorities.map(record => ({ ...record, ttl: 0 })),
+        });
+      };
+      const iterative = resolver({}, { '10.0.1.1': forgetful, '10.0.1.2': forgetful });
+      await iterative.query('example.com', 'A');
+      network.queries.length = 0;
+      await iterative.query('example.com', 'A');
+      // com is still known, example.com is asked about again
+      expect(network.log()).toEqual(['10.0.1.1 example.com A', '10.1.0.1 example.com A']);
+    });
+
+    it('looks up a nameserver address again once its own TTL runs out', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        const iterative = resolver();
+        await iterative.query('glueless.com', 'A');
+        network.queries.length = 0;
+        // ns1.dnshost.net's address has a TTL of 300; the delegation to it, two days
+        vi.setSystemTime(Date.now() + 299_000);
+        await iterative.query('glueless.com', 'A');
+        expect(network.log()).toEqual(['10.2.0.53 glueless.com A']);
+        network.queries.length = 0;
+        vi.setSystemTime(Date.now() + 2000);
+        await iterative.query('glueless.com', 'A');
+        expect(network.log()).toEqual(['10.2.0.1 ns1.dnshost.net A', '10.2.0.53 glueless.com A']);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('looks up a nameserver address again after a lookup that failed', async () => {
+      let down = true;
+      const flaky: SimulatedServer = query =>
+        down ? new ConnectionError('Cannot reach 10.2.0.1') : dnshost(query);
+      const iterative = resolver({}, { '10.2.0.1': flaky });
+      await expect(iterative.query('glueless.com', 'A')).rejects.toThrow(
+        'No usable nameserver address for glueless.com'
+      );
+      down = false;
+      const answer = await iterative.query('glueless.com', 'A');
+      expect(answer.records.map(record => record.address)).toEqual(['192.0.2.77']);
     });
   });
 

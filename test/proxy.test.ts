@@ -1,4 +1,5 @@
-import { ConnectionError, DnsError, NoServerError, ProxyError } from '../src/errors';
+import net from 'node:net';
+import { ConnectionError, DnsError, NoServerError, ProxyError, TimeoutError } from '../src/errors';
 import { exchange } from '../src/exchange';
 import type { ExchangeOptions, ExchangeResult } from '../src/exchange';
 import { createNodeConnect, createTransports } from '../src/transports/index';
@@ -248,6 +249,34 @@ describe('proxies', () => {
     });
   });
 
+  describe('SOCKS5 authentication', () => {
+    it('does not let a proxy skip the credentials it was given', async () => {
+      // a proxy that says "no authentication" though only username/password was offered
+      proxy = await startSocks5Mock({ auth: CREDENTIALS, chooseMethod: 0x00 });
+      for (const transport of ['tcp', 'udp'] as const) {
+        const error = await ask(transport, { proxy: proxyUrl('socks5', proxy, true) }).catch(
+          caught => caught
+        );
+        expect(error).toBeInstanceOf(ProxyError);
+        expect(error.message).toContain('chose an authentication method not offered');
+        transports?.close();
+      }
+      // no request got as far as the proxy, and nothing reached the server
+      expect(proxy.requests).toHaveLength(0);
+      expect(dns.received).toHaveLength(0);
+    });
+
+    it('does not use a proxy that wants no credentials when some were given', async () => {
+      proxy = await startSocks5Mock();
+      const error = await ask('tcp', { proxy: proxyUrl('socks5', proxy, true) }).catch(
+        caught => caught
+      );
+      expect(error).toBeInstanceOf(ProxyError);
+      expect(error.message).toContain('accepts none of the offered authentication methods');
+      expect(dns.received).toHaveLength(0);
+    });
+  });
+
   describe('DoH', () => {
     it('refuses to go around a proxy it cannot use', async () => {
       await startProxy('socks5', { auth: true });
@@ -386,6 +415,80 @@ describe('proxies', () => {
       expect(result.transport).toBe('tcp');
       expect(dns.received.map(({ transport }) => transport)).toEqual(['tcp']);
       expect(result.toDig()).toContain('+tcp');
+    });
+
+    describe('through a proxy that never answers the handshake', () => {
+      let silent: net.Server;
+      let connections: net.Socket[];
+      let silentUrl: string;
+
+      beforeEach(async () => {
+        connections = [];
+        silent = net.createServer(socket => {
+          connections.push(socket);
+          socket.on('error', () => undefined);
+          // read and ignore whatever comes, so a close from the other end is noticed
+          socket.resume();
+        });
+        await new Promise<void>(resolve => silent.listen(0, '127.0.0.1', resolve));
+        silentUrl = `socks5://127.0.0.1:${(silent.address() as net.AddressInfo).port}`;
+      });
+
+      afterEach(async () => {
+        for (const socket of connections) socket.destroy();
+        await new Promise(resolve => silent.close(resolve));
+      });
+
+      const closed = (socket: net.Socket) =>
+        new Promise<boolean>(resolve => {
+          if (socket.destroyed || socket.readableEnded) resolve(true);
+          else socket.once('close', () => resolve(true));
+          setTimeout(() => resolve(false), 500);
+        });
+
+      it('times out, and drops the half-made association', async () => {
+        transports = createTransports({ proxy: silentUrl });
+        const options = { port: dns.port, transports, retries: 0 };
+        const started = Date.now();
+        const error = await exchange(QUESTION, dns.address, { ...options, timeout: 50 }).catch(
+          caught => caught
+        );
+        expect(error).toBeInstanceOf(TimeoutError);
+        expect(Date.now() - started).toBeLessThan(1000);
+        expect(connections).toHaveLength(1);
+        expect(await closed(connections[0])).toBe(true);
+
+        // the next query does not wait on the one given up on: it tries afresh
+        await exchange(QUESTION, dns.address, { ...options, timeout: 50 }).catch(() => undefined);
+        expect(connections).toHaveLength(2);
+      });
+
+      it('keeps setting up for a caller still waiting when another gives up', async () => {
+        transports = createTransports({ proxy: silentUrl });
+        const first = new AbortController();
+        const second = new AbortController();
+        const ask = (signal: AbortSignal) =>
+          exchange(QUESTION, dns.address, {
+            port: dns.port,
+            transports,
+            retries: 0,
+            timeout: 5000,
+            signal,
+          }).catch(caught => caught);
+        const firstResult = ask(first.signal);
+        const secondResult = ask(second.signal);
+        await new Promise(resolve => setTimeout(resolve, 50));
+        // both queries wait on the one association
+        expect(connections).toHaveLength(1);
+
+        first.abort(new Error('first gave up'));
+        expect((await firstResult).message).toBe('first gave up');
+        expect(await closed(connections[0])).toBe(false);
+
+        second.abort(new Error('second gave up'));
+        expect((await secondResult).message).toBe('second gave up');
+        expect(await closed(connections[0])).toBe(true);
+      });
     });
   });
 
