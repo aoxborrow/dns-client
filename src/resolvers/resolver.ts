@@ -11,8 +11,9 @@ import type { Transports } from '../transports/index';
 import { now } from '../transports/runtime';
 import { systemServers } from '../transports/system';
 import type { OnEvent, Server, TransportOptions } from '../transports/types';
+import { toHex } from '../wire/bytes';
 import type { Message } from '../wire/message';
-import { canonicalName, toAsciiName } from '../wire/names';
+import { comparableName, toAsciiName } from '../wire/names';
 import { buildAnswer } from './answer';
 import type { Answer, QuerySettings } from './answer';
 import { resolveCache } from './cache';
@@ -190,7 +191,7 @@ export class Resolver {
     const merged = { ...this.options, ...settings };
     try {
       return [
-        canonicalName(toAsciiName(name)),
+        comparableName(toAsciiName(name)),
         typeCode(type),
         classCode(RECORD_CLASSES.IN),
         (merged.recursionDesired ?? true) ? 'rd' : '',
@@ -198,7 +199,10 @@ export class Resolver {
         merged.authenticData ? 'ad' : '',
         merged.dnssecOk ? 'do' : '',
         merged.edns === false ? 'noedns' : '',
+        // options such as a client subnet change the answer as much as the name does
+        (merged.ednsOptions ?? []).map(option => `${option.code}=${toHex(option.data)}`).join(','),
         merged.transport ?? '',
+        merged.port ?? '',
       ].join('|');
     } catch {
       // not a question that can be asked: the query itself will say why

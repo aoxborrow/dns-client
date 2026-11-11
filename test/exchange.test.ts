@@ -163,6 +163,20 @@ describe('exchange', () => {
       expect(result.message.questions[0].name).toBe('EXAMPLE.com');
     });
 
+    it.each(['udp', 'tcp'] as const)(
+      'matches a name written with escapes to the response over %s',
+      async transport => {
+        const options = await serve(({ query }) => ({ response: answerTo(query) }));
+        // \101 is "e": the same name as example.com on the wire
+        const result = await exchange({ name: '\\101xample.COM', type: 'A' }, server.address, {
+          ...options,
+          transport,
+        });
+        expect(result.message.questions[0].name).toBe('example.COM');
+        expect(result.message.answers).toHaveLength(1);
+      }
+    );
+
     it('accepts an error response that does not repeat the question', async () => {
       const options = await serve(({ query }) => ({
         response: answerTo(query, { rcode: 1, questions: [], answers: [] }),
@@ -239,6 +253,22 @@ describe('exchange', () => {
         exchange(QUESTION, server.address, { ...options, timeout: 60, retries: 2 })
       ).rejects.toBeInstanceOf(TimeoutError);
       expect(server.received).toHaveLength(3);
+    });
+
+    it('keeps every attempt inside the total timeout', async () => {
+      const options = await serve(() => undefined);
+      const started = Date.now();
+      // a second of patience for each of three attempts, 100 ms for all of them
+      const error = await exchange(QUESTION, server.address, {
+        ...options,
+        timeout: 1000,
+        retries: 2,
+        totalTimeout: 100,
+      }).catch(caught => caught);
+      expect(error).toBeInstanceOf(TimeoutError);
+      expect(Date.now() - started).toBeLessThan(180);
+      // a timer can fire a moment early, so one more may be sent for what is left
+      expect(server.received.length).toBeLessThan(3);
     });
 
     it('asks again over TCP when the answer is truncated', async () => {

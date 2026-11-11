@@ -25,7 +25,7 @@ import type {
 import { encodeQuery } from './wire/encode';
 import { decodeMessage } from './wire/message';
 import type { EdnsOption, Message } from './wire/message';
-import { canonicalName, toAsciiName } from './wire/names';
+import { canonicalName, comparableName, toAsciiName } from './wire/names';
 
 // one question, put to one server, answered by one validated response.
 //
@@ -71,6 +71,10 @@ export interface ExchangeOptions extends TransportOptions {
   timeout?: number;
   // how many more attempts to make after one fails in a way that may pass. Default 2
   retries?: number;
+  // how long all attempts may take together, in milliseconds, retries and a TCP fallback
+  // included. Each attempt is cut short to fit, and none is started once it has run
+  // out. Default: no limit beyond each attempt's `timeout`
+  totalTimeout?: number;
   // ask again over TCP when a UDP answer is truncated. Default true; with false the
   // truncated answer is returned as it came
   tcpFallback?: boolean;
@@ -251,6 +255,7 @@ export async function exchange(
   const { signal, onEvent } = options;
   const timeout = options.timeout ?? DEFAULT_TIMEOUT;
   const retries = Math.max(0, options.retries ?? DEFAULT_RETRIES);
+  const deadline = options.totalTimeout === undefined ? Infinity : started + options.totalTimeout;
   const recursionDesired = options.recursionDesired ?? true;
   const checkingDisabled = options.checkingDisabled ?? false;
   const authenticData = options.authenticData ?? false;
@@ -308,7 +313,9 @@ export async function exchange(
   }
   if (signal?.aborted) throw signal.reason;
 
-  const expected = { id, name: canonicalName(name), type, class: cls };
+  // the response's question is decoded, so it is spelled without the escapes the name
+  // may have been written with
+  const expected = { id, name: comparableName(name), type, class: cls };
   const ownTransports = !options.transports && hasTransportOptions(options);
   const transports =
     options.transports ?? (ownTransports ? createTransports(options) : defaultTransports());
@@ -325,11 +332,13 @@ export async function exchange(
       attempt++;
       const attemptStarted = now();
       const current = (attemptAbort = new AbortController());
+      // no longer than what is left of the time for the whole exchange
+      const wait = Math.max(1, Math.min(timeout, deadline - now()));
       const timer = setTimeout(() => {
         current.abort(
-          new TimeoutError(`No answer from ${endpoint.host} within ${timeout} ms`, context())
+          new TimeoutError(`No answer from ${endpoint.host} within ${wait} ms`, context())
         );
-      }, timeout);
+      }, wait);
 
       const report = (response?: TransportResponse, message?: Message, error?: unknown) =>
         onEvent?.({
@@ -384,7 +393,7 @@ export async function exchange(
         report(undefined, undefined, error);
 
         const retryable = error instanceof DnsError && error.retryable;
-        if (!retryable || failures >= retries) throw error;
+        if (!retryable || failures >= retries || now() >= deadline) throw error;
         failures++;
         onEvent?.({
           event: 'retry',
@@ -416,6 +425,13 @@ export async function exchange(
           );
         }
         if (options.tcpFallback !== false) {
+          // out of time to ask again: the answer is not complete, and none came in time
+          if (now() >= deadline) {
+            throw new TimeoutError(
+              `No complete answer from ${endpoint.host} within ${options.totalTimeout} ms`,
+              { ...context(), transport: response.transport }
+            );
+          }
           onEvent?.({
             event: 'tcp-fallback',
             server: endpoint.host,

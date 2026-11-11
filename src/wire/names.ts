@@ -163,6 +163,13 @@ export function canonicalName(name: string): string {
   return trimmed.replace(/[A-Z]/g, char => char.toLowerCase());
 }
 
+// a name for comparing, however it was escaped: `\101xample.com` and `example.com` come
+// out the same, spelled as a decoded message spells them. Throws for a name that cannot
+// be written
+export function comparableName(name: string): string {
+  return canonicalName(labelsToName(nameToLabels(name)));
+}
+
 // the number of labels, not counting the root (RFC 4034 §3.1.3)
 export function countLabels(name: string): number {
   return splitName(name).length;
@@ -213,26 +220,46 @@ export function compareNames(a: string, b: string): number {
   return left.length - right.length;
 }
 
+// eslint-disable-next-line no-control-regex
+const ASCII = /^[\x00-\x7f]*$/;
+// what a URL parser takes as part of a URL rather than of a host, and control characters
+// eslint-disable-next-line no-control-regex
+const URL_SYNTAX = /[\x00-\x20#%/:<>?@[\\\]^|\x7f]/;
+
 // a name in its ASCII form. A name that is already ASCII is returned as it is; a Unicode
 // name (`münchen.de`) is converted to punycode (`xn--mnchen-3ya.de`) with the IDNA mapping
 // built into the runtime's URL parser, so the library ships no tables of its own.
 //
-// only names with non-ASCII characters go through that parser: it rewrites hosts that look
-// like numbers into IPv4 addresses, which must never happen to a DNS name. The label count
-// is checked afterwards for the same reason
+// the conversion is label by label, and only labels with non-ASCII characters go through
+// the parser. Every other label is left exactly as written, wildcards and underscore
+// labels included (`*.münchen.de`, `_dmarc.münchen.de`). A label holding characters the
+// parser reads as URL syntax (`@`, `:`, `/`) is refused rather than handed to it, where
+// part of the name could be dropped. Each label is parsed with a fixed label after it, so
+// one made of digits is never read as an IPv4 address
 export function toAsciiName(name: string): string {
-  // eslint-disable-next-line no-control-regex
-  if (/^[\x00-\x7f]*$/.test(name)) return name;
-  let converted: string;
-  try {
-    converted = new URL(`http://${name}`).hostname;
-  } catch (error) {
-    throw new ParseError(`Name cannot be converted to ASCII: ${name}`, { cause: error });
-  }
-  if (splitName(converted).length !== splitName(name).length) {
-    throw new ParseError(`Name cannot be converted to ASCII: ${name}`);
-  }
+  if (ASCII.test(name)) return name;
+  const fail = (cause?: unknown) =>
+    new ParseError(
+      `Name cannot be converted to ASCII: ${name}`,
+      cause === undefined ? {} : { cause }
+    );
+  const converted = splitName(name).map(label => {
+    if (ASCII.test(label)) return label;
+    if (URL_SYNTAX.test(label)) throw fail();
+    let host: string;
+    try {
+      host = new URL(`http://${label}.x`).hostname;
+    } catch (error) {
+      throw fail(error);
+    }
+    // one label in, one label out
+    if (!host.endsWith('.x')) throw fail();
+    const ascii = host.slice(0, -2);
+    if (ascii === '' || ascii.includes('.')) throw fail();
+    return ascii;
+  });
+  const result = converted.join('.') + (name.endsWith('.') && !name.endsWith('\\.') ? '.' : '');
   // the usual length limits apply to the converted form
-  nameToLabels(converted);
-  return converted;
+  nameToLabels(result);
+  return result;
 }
