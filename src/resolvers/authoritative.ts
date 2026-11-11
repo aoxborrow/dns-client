@@ -72,9 +72,12 @@ export interface AuthoritativeResolverOptions
   // address as a number, which is the same on every run whatever order they arrived in
   addressOrder?: (a: string, b: string) => number;
   // find a nameserver's addresses some other way before it is resolved from the root: a
-  // local cache, another resolver. Return nothing to leave it to the resolver
+  // local cache, another resolver. `timeout` is what is left of the total timeout, in
+  // milliseconds, and `signal` is the query's, for a lookup that should not outlast
+  // either. Return nothing to leave it to the resolver
   resolveNameserver?: (
-    name: string
+    name: string,
+    limits: { timeout: number; signal?: AbortSignal }
   ) => Promise<readonly string[] | undefined> | readonly string[] | undefined;
   // remember delegations and nameserver addresses between queries, for as long as their
   // TTLs allow. Default true. With false every query starts again from the root
@@ -356,6 +359,8 @@ export class AuthoritativeResolver {
       let lastLame: ExchangeResult | undefined;
       const refusals = new Set<number>();
       let loop: string | undefined;
+      // the nameserver the time ran out at, for the error
+      let stalled: Nameserver | undefined;
 
       // each of the zone's servers is asked at its first address before any is asked at a
       // second. A server that cannot be reached at one address may be at another, but the
@@ -371,15 +376,22 @@ export class AuthoritativeResolver {
         for (const turn of turns) {
           if (turn.done) continue;
           // out of time: what the zone's servers have said so far is all there will be
-          if (now() >= run.deadline) break servers;
+          if (now() >= run.deadline) {
+            stalled = turn.server;
+            break servers;
+          }
           const { server } = turn;
           turn.addresses ??= await this.addressesOf(run, server, nesting);
+          // finding the address may have been what took the time
+          if (now() >= run.deadline) {
+            stalled = server;
+            break servers;
+          }
           const address = turn.addresses[round];
           if (address === undefined) {
             turn.done = true;
             continue;
           }
-          if (now() >= run.deadline) break servers;
           if (++run.hops > maxHops) {
             throw new InvalidResponseError(
               `Gave up resolving ${name} after asking ${maxHops} servers`,
@@ -459,7 +471,9 @@ export class AuthoritativeResolver {
         if (loop) throw new InvalidResponseError(`Referral loop: ${loop}`, { query: name, type });
         if (firstError) throw firstError;
         if (now() >= run.deadline) {
+          const at = stalled && (stalled.written ?? (stalled.name || stalled.addresses?.[0]));
           throw new TimeoutError(`No answer for ${name} ${type} within ${run.totalTimeout} ms`, {
+            ...(at && { server: at }),
             query: name,
             type,
           });
@@ -586,7 +600,11 @@ export class AuthoritativeResolver {
     try {
       // the caller's own way of finding it comes first
       if (this.options.resolveNameserver) {
-        const supplied = await this.options.resolveNameserver(server.written ?? name);
+        const supplied = await this.options.resolveNameserver(server.written ?? name, {
+          // no more than the walk has left
+          timeout: Math.max(1, run.deadline - now()),
+          ...(run.signal && { signal: run.signal }),
+        });
         if (supplied?.length) {
           const normalized = supplied.map(normalizeAddress);
           for (const address of normalized) this.names.set(address, server.written ?? name);

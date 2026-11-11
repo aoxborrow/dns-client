@@ -644,6 +644,24 @@ describe('AuthoritativeResolver', () => {
     expect(answer.serverName).toBe('ns1.dnshost.net');
   });
 
+  it('gives a nameserver lookup what is left of the total timeout, and names it when that runs out', async () => {
+    let given = Infinity;
+    const error = await resolver({
+      totalTimeout: 100,
+      resolveNameserver: async (_name, { timeout }) => {
+        given = timeout;
+        // a lookup that takes all the time there is, and a little over
+        await new Promise(resolve => setTimeout(resolve, timeout + 20));
+        return undefined;
+      },
+    })
+      .query('glueless.com', 'A')
+      .catch(caught => caught);
+    expect(given).toBeLessThanOrEqual(100);
+    expect(error).toBeInstanceOf(TimeoutError);
+    expect(error.server).toBe('ns1.dnshost.net');
+  });
+
   it('falls back to resolving from the root when the lookup has nothing', async () => {
     const answer = await resolver({ resolveNameserver: () => undefined }).query(
       'glueless.com',
