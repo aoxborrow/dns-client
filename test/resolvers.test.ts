@@ -924,7 +924,8 @@ describe('AuthoritativeResolver', () => {
         .catch(caught => caught);
       expect(error).toBeInstanceOf(TimeoutError);
       expect(Date.now() - started).toBeLessThan(180);
-      // a timer can fire a moment early, so one more may be sent for what is left
+      // the first server's retries are cut off, and the second may be asked once for what
+      // is left when its timer fires a moment early
       expect(network.log().length).toBeLessThan(3);
     });
 
