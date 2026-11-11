@@ -25,7 +25,7 @@ import type {
 import { encodeQuery } from './wire/encode';
 import { decodeMessage } from './wire/message';
 import type { EdnsOption, Message } from './wire/message';
-import { canonicalName, toAsciiName } from './wire/names';
+import { canonicalName, comparableName, toAsciiName } from './wire/names';
 
 // one question, put to one server, answered by one validated response.
 //
@@ -308,7 +308,9 @@ export async function exchange(
   }
   if (signal?.aborted) throw signal.reason;
 
-  const expected = { id, name: canonicalName(name), type, class: cls };
+  // the response's question is decoded, so it is spelled without the escapes the name
+  // may have been written with
+  const expected = { id, name: comparableName(name), type, class: cls };
   const ownTransports = !options.transports && hasTransportOptions(options);
   const transports =
     options.transports ?? (ownTransports ? createTransports(options) : defaultTransports());

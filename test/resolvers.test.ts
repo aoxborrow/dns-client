@@ -110,6 +110,11 @@ describe('Resolver', () => {
     expect(answer.name).toBe('xn--mnchen-3ya.example');
   });
 
+  it('finds the records for a name written with escapes', async () => {
+    const answer = await resolver().query('\\101xample.com', 'A');
+    expect(answer.records.map(record => record.address)).toEqual(['192.0.2.1', '192.0.2.2']);
+  });
+
   it('rejects a question that cannot be asked', async () => {
     await expect(resolver().query('example.com', 'NOPE')).rejects.toBeInstanceOf(InvalidQueryError);
     expect(network.queries).toHaveLength(0);
@@ -561,6 +566,12 @@ describe('AuthoritativeResolver', () => {
     expect(answer.trace?.[2]).not.toHaveProperty('referral');
     expect(answer.trace?.[2].bytes).toBe(answer.bytes.length);
     expect(answer.toDig()).toBe('dig +norecurse @10.1.0.1 example.com A');
+  });
+
+  it('resolves a name written with escapes', async () => {
+    const answer = await resolver().query('\\101xample.com', 'A');
+    expect(answer.name).toBe('example.com');
+    expect(answer.records.map(record => record.address)).toEqual(['192.0.2.1']);
   });
 
   it('returns a missing name and a missing type as answers', async () => {

@@ -13,7 +13,7 @@ import { systemServers } from '../transports/system';
 import type { OnEvent, Server, TransportOptions } from '../transports/types';
 import { toHex } from '../wire/bytes';
 import type { Message } from '../wire/message';
-import { canonicalName, toAsciiName } from '../wire/names';
+import { comparableName, toAsciiName } from '../wire/names';
 import { buildAnswer } from './answer';
 import type { Answer, QuerySettings } from './answer';
 import { resolveCache } from './cache';
@@ -191,7 +191,7 @@ export class Resolver {
     const merged = { ...this.options, ...settings };
     try {
       return [
-        canonicalName(toAsciiName(name)),
+        comparableName(toAsciiName(name)),
         typeCode(type),
         classCode(RECORD_CLASSES.IN),
         (merged.recursionDesired ?? true) ? 'rd' : '',

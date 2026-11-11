@@ -7,7 +7,7 @@ import type { ExtendedErrorOption } from '../records/edns';
 import type { DnsRecord } from '../records/types';
 import type { TransportName } from '../transports/types';
 import type { HeaderFlags, Message, ResourceRecord } from '../wire/message';
-import { canonicalName } from '../wire/names';
+import { canonicalName, comparableName } from '../wire/names';
 
 // the answer both resolvers return: what the server said, typed and raw
 
@@ -187,7 +187,7 @@ export function buildAnswer(result: ExchangeResult, extras: AnswerExtras = {}): 
     rcode: message.rcode,
     rcodeName: rcodeName(message.rcode),
     flags: { ...message.flags },
-    records: matchingRecords(name, result.query.type, answers),
+    records: matchingRecords(comparableName(name), result.query.type, answers),
     answers,
     authorities: aged(decodeRecords(message.authorities, options)),
     additionals: aged(decodeRecords(message.additionals, options)),

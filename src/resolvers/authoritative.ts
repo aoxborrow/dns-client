@@ -10,7 +10,14 @@ import { createTransports, defaultTransports } from '../transports/index';
 import type { Transports } from '../transports/index';
 import { now } from '../transports/runtime';
 import type { OnEvent, TransportOptions } from '../transports/types';
-import { canonicalName, compareNames, isSubdomain, parentName, toAsciiName } from '../wire/names';
+import {
+  canonicalName,
+  comparableName,
+  compareNames,
+  isSubdomain,
+  parentName,
+  toAsciiName,
+} from '../wire/names';
 import { buildAnswer } from './answer';
 import type { Answer, QuerySettings, TraceHop } from './answer';
 import { createLimiter, createPacer } from './limiter';
@@ -174,7 +181,7 @@ export class AuthoritativeResolver {
     const started = now();
     let asked: string;
     try {
-      asked = canonicalName(toAsciiName(name));
+      asked = comparableName(toAsciiName(name));
     } catch (cause) {
       throw new InvalidQueryError(cause instanceof Error ? cause.message : String(cause), {
         cause,

@@ -163,6 +163,20 @@ describe('exchange', () => {
       expect(result.message.questions[0].name).toBe('EXAMPLE.com');
     });
 
+    it.each(['udp', 'tcp'] as const)(
+      'matches a name written with escapes to the response over %s',
+      async transport => {
+        const options = await serve(({ query }) => ({ response: answerTo(query) }));
+        // \101 is "e": the same name as example.com on the wire
+        const result = await exchange({ name: '\\101xample.COM', type: 'A' }, server.address, {
+          ...options,
+          transport,
+        });
+        expect(result.message.questions[0].name).toBe('example.COM');
+        expect(result.message.answers).toHaveLength(1);
+      }
+    );
+
     it('accepts an error response that does not repeat the question', async () => {
       const options = await serve(({ query }) => ({
         response: answerTo(query, { rcode: 1, questions: [], answers: [] }),
