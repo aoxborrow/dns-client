@@ -1,8 +1,8 @@
 # dns-client
 
 A DNS client for TypeScript with nothing underneath it: its own wire codec, typed records,
-resolvers that ask a recursive resolver or walk from the root, record validation, and a
-DNSSEC analysis that verifies every signature itself. No runtime dependencies.
+resolvers that ask a recursive resolver or walk from the root, record validation, and the
+DNSSEC primitives to verify signatures, digests and denial proofs. No runtime dependencies.
 
 ```bash
 npm install @aoxborrow/dns-client
@@ -203,25 +203,50 @@ relative to a zone, `@` included.
 ## DNSSEC
 
 ```ts
-import { analyze } from '@aoxborrow/dns-client/dnssec';
+import { Resolver } from '@aoxborrow/dns-client';
+import {
+  buildSignedData,
+  computeKeyTag,
+  decodeDnskey,
+  decodeRrsig,
+  groupRrsets,
+  toWireMessage,
+  verifySignature,
+} from '@aoxborrow/dns-client/dnssec';
 
-const report = await analyze('example.com');
+// a zone's keys and the signatures over them, from a resolver asked not to validate
+const resolver = new Resolver({ servers: ['1.1.1.1'] });
+const answer = await resolver.query('example.com', 'DNSKEY', {
+  dnssecOk: true,
+  checkingDisabled: true,
+});
+const { answers } = toWireMessage(answer.message);
+const [keys] = groupRrsets(answers);
 
-report.overallStatus; // 'secure' | 'insecure' | 'bogus' | 'indeterminate'
-report.chain; // every zone from the root down: keys, delegation, signatures, denial proofs
-report.findings; // what is wrong or worth knowing, each with a stable slug
+for (const record of answers.filter(rr => rr.typeName === 'RRSIG')) {
+  const rrsig = decodeRrsig(record.rdata);
+  const key = keys.records.find(rr => computeKeyTag(rr.rdata) === rrsig?.keyTag);
+  const signed = rrsig && buildSignedData(rrsig, keys);
+  if (!rrsig || !key || !signed) continue;
+
+  const { publicKey } = decodeDnskey(key.rdata)!;
+  const outcome = await verifySignature(rrsig.algorithm, publicKey, signed.data, rrsig.signature);
+  outcome.verified; // true, false, or undefined when this runtime cannot check the algorithm
+}
 ```
 
-It asks the zones' own servers directly, with checking disabled, and verifies every
-signature itself: RSA, ECDSA and EdDSA through WebCrypto, DS digests and NSEC3 hashes with
-its own SHA-1, SHA-256 and SHA-384. An algorithm the runtime cannot verify is reported as
-not checked, never as a pass. The `now` option judges signatures against a time other than
-the present.
+These are the pieces a validator is built from, each checking one thing.
+`verifySignature` checks RSA, ECDSA and EdDSA signatures through WebCrypto; an algorithm
+the runtime cannot verify comes back not checked, never as a pass. `computeDsDigest` and
+`computeKeyTag` match a DS record to the key it names. `verifyNoDsProof`,
+`verifyNxdomainProof`, `verifyNodataProof` and `verifyWildcardProof` check NSEC and NSEC3
+denial proofs and return the reasoning step by step. `ROOT_TRUST_ANCHORS` holds the IANA
+root keys, and `isAnchorCurrent` says whether one is valid at a given time. Digests and
+NSEC3 hashes use the library's own SHA-1, SHA-256 and SHA-384.
 
-This is an analysis, a full report on the zone a name is in. It does not follow an alias
-into another zone: for a CNAME, analyze the target as well. The resolvers do not validate
-answers yet: `dnssecOk` asks for signatures and `flags.ad` reports what a validating
-resolver decided.
+Walking a name's chain of trust from the root and reaching a verdict is left to the
+caller. The resolvers do not validate answers yet: `dnssecOk` asks for signatures and
+`flags.ad` reports what a validating resolver decided.
 
 ## The wire format
 
@@ -246,8 +271,7 @@ returned in ASCII.
 | `@aoxborrow/dns-client/transports/tcp` | DNS over TCP | Node, Cloudflare Workers |
 | `@aoxborrow/dns-client/transports/tls` | DNS over TLS | Node, Cloudflare Workers |
 | `@aoxborrow/dns-client/transports/doh` | DNS over HTTPS | anywhere with `fetch` |
-| `@aoxborrow/dns-client/dnssec` | `analyze()` and its primitives | Node |
-| `@aoxborrow/dns-client/dnssec/types` | report types, status constants, the finding catalog | anywhere |
+| `@aoxborrow/dns-client/dnssec` | signature verification, DS digests, NSEC/NSEC3 proofs, trust anchors | anywhere |
 
 Node 20 or later. The package ships ES modules and CommonJS, with type declarations for
 both. Node built-ins are imported only by the transports, and only when a query needs

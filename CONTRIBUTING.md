@@ -26,7 +26,7 @@ Each layer uses only the ones above it in this list.
 | `src/transports` | UDP, TCP, TLS and HTTPS, the proxy handshakes, and the connectors for Node and Cloudflare Workers |
 | `src/exchange.ts` | one question to one server: retries, the fallback to TCP, events. Internal, not exported |
 | `src/resolvers` | `Resolver` and `AuthoritativeResolver`, the cache, the root hints |
-| `src/dnssec` | the chain-of-trust analysis, signature verification, NSEC and NSEC3 proofs, trust anchors |
+| `src/dnssec` | signature verification, NSEC and NSEC3 proofs, trust anchors, canonical form and digests |
 
 ## Rules
 
@@ -50,15 +50,6 @@ Unit tests use no network. Three things make that possible, all under `test/supp
 
 A change to how the library reads a response should come with a recorded response that
 shows it. A change to what it sends should assert the bytes.
-
-The DNSSEC analysis is tested over real zones, one per signing algorithm and failure
-state (`test/support/dnssec-cases.ts`). Their responses live in one recording,
-`test/fixtures/dnssec.json`, made with the clock it is replayed at, since signatures are
-only valid for a window of time. To add a zone or refresh the recording:
-
-```bash
-yarn run -T tsx scripts/record-dnssec.ts
-```
 
 ## Cloudflare Workers
 

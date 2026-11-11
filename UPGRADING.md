@@ -5,7 +5,7 @@ layer: 0.2.0 stays on npm for anyone who needs it, and receives no further work.
 
 What you get for the change: no runtime dependencies (0.x was built on `dns-packet`),
 DNS over TLS, proxies, a resolver that walks from the root and moves on from servers that
-do not help, record validation, a DNSSEC analysis that verifies signatures itself, and
+do not help, record validation, DNSSEC primitives that verify signatures themselves, and
 record types that 0.x asked for wrongly (HTTPS, SVCB, OPENPGPKEY and URI went out as type
 0 and came back empty).
 
