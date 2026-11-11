@@ -15,10 +15,14 @@ import type {
 } from '../src/resolvers/index';
 import { cacheLifetime } from '../src/resolvers/resolver';
 import { toEndpoint } from '../src/transports/endpoint';
+import { isNode } from '../src/transports/runtime';
 import type { DnsEvent } from '../src/transports/types';
 import { decodeMessage, encodeMessage } from '../src/wire/index';
 import { recursiveServer, simulateNetwork, zoneServer } from './support/simulated-network';
 import type { SimulatedNetwork, SimulatedServer } from './support/simulated-network';
+
+// UDP where there is UDP, which is Node; TCP elsewhere
+const DEFAULT_TRANSPORT = isNode() ? 'udp' : 'tcp';
 
 // the two resolvers, against a network that exists only in memory. What is being tested
 // is which server gets asked what, and what is made of the answers
@@ -58,7 +62,7 @@ describe('Resolver', () => {
         server: '10.0.0.1',
         name: 'example.com',
         type: 'MX',
-        transport: 'udp',
+        transport: DEFAULT_TRANSPORT,
         recursionDesired: true,
       },
     ]);
@@ -74,7 +78,7 @@ describe('Resolver', () => {
       rcode: 0,
       server: '10.0.0.1',
       port: 53,
-      transport: 'udp',
+      transport: DEFAULT_TRANSPORT,
       attempts: 1,
       cached: false,
     });
@@ -83,7 +87,11 @@ describe('Resolver', () => {
     // and the raw response is there too
     expect(decodeMessage(answer.bytes).answers).toHaveLength(1);
     expect(answer.message.answers[0].rdata).toBeInstanceOf(Uint8Array);
-    expect(answer.toDig()).toBe('dig @10.0.0.1 example.com MX');
+    expect(answer.toDig()).toBe(
+      DEFAULT_TRANSPORT === 'udp'
+        ? 'dig @10.0.0.1 example.com MX'
+        : 'dig +tcp @10.0.0.1 example.com MX'
+    );
   });
 
   it('returns a name that does not exist as an answer, not an error', async () => {
@@ -314,15 +322,19 @@ describe('Resolver', () => {
     ]);
   });
 
-  it('uses the resolvers the machine is set up with when given none', async () => {
-    const [first] = getServers();
-    if (!first) return;
-    const address = toEndpoint(first, 'udp').host;
-    network = simulateNetwork({ [address]: recursiveServer(RECORDS) });
-    const stub = new Resolver({ transports: network.transports });
-    const answer = await stub.query('example.com', 'A');
-    expect(answer.server).toBe(address);
-  });
+  // only Node can read the machine's resolvers
+  it.skipIf(!isNode())(
+    'uses the resolvers the machine is set up with when given none',
+    async () => {
+      const [first] = getServers();
+      if (!first) return;
+      const address = toEndpoint(first, 'udp').host;
+      network = simulateNetwork({ [address]: recursiveServer(RECORDS) });
+      const stub = new Resolver({ transports: network.transports });
+      const answer = await stub.query('example.com', 'A');
+      expect(answer.server).toBe(address);
+    }
+  );
 
   it('says so when there is nobody to ask', async () => {
     network = simulateNetwork({});
@@ -530,7 +542,11 @@ describe('AuthoritativeResolver', () => {
     // the answering hop is in the trace, and is not a referral
     expect(answer.trace?.[2]).not.toHaveProperty('referral');
     expect(answer.trace?.[2].bytes).toBe(answer.bytes.length);
-    expect(answer.toDig()).toBe('dig +norecurse @10.1.0.1 example.com A');
+    expect(answer.toDig()).toBe(
+      DEFAULT_TRANSPORT === 'udp'
+        ? 'dig +norecurse @10.1.0.1 example.com A'
+        : 'dig +norecurse +tcp @10.1.0.1 example.com A'
+    );
   });
 
   it('returns a missing name and a missing type as answers', async () => {

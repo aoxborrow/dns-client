@@ -250,9 +250,10 @@ Node 20 or later. The package ships ES modules and CommonJS, with type declarati
 both. Node built-ins are imported only by the transports, and only when a query needs
 them, so the entries marked "anywhere" bundle for a browser with none.
 
-On Cloudflare Workers there is no UDP, and Ed448 signatures cannot be verified. The TCP,
-TLS and HTTPS transports have been run on a deployed Worker; the resolvers and `analyze()`
-have not yet been run there as a whole.
+On Cloudflare Workers there is no UDP, and Ed448 signatures cannot be verified. The codec,
+the records, both resolvers and the DNSSEC primitives pass their tests inside the Workers
+runtime, and the TCP, TLS and HTTPS transports have been run on a deployed Worker. A whole
+lookup, resolver and transport together, has not yet been run on a deployed Worker.
 
 ## Proxies
 

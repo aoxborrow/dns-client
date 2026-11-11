@@ -51,6 +51,47 @@ Unit tests use no network. Three things make that possible, all under `test/supp
 A change to how the library reads a response should come with a recorded response that
 shows it. A change to what it sends should assert the bytes.
 
+## Cloudflare Workers
+
+The parts of the suite that need no listening socket (the codec, the records, the
+resolvers over the simulated network, the DNSSEC primitives) also run inside the Workers
+runtime, with [`@cloudflare/vitest-plugin`](https://developers.cloudflare.com/workers/testing/vitest-integration/):
+
+```ts
+// vitest.workers.config.ts
+import { cloudflareTest } from '@cloudflare/vitest-plugin';
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  plugins: [
+    cloudflareTest({
+      miniflare: { compatibilityDate: '2026-11-01', compatibilityFlags: ['nodejs_compat'] },
+    }),
+  ],
+  test: {
+    name: 'dns-client-workers',
+    globals: true,
+    include: [
+      'test/protocol.test.ts',
+      'test/records/**/*.test.ts',
+      'test/wire/**/*.test.ts',
+      'test/dnssec/**/*.test.ts',
+      'test/resolvers.test.ts',
+    ],
+  },
+});
+```
+
+```bash
+vitest run --config vitest.workers.config.ts
+```
+
+A test that only makes sense on Node says so with `it.skipIf(!isNode())`, and Ed448 is
+skipped where the runtime cannot make a key for it. The tests of the transports start
+real servers and stay on Node. This runs a local `workerd`, which is more permissive than
+a deployed Worker: it lets TLS start inside a proxy tunnel, which a deployed Worker does
+not.
+
 ## Adding a record type
 
 1. Its number and name in `src/protocol/types.ts`.

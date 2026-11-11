@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import captured from '../fixtures/captured.json';
+import messages from '../fixtures/messages.json';
 
-// the corpus of real DNS responses (test/fixtures/messages.json), as bytes
+// the corpus of real DNS responses (test/fixtures/messages.json), as bytes. The fixtures
+// are imported, not read from disk, so the same tests run where there is no file system
 
 export interface CorpusMessage {
   label: string;
@@ -10,16 +10,9 @@ export interface CorpusMessage {
   response: Uint8Array;
 }
 
-const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
-
 const fromBase64 = (text: string) => Uint8Array.from(Buffer.from(text, 'base64'));
 
-function load(name: string): CorpusMessage[] {
-  const entries = JSON.parse(readFileSync(path.join(fixtures, name), 'utf8')) as {
-    label: string;
-    query: string;
-    response: string;
-  }[];
+function load(entries: { label: string; query: string; response: string }[]): CorpusMessage[] {
   return entries.map(entry => ({
     label: entry.label,
     query: fromBase64(entry.query),
@@ -28,10 +21,10 @@ function load(name: string): CorpusMessage[] {
 }
 
 // responses recorded from a resolver walking real delegations
-export const CORPUS: CorpusMessage[] = load('messages.json');
+export const CORPUS: CorpusMessage[] = load(messages);
 
 // responses captured for the record types the corpus lacks (scripts/capture-messages.ts)
-export const CAPTURED: CorpusMessage[] = load('captured.json');
+export const CAPTURED: CorpusMessage[] = load(captured);
 
 // a small deterministic random source, so a failing fuzz case can be reproduced
 export function seededRandom(seed: number): () => number {
