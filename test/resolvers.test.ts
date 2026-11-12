@@ -18,7 +18,7 @@ import { cacheLifetime } from '../src/resolvers/resolver';
 import { toEndpoint } from '../src/transports/endpoint';
 import type { DnsEvent } from '../src/transports/types';
 import { decodeMessage, encodeMessage, encodeName } from '../src/wire/index';
-import { recursiveServer, simulateNetwork, zoneServer } from './support/simulated-network';
+import { late, recursiveServer, simulateNetwork, zoneServer } from './support/simulated-network';
 import type { SimulatedNetwork, SimulatedServer } from './support/simulated-network';
 
 // the two resolvers, against a network that exists only in memory. What is being tested
@@ -1114,6 +1114,93 @@ describe('AuthoritativeResolver', () => {
       );
       expect(answer.server).toBe('10.1.0.2');
       expect(answer.trace?.[2].error?.name).toBe('TimeoutError');
+    });
+  });
+
+  describe('the last server a zone has to ask', () => {
+    // on a fake clock, so the timers and the clock the walk reads agree
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    // the query, and when it settled on the fake clock
+    function timed<T>(pending: Promise<T>): { result: Promise<T>; settledAt: () => number } {
+      const started = Date.now();
+      let settled: number | undefined;
+      const result = pending.finally(() => (settled = Date.now() - started));
+      result.catch(() => {});
+      return { result, settledAt: () => settled ?? Infinity };
+    }
+
+    it('gives a lone starting server the whole time, not the patience with one', async () => {
+      // the one place to start, answering after 60% of the time: the patience with one
+      // server is half of it, and there is nobody to save the other half for
+      const { result, settledAt } = timed(
+        resolver(
+          {
+            rootServers: [{ name: 'ns1.example.com', ipv4: '10.1.0.1' }],
+            timeout: 100,
+            totalTimeout: 200,
+          },
+          { '10.1.0.1': late(120, example) }
+        ).query('example.com', 'A')
+      );
+      await vi.advanceTimersByTimeAsync(200);
+      const answer = await result;
+      expect(answer.server).toBe('10.1.0.1');
+      expect(answer.records.map(record => record.address)).toEqual(['192.0.2.1']);
+      expect(settledAt()).toBe(120);
+    });
+
+    it('says how long the lone server was given when it does not answer', async () => {
+      const { result } = timed(
+        resolver(
+          {
+            rootServers: [{ name: 'ns1.example.com', ipv4: '10.1.0.1' }],
+            timeout: 100,
+            totalTimeout: 200,
+          },
+          { '10.1.0.1': () => undefined }
+        ).query('example.com', 'A')
+      );
+      await vi.advanceTimersByTimeAsync(200);
+      const error = await result.catch(caught => caught);
+      expect(error).toBeInstanceOf(TimeoutError);
+      expect(error.message).toBe('No answer from 10.1.0.1 within 200 ms');
+    });
+
+    it('gives the one nameserver of a delegation what is left of the time', async () => {
+      // other.net has one nameserver, which answers after more than the patience with one
+      // server and well inside what the walk has left
+      const { result, settledAt } = timed(
+        resolver({ timeout: 100, totalTimeout: 300 }, { '10.3.0.1': late(150, other) }).query(
+          'target.other.net',
+          'A'
+        )
+      );
+      await vi.advanceTimersByTimeAsync(300);
+      const answer = await result;
+      expect(answer.server).toBe('10.3.0.1');
+      expect(answer.records.map(record => record.address)).toEqual(['203.0.113.5']);
+      expect(settledAt()).toBe(150);
+    });
+
+    it('still gives each server of a zone with two the patience with one', async () => {
+      // both of example.com's servers answer late. The first is given up on when its
+      // patience runs out, for the second, which is the last and has the rest
+      const { result, settledAt } = timed(
+        resolver(
+          { timeout: 100, totalTimeout: 300 },
+          { '10.1.0.1': late(120, example), '10.1.0.2': late(120, example) }
+        ).query('example.com', 'A')
+      );
+      await vi.advanceTimersByTimeAsync(300);
+      const answer = await result;
+      expect(answer.server).toBe('10.1.0.2');
+      expect(answer.trace?.slice(2).map(hop => [hop.server, hop.error?.message])).toEqual([
+        ['10.1.0.1', 'No answer from 10.1.0.1 within 100 ms'],
+        ['10.1.0.2', undefined],
+      ]);
+      expect(settledAt()).toBe(220);
     });
   });
 

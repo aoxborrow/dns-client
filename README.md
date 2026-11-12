@@ -67,7 +67,8 @@ flag and the `server`, `query`, `type` and `transport` it came from. An error fr
 `timeout` is the patience with one server. `AuthoritativeResolver` also takes
 `totalTimeout` (30 seconds by default), the time one answer may take altogether, since a
 zone whose servers all stay silent would otherwise cost a timeout for each of them.
-Retries and a TCP fallback count against it. `exchange` takes a `totalTimeout` of its own,
+Retries and a TCP fallback count against it. The last server a zone has left to ask gets
+the rest of it, shared among its attempts, rather than `timeout`. `exchange` takes a `totalTimeout` of its own,
 for all its attempts together, and has none by default.
 
 `Resolver` caches by TTL, shares one query between callers asking the same thing at once,

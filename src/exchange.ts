@@ -342,8 +342,12 @@ export async function exchange(
       let deadlineHit = false;
       const timer = setTimeout(() => {
         if (clamped) deadlineHit = true;
+        // in whole milliseconds: what is left of a total timeout is rarely a round number
         current.abort(
-          new TimeoutError(`No answer from ${endpoint.host} within ${wait} ms`, context())
+          new TimeoutError(
+            `No answer from ${endpoint.host} within ${Math.round(wait)} ms`,
+            context()
+          )
         );
       }, wait);
 
@@ -436,7 +440,7 @@ export async function exchange(
           // out of time to ask again: the answer is not complete, and none came in time
           if (deadlineHit || now() >= deadline) {
             throw new TimeoutError(
-              `No complete answer from ${endpoint.host} within ${options.totalTimeout} ms`,
+              `No complete answer from ${endpoint.host} within ${Math.round(options.totalTimeout ?? 0)} ms`,
               { ...context(), transport: response.transport }
             );
           }
