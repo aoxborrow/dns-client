@@ -221,3 +221,43 @@ describe('algorithm support', () => {
     }
   });
 });
+
+describe('the runtime probe for Ed25519 and Ed448', () => {
+  // the probe's answers are cached per module, so each case loads a fresh copy
+  async function freshProbe() {
+    vi.resetModules();
+    return (await import('../../src/dnssec/crypto')).isAlgorithmSupported;
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('does not keep a transient failure as an answer', async () => {
+    const isSupported = await freshProbe();
+    vi.spyOn(crypto.subtle, 'importKey').mockRejectedValueOnce(new TypeError('fetch failed'));
+    vi.spyOn(crypto.subtle, 'generateKey').mockRejectedValueOnce(new TypeError('fetch failed'));
+    expect(await isSupported(15)).toBe(false);
+    // Node has Ed25519, so once the failure passes the probe finds it
+    expect(await isSupported(15)).toBe(true);
+  });
+
+  it('keeps a runtime that has no such algorithm as unsupported, without asking again', async () => {
+    const isSupported = await freshProbe();
+    const unsupported = new DOMException('Unrecognized algorithm name', 'NotSupportedError');
+    const importKey = vi.spyOn(crypto.subtle, 'importKey').mockRejectedValue(unsupported);
+    vi.spyOn(crypto.subtle, 'generateKey').mockRejectedValue(unsupported);
+    expect(await isSupported(16)).toBe(false);
+    importKey.mockClear();
+    expect(await isSupported(16)).toBe(false);
+    expect(importKey).not.toHaveBeenCalled();
+  });
+
+  it('counts a runtime that can import and verify, even when it will not generate a key', async () => {
+    const isSupported = await freshProbe();
+    vi.spyOn(crypto.subtle, 'generateKey').mockRejectedValue(
+      new DOMException('key generation is not allowed', 'OperationError')
+    );
+    expect(await isSupported(15)).toBe(true);
+  });
+});

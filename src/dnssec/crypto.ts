@@ -19,20 +19,49 @@ export function isAlgorithmVerifiable(algorithm: number): boolean {
   return Boolean(entry?.verify);
 }
 
+// a DOMException named NotSupportedError is the standard answer; some runtimes throw a
+// plain error whose message says the algorithm is unknown instead
+const unsupported = (error: unknown) =>
+  error instanceof Error &&
+  (error.name === 'NotSupportedError' ||
+    /unrecognized algorithm|unsupported algorithm|algorithm (is )?not supported/i.test(
+      error.message
+    ));
+
 // whether this runtime can verify an algorithm, which is narrower than the library knowing
 // it: a WebCrypto may lack Ed25519 or Ed448 (Cloudflare Workers has no Ed448). RSA and
-// ECDSA are in every WebCrypto. Each probe runs once per process
+// ECDSA are in every WebCrypto. The probe imports a fixed public key, as verification
+// does, and keeps only a definite answer: the key importing, or the runtime saying it has
+// no such algorithm. Any other failure answers no for this call and is asked again next time
 const runtimeSupport = new Map<number, Promise<boolean>>();
+
+// RFC 8032 §7.1 and §7.4, the public keys of the first test vectors
+const PROBE_KEYS: Record<15 | 16, { name: string; hex: string }> = {
+  15: {
+    name: 'Ed25519',
+    hex: 'd75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a',
+  },
+  16: {
+    name: 'Ed448',
+    hex:
+      '5fd7449b59b461fd2ce787ec616ad46a1da1342485a70e1f8a0ea75d80e96778' +
+      'edf124769b46c7061bd6783df1e50f6cd1fa1abeafe8256180',
+  },
+};
 
 export function isAlgorithmSupported(algorithm: number): Promise<boolean> {
   if (!isAlgorithmVerifiable(algorithm)) return Promise.resolve(false);
   if (algorithm !== 15 && algorithm !== 16) return Promise.resolve(true);
   let probe = runtimeSupport.get(algorithm);
   if (!probe) {
-    const name = algorithm === 15 ? 'Ed25519' : 'Ed448';
-    probe = crypto.subtle.generateKey({ name }, false, ['sign', 'verify']).then(
+    const { name, hex } = PROBE_KEYS[algorithm];
+    const key = Uint8Array.from(hex.match(/../g)!, byte => parseInt(byte, 16));
+    probe = crypto.subtle.importKey('raw', key as BufferSource, { name }, false, ['verify']).then(
       () => true,
-      () => false
+      (error: unknown) => {
+        if (!unsupported(error)) runtimeSupport.delete(algorithm);
+        return false;
+      }
     );
     runtimeSupport.set(algorithm, probe);
   }
@@ -115,9 +144,6 @@ interface Imported {
 
 // the runtime's WebCrypto has no such algorithm, as opposed to the key being bad
 class UnsupportedAlgorithm extends Error {}
-
-const unsupported = (error: unknown) =>
-  error instanceof Error && error.name === 'NotSupportedError';
 
 // turn DNSKEY public-key bytes into a key WebCrypto can verify with
 async function importKey(algorithm: number, publicKey: Uint8Array): Promise<Imported> {
