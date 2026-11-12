@@ -94,7 +94,8 @@ export interface TransportOptions {
   // how TCP connections are opened. Wins over `proxy` for TCP and DoT
   connect?: Connect;
   tls?: TlsOptions;
-  // UDP sockets shared between queries, per address family. Default 4
+  // deprecated and ignored: UDP once shared this many sockets between queries, and now
+  // opens a fresh one, on a new source port, for every query (RFC 5452)
   udpSockets?: number;
   // with `pipeline`: how long an unused TCP or DoT connection is kept open, in
   // milliseconds. 0 closes each connection as soon as its queries are answered.
@@ -182,6 +183,11 @@ export interface TransportRequest {
   // UDP only: whether a datagram that carries the right ID from the right address is the
   // answer. Anything refused is dropped and the wait goes on
   accept?: (response: Uint8Array) => boolean;
+  // UDP only: aborts when the whole exchange is over. The query's socket then outlives the
+  // attempt until it does, so a retransmission with the same `lifetime` goes out from the
+  // same port and a late answer to either copy is heard. Without it the socket closes
+  // when the send ends
+  lifetime?: AbortSignal;
   onEvent?: OnEvent;
 }
 

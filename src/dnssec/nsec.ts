@@ -546,6 +546,25 @@ function nextCloserName(name: string, closestEncloser: string): string {
 // NODATA and NXDOMAIN
 // ---------------------------------------------------------------------------
 
+// the NODATA bitmap check: the type asked for is absent, and so is CNAME
+function bitmapStep(qtype: number, present: boolean, aliased: boolean) {
+  if (present) {
+    return step(
+      'Type bitmap',
+      `${recordTypeName(qtype)} is listed in the bitmap, contradicting the empty answer.`,
+      FAILED
+    );
+  }
+  if (aliased) {
+    return step(
+      'Type bitmap',
+      'CNAME is listed in the bitmap, so the name is an alias and an empty answer is wrong.',
+      FAILED
+    );
+  }
+  return step('Type bitmap', `${recordTypeName(qtype)} is absent from the bitmap.`, VERIFIED);
+}
+
 // the zone answered with an empty answer section for a type it does not hold
 export function verifyNodataProof(
   qname: string,
@@ -564,7 +583,10 @@ export function verifyNodataProof(
     );
     const match = matchNsec3(nsec3, name);
     const present = match?.types.includes(qtype) ?? false;
-    const ok = Boolean(match) && !present;
+    // neither the type asked for nor CNAME may be in the bitmap (RFC 5155 §8.5): a CNAME
+    // means the name is an alias, so a bare NODATA is wrong
+    const aliased = match?.types.includes(TYPE_CNAME) ?? false;
+    const ok = Boolean(match) && !present && !aliased;
     return {
       type: PROOF_TYPES.NSEC3,
       purpose: PROOF_PURPOSES.NODATA,
@@ -580,13 +602,7 @@ export function verifyNodataProof(
             : `No NSEC3 record matches ${name}, so the empty answer is unproven.`,
           match ? VERIFIED : FAILED
         ),
-        step(
-          'Type bitmap',
-          present
-            ? `${recordTypeName(qtype)} is listed in the bitmap, contradicting the empty answer.`
-            : `${recordTypeName(qtype)} is absent from the bitmap.`,
-          present ? FAILED : VERIFIED
-        ),
+        bitmapStep(qtype, present, aliased),
       ],
       optOut: params.optOut,
       nsec3Params: params,
@@ -623,13 +639,7 @@ export function verifyNodataProof(
         match ? `Owner ${match.owner} matches the query name.` : `No NSEC record matches ${name}.`,
         match ? VERIFIED : FAILED
       ),
-      step(
-        'Type bitmap',
-        present
-          ? `${recordTypeName(qtype)} is listed in the bitmap, contradicting the empty answer.`
-          : `${recordTypeName(qtype)} is absent from the bitmap.`,
-        present ? FAILED : VERIFIED
-      ),
+      bitmapStep(qtype, present, aliased),
     ],
     optOut: false,
     reason: ok ? undefined : 'The NODATA response is not fully proven.',
@@ -717,8 +727,9 @@ export function verifyNxdomainProof(qname: string, records: WireRecord[]): Denia
   }
 
   const covering = nsec.find(e => nsecCovers(e.owner, e.next, name));
-  // the wildcard that could have synthesised an answer must be proven absent too
-  const wildcardSource = covering ? longestCommonSuffix(covering.owner, name) : name;
+  // the wildcard that could have synthesised an answer must be proven absent too: the one at
+  // the closest encloser, which may be an empty non-terminal only the next name reveals
+  const wildcardSource = covering ? closestEncloserOf(name, covering) : name;
   const wildcard = `*.${wildcardSource}`;
   const wildcardCovered = nsec.find(
     e => e.owner === wildcard || nsecCovers(e.owner, e.next, wildcard)
@@ -754,12 +765,22 @@ export function verifyNxdomainProof(qname: string, records: WireRecord[]): Denia
   };
 }
 
-// RFC 4035 §5.3.4: a positive answer synthesised from a wildcard is valid only if the queried name
-// has no exact match of its own — otherwise a wildcard RRset could be replayed for a name that
-// really holds different records, or should not exist. prove the queried name is absent as an
-// explicit owner (the wildcard's own absence is not required here: a wildcard did answer)
-export function verifyWildcardProof(qname: string, records: WireRecord[]): DenialProof {
+// RFC 4035 §5.3.4 and RFC 5155 §8.8: a positive answer synthesised from a wildcard is valid only
+// if the queried name has no exact match of its own, and the wildcard that answered is the one at
+// the queried name's closest encloser. Otherwise a wildcard RRset could be replayed for a name that
+// really holds different records, should not exist, or sits under a nearer wildcard. `wildcard` is
+// the owner that was signed, `*.<source of synthesis>`, rebuilt from the RRSIG's labels field; the
+// signature binds it, so it is the closest encloser the proof has to agree with
+export function verifyWildcardProof(
+  qname: string,
+  records: WireRecord[],
+  wildcard: string
+): DenialProof {
   const name = canonicalName(qname);
+  const signed = canonicalName(wildcard);
+  const source = parentName(signed);
+  // the wildcard must sit above the queried name, and be a wildcard at all
+  const above = splitName(signed)[0] === '*' && name !== source && isInZone(name, source);
   const nsec3 = collectNsec3(records);
 
   if (nsec3.length > 0) {
@@ -769,19 +790,20 @@ export function verifyWildcardProof(qname: string, records: WireRecord[]): Denia
       nsec3[0].salt,
       nsec3.some(e => e.optOut)
     );
-    const closest = findClosestEncloser(nsec3, name);
+    // the RRSIG's labels give the closest encloser, so the server sends no NSEC3 matching it
+    // (RFC 5155 §7.2.5); what has to be shown is that the next closer name does not exist
     const steps: ProofStep[] = [
       step(
         'Closest encloser',
-        closest
-          ? `${closest.name} is proven to exist by a matching NSEC3.`
-          : `No NSEC3 record matches any ancestor of ${name}.`,
-        closest ? VERIFIED : FAILED
+        above
+          ? `The answer came from ${signed}, so ${source} is the closest encloser.`
+          : `The answer came from ${signed}, which cannot answer for ${name}.`,
+        above ? VERIFIED : FAILED
       ),
     ];
     let nextOk = false;
-    if (closest) {
-      const nextCloser = nextCloserName(name, closest.name);
+    if (above) {
+      const nextCloser = nextCloserName(name, source);
       const covered = coverNsec3(nsec3, nextCloser);
       nextOk = Boolean(covered);
       steps.push(
@@ -794,7 +816,7 @@ export function verifyWildcardProof(qname: string, records: WireRecord[]): Denia
         )
       );
     }
-    const ok = Boolean(closest) && nextOk;
+    const ok = above && nextOk;
     return {
       type: PROOF_TYPES.NSEC3,
       purpose: PROOF_PURPOSES.WILDCARD,
@@ -807,7 +829,7 @@ export function verifyWildcardProof(qname: string, records: WireRecord[]): Denia
       nsec3Params: params,
       reason: ok
         ? undefined
-        : 'The wildcard-expanded answer is not proven: the queried name is not shown to be absent.',
+        : 'The wildcard-expanded answer is not proven: the queried name is not shown to be absent below the wildcard that answered.',
     };
   }
 
@@ -821,7 +843,10 @@ export function verifyWildcardProof(qname: string, records: WireRecord[]): Denia
     );
   }
   const covering = nsec.find(e => nsecCovers(e.owner, e.next, name) && e.owner !== name);
-  const ok = Boolean(covering);
+  const encloser = covering ? closestEncloserOf(name, covering) : undefined;
+  const fromEncloser =
+    encloser !== undefined && above && countLabels(encloser) === countLabels(source);
+  const ok = Boolean(covering) && fromEncloser;
   return {
     type: PROOF_TYPES.NSEC,
     purpose: PROOF_PURPOSES.WILDCARD,
@@ -837,12 +862,31 @@ export function verifyWildcardProof(qname: string, records: WireRecord[]): Denia
           : `No NSEC record proves ${name} is absent.`,
         covering ? VERIFIED : FAILED
       ),
+      ...(encloser === undefined
+        ? []
+        : [
+            step(
+              'Wildcard',
+              fromEncloser
+                ? `The answer came from ${signed}, the wildcard at the closest encloser ${encloser}.`
+                : `The closest encloser of ${name} is ${encloser}, so only *.${encloser === '.' ? '' : encloser} could answer, not ${signed}.`,
+              fromEncloser ? VERIFIED : FAILED
+            ),
+          ]),
     ],
     optOut: false,
     reason: ok
       ? undefined
-      : 'The wildcard-expanded answer is not proven: the queried name is not shown to be absent.',
+      : 'The wildcard-expanded answer is not proven: the queried name is not shown to be absent below the wildcard that answered.',
   };
+}
+
+// the closest encloser of a name an NSEC covers: the deeper of the suffixes it shares with the
+// NSEC's owner and with its next name. Both of those exist, and nothing between them does
+function closestEncloserOf(name: string, covering: { owner: string; next: string }): string {
+  const byOwner = longestCommonSuffix(name, covering.owner);
+  const byNext = longestCommonSuffix(name, covering.next);
+  return countLabels(byNext) > countLabels(byOwner) ? byNext : byOwner;
 }
 
 // the deepest name that is a suffix of both — the closest encloser in the NSEC case. Labels

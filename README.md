@@ -242,7 +242,7 @@ returned in ASCII.
 | `@aoxborrow/dns-client` | everything below | Node |
 | `@aoxborrow/dns-client/records` | typed records, protocol tables, parsing, formatting, validation | anywhere |
 | `@aoxborrow/dns-client/wire` | encoding queries and decoding messages | anywhere |
-| `@aoxborrow/dns-client/transports/udp` | DNS over UDP on shared sockets | Node |
+| `@aoxborrow/dns-client/transports/udp` | DNS over UDP, a fresh port per query | Node |
 | `@aoxborrow/dns-client/transports/tcp` | DNS over TCP | Node, Cloudflare Workers |
 | `@aoxborrow/dns-client/transports/tls` | DNS over TLS | Node, Cloudflare Workers |
 | `@aoxborrow/dns-client/transports/doh` | DNS over HTTPS | anywhere with `fetch` |

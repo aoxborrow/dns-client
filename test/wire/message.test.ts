@@ -1,6 +1,7 @@
 import dnsPacket from 'dns-packet';
 import {
   decodeMessage,
+  decodeRecords,
   encodeMessage,
   encodeQuery,
   InvalidQueryError,
@@ -165,6 +166,36 @@ describe('decodeMessage', () => {
     const [answer] = decodeMessage(message).answers;
     expect(answer.name).toBe('example.com');
     expect([...answer.rdata]).toEqual([0, 10, 4, ...Buffer.from('mail'), ...question]);
+  });
+
+  it('writes out a compressed NAPTR replacement, after its three character strings', () => {
+    const question = [7, ...Buffer.from('example'), 3, ...Buffer.from('com'), 0];
+    const strings = [1, ...Buffer.from('u'), 7, ...Buffer.from('E2U+sip'), 0]; // flags, services, regexp
+    const replacement = [4, ...Buffer.from('sip1'), 0xc0, 12]; // sip1.<pointer>
+    const rdata = [0, 100, 0, 10, ...strings, ...replacement]; // order 100, preference 10
+    const message = Uint8Array.from([
+      ...[0, 1, 0x80, 0, 0, 1, 0, 1, 0, 0, 0, 0], // header: one question, one answer
+      ...question,
+      ...[0, 35, 0, 1], // NAPTR IN
+      ...[0xc0, 12, 0, 35, 0, 1, 0, 0, 0, 60, 0, rdata.length], // owner: pointer to the question
+      ...rdata,
+    ]);
+    const decoded = decodeMessage(message);
+    expect([...decoded.answers[0].rdata]).toEqual([
+      0,
+      100,
+      0,
+      10,
+      ...strings,
+      4,
+      ...Buffer.from('sip1'),
+      ...question,
+    ]);
+    expect(decodeRecords(decoded.answers)[0]).toMatchObject({
+      type: 'NAPTR',
+      services: 'E2U+sip',
+      replacement: 'sip1.example.com',
+    });
   });
 
   it('rejects a message shorter than a header, and a count that promises more than is there', () => {

@@ -7,7 +7,7 @@ import type { ExtendedErrorOption } from '../records/edns';
 import type { DnsRecord } from '../records/types';
 import type { TransportName } from '../transports/types';
 import type { HeaderFlags, Message, ResourceRecord } from '../wire/message';
-import { canonicalName, comparableName } from '../wire/names';
+import { canonicalName, comparableName, encodeName, isSubdomain, splitName } from '../wire/names';
 
 // the answer both resolvers return: what the server said, typed and raw
 
@@ -101,18 +101,44 @@ export type QuerySettings = Pick<
 const ALIASES = new Set(['CNAME', 'DNAME']);
 
 // the name the answer section ends at: the question's name, followed through whatever
-// CNAMEs the section holds
+// CNAMEs and DNAMEs the section holds. A CNAME at the name wins, since a server that
+// follows RFC 6672 sends the CNAME it synthesized from a DNAME beside it; a DNAME alone
+// above the name rewrites the name's suffix (RFC 6672 §2.2)
 export function aliasTarget(name: string, answers: readonly DnsRecord[]): string {
   let current = canonicalName(name);
   // a chain cannot be longer than the section, which also stops a loop
   for (let step = 0; step <= answers.length; step++) {
-    const alias = answers.find(
-      record => record.type === 'CNAME' && canonicalName(record.name) === current
-    );
-    if (!alias || alias.type !== 'CNAME') break;
-    current = canonicalName(alias.target);
+    const next = aliasStep(current, answers);
+    if (next === undefined) break;
+    current = next;
   }
   return current;
+}
+
+// where one alias in the section takes a name, or undefined when none applies
+function aliasStep(current: string, answers: readonly DnsRecord[]): string | undefined {
+  for (const record of answers) {
+    if (record.type === 'CNAME' && canonicalName(record.name) === current) {
+      return canonicalName(record.target);
+    }
+  }
+  for (const record of answers) {
+    if (record.type !== 'DNAME') continue;
+    const owner = canonicalName(record.name);
+    // a DNAME redirects the names below its owner, not the owner itself
+    if (owner === current || !isSubdomain(current, owner)) continue;
+    const labels = splitName(current);
+    const prefix = labels.slice(0, labels.length - splitName(owner).length);
+    const substituted = canonicalName([...prefix, ...splitName(record.target)].join('.'));
+    try {
+      // a substitution too long to be a name is YXDOMAIN, not a name to ask about
+      encodeName(substituted);
+    } catch {
+      return undefined;
+    }
+    return substituted;
+  }
+  return undefined;
 }
 
 // pick out the records that answer the question

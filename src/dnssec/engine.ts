@@ -88,6 +88,7 @@ import {
   TYPE_DNSKEY,
   TYPE_RRSIG,
   TYPE_NSEC3PARAM,
+  wildcardOwner,
 } from './wire';
 import {
   verifySignature,
@@ -1048,8 +1049,17 @@ export class DnssecEngine {
     }
 
     if (!keySetVerified.verified) {
-      zone.status = keySetVerified.indeterminate ? INDETERMINATE : BOGUS;
-      zone.reason = keySetVerified.reason;
+      // a DS set with no digest type this tool can verify is, to a validator, no DS set at
+      // all (RFC 4035 §5.2, RFC 4509 §3): nothing links the zone, which is not a broken link.
+      // The delegation already reads indeterminate for it, and the zone follows
+      const noUsableDs =
+        !keySetVerified.indeterminate &&
+        delegation?.status === INDETERMINATE &&
+        delegation.dsRecords.length > 0;
+      zone.status = keySetVerified.indeterminate || noUsableDs ? INDETERMINATE : BOGUS;
+      zone.reason = noUsableDs
+        ? `No DS record for ${build.name} uses a digest type this tool can verify.`
+        : keySetVerified.reason;
       this.assessKeyHygiene(zone, dnskeys, delegation);
       zone.findings = this.findings.slice(before);
       return zone;
@@ -1396,7 +1406,6 @@ export class DnssecEngine {
     }
 
     let verifiedTag: number | undefined;
-    let sawUnsupported = false;
     // signatures made by a key the parent vouches for that could not be checked, because
     // this runtime has no way to verify their algorithm
     let vouchedUnchecked = 0;
@@ -1404,7 +1413,6 @@ export class DnssecEngine {
     for (const rr of sigs) {
       const described = await this.verifyOneSignature(zone, rr, rrset, dnskeys, fetched, false);
       zone.rrsigs.push(described);
-      if (described.check.result === UNCHECKED) sawUnsupported = true;
       const made = decodeRrsig(rr.rdata);
       const byVouchedKey = authenticatedKeys.some(
         key => key.keyTag === made?.keyTag && key.algorithm === made?.algorithm
@@ -1445,10 +1453,16 @@ export class DnssecEngine {
     }
 
     if (authenticatedKeys.length === 0) {
+      // the DS set links no key. That is indeterminate only when every algorithm it names is
+      // one this runtime cannot verify, so the validator would treat the zone as unsigned
+      // (RFC 4035 §5.2). A selected DS naming a supported algorithm that matches nothing is
+      // a break (RFC 6840 §5.2), whatever algorithm some other RRSIG happens to use
+      const supported = await Promise.all(entryAlgorithms.map(isAlgorithmSupported));
+      const unlinkable = entryAlgorithms.length > 0 && !supported.includes(true);
       return {
         verified: false,
-        indeterminate: sawUnsupported,
-        reason: sawUnsupported
+        indeterminate: unlinkable,
+        reason: unlinkable
           ? `No supported algorithm links ${build.name} to its parent.`
           : `No key in ${build.name}'s DNSKEY RRset is authenticated by its parent.`,
       };
@@ -1796,16 +1810,25 @@ export class DnssecEngine {
     // queried name has no exact match. without it, a wildcard RRset the zone really signed could be
     // replayed for a name that holds different records or should not exist
     if (fetched.answers.length > 0 && zone.status === SECURE && qname !== undefined) {
-      const wildcardAnswer = zone.rrsigs.some(
-        s =>
-          s.check.result === VERIFIED &&
-          s.wildcard &&
-          !s.fromParent &&
-          canonicalName(s.name) === canonicalName(qname)
+      // the wildcards that answered, rebuilt from each verified RRSIG's labels: the proof has
+      // to show the answer came from the wildcard at the closest encloser, not merely that the
+      // queried name has no records (RFC 4035 §5.3.4, RFC 5155 §8.8)
+      const wildcards = new Set(
+        zone.rrsigs
+          .filter(
+            s =>
+              s.check.result === VERIFIED &&
+              s.wildcard &&
+              !s.fromParent &&
+              canonicalName(s.name) === canonicalName(qname)
+          )
+          .map(s => wildcardOwner(s.name, s.labels))
       );
-      if (wildcardAnswer) {
+      if (wildcards.size > 0) {
         await this.verifyDenialRecords(zone, fetched.authorities, fetched);
-        const proof = verifyWildcardProof(qname, fetched.authorities);
+      }
+      for (const wildcard of wildcards) {
+        const proof = verifyWildcardProof(qname, fetched.authorities, wildcard);
         zone.denialOfExistence.push(proof);
         if (proof.result !== VERIFIED) {
           this.finding(

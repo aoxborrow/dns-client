@@ -81,9 +81,18 @@ export function labelsToName(labels: readonly Uint8Array[]): string {
   return labels.map(escapeLabel).join('.');
 }
 
+// whether a name ends in the root's dot, as opposed to an escaped one. The dot is escaped
+// only by an odd run of backslashes before it: `foo\\.` is the label `foo\` and the root
+export function endsWithRootDot(name: string): boolean {
+  if (!name.endsWith('.')) return false;
+  let backslashes = 0;
+  for (let i = name.length - 2; i >= 0 && name[i] === '\\'; i--) backslashes++;
+  return backslashes % 2 === 0;
+}
+
 // split a name on its unescaped dots. The root has no labels
 export function splitName(name: string): string[] {
-  const trimmed = name.endsWith('.') && !name.endsWith('\\.') ? name.slice(0, -1) : name;
+  const trimmed = endsWithRootDot(name) ? name.slice(0, -1) : name;
   if (trimmed === '') return [];
   const out: string[] = [];
   let current = '';
@@ -158,7 +167,7 @@ export function encodeName(name: string): Uint8Array {
 // a name for comparing: lowercase, no trailing dot, '.' for the root. DNS names are
 // case-insensitive, and only ASCII letters fold
 export function canonicalName(name: string): string {
-  const trimmed = name.endsWith('.') && !name.endsWith('\\.') ? name.slice(0, -1) : name;
+  const trimmed = endsWithRootDot(name) ? name.slice(0, -1) : name;
   if (trimmed === '') return '.';
   return trimmed.replace(/[A-Z]/g, char => char.toLowerCase());
 }
@@ -258,7 +267,7 @@ export function toAsciiName(name: string): string {
     if (ascii === '' || ascii.includes('.')) throw fail();
     return ascii;
   });
-  const result = converted.join('.') + (name.endsWith('.') && !name.endsWith('\\.') ? '.' : '');
+  const result = converted.join('.') + (endsWithRootDot(name) ? '.' : '');
   // the usual length limits apply to the converted form
   nameToLabels(result);
   return result;

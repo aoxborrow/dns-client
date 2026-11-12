@@ -25,7 +25,7 @@ import {
   parentName,
   toAsciiName,
 } from '../wire/names';
-import { buildAnswer } from './answer';
+import { aliasTarget, buildAnswer } from './answer';
 import type { Answer, QuerySettings, TraceHop } from './answer';
 import { createLimiter, createPacer } from './limiter';
 import type { Limiter } from './limiter';
@@ -74,7 +74,8 @@ export interface AuthoritativeResolverOptions
   // find a nameserver's addresses some other way before it is resolved from the root: a
   // local cache, another resolver. `timeout` is what is left of the total timeout, in
   // milliseconds, and `signal` is the query's, for a lookup that should not outlast
-  // either. Return nothing to leave it to the resolver
+  // either. Return nothing, or nothing of the address family asked for, to leave it to
+  // the resolver
   resolveNameserver?: (
     name: string,
     limits: { timeout: number; signal?: AbortSignal }
@@ -505,17 +506,16 @@ export class AuthoritativeResolver {
 
     const lenient = { lenient: true };
     if (message.answers.length > 0) {
+      // records from a server without authority for them, beside a delegation further
+      // down, are a referral: the child zone is asked, not taken at the parent's word
+      if (!message.flags.aa) {
+        const referral = this.referral(result, name, zone);
+        if (referral?.kind === 'referral') return referral;
+      }
       const answers = decodeRecords(message.answers, lenient);
       // records of the type asked for, at the name or at the end of its aliases
       if (type === 'ANY' || type === 'CNAME' || type === 'DNAME') return { kind: 'answer' };
-      let owner = name;
-      for (let i = 0; i <= answers.length; i++) {
-        const alias = answers.find(
-          record => record.type === 'CNAME' && canonicalName(record.name) === owner
-        );
-        if (!alias || alias.type !== 'CNAME') break;
-        owner = canonicalName(alias.target);
-      }
+      const owner = aliasTarget(name, answers);
       const answered = answers.some(
         record => record.type === type && canonicalName(record.name) === owner
       );
@@ -525,11 +525,19 @@ export class AuthoritativeResolver {
     }
 
     // no answer: a referral names the servers of a zone further down
+    return this.referral(result, name, zone) ?? { kind: 'answer' };
+  }
+
+  // the delegation in a response's authority section, or undefined when it has none: no
+  // NS records, or a server authoritative for what it answered
+  private referral(result: ExchangeResult, name: string, zone: string): Outcome | undefined {
+    const { message } = result;
+    const lenient = { lenient: true };
     const authorities = decodeRecords(message.authorities, lenient);
     const delegations = authorities.filter(
       (record): record is Extract<DnsRecord, { type: 'NS' }> => record.type === 'NS'
     );
-    if (delegations.length === 0 || message.flags.aa) return { kind: 'answer' };
+    if (delegations.length === 0 || message.flags.aa) return undefined;
 
     const child = canonicalName(delegations[0].name);
     const below = child !== zone && isSubdomain(child, zone) && isSubdomain(name, child);
@@ -555,9 +563,16 @@ export class AuthoritativeResolver {
       .filter((target, index, all) => all.indexOf(target) === index)
       .sort(this.options.nameserverOrder ?? compareNames)
       .map(target => {
+        // glue is taken only for a nameserver inside the zone of the server that sent it,
+        // which holds authority for that name (RFC 2181 §5.4.1). An address for a name
+        // elsewhere is ignored, and the name is looked up as if it came with none. The
+        // delegated zone alone would be too narrow: the root's glue for the servers of com,
+        // named under net, could then never be used
+        const inBailiwick = isSubdomain(target, zone);
         const addresses = glue
           .filter(
             (record): record is Extract<DnsRecord, { type: 'A' | 'AAAA' }> =>
+              inBailiwick &&
               (record.type === 'A' || record.type === 'AAAA') &&
               canonicalName(record.name) === target
           )
@@ -608,10 +623,12 @@ export class AuthoritativeResolver {
         const supplied = await withRest(run, async timeout =>
           lookup(server.written ?? name, { timeout, ...(run.signal && { signal: run.signal }) })
         );
-        if (supplied?.length) {
-          const normalized = supplied.map(normalizeAddress);
+        const normalized = (supplied ?? []).map(normalizeAddress);
+        const usable = this.usable(normalized);
+        // nothing usable, as when every address is of a family not asked for, is the same
+        // as nothing at all: the name is looked up below, and nothing is kept
+        if (usable.length > 0) {
           for (const address of normalized) this.names.set(address, server.written ?? name);
-          const usable = this.usable(normalized);
           run.knowledge.addresses.set(name, {
             addresses: usable,
             expires: Date.now() + SUPPLIED_ADDRESS_TTL * 1000,

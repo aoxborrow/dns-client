@@ -230,6 +230,31 @@ describe('parseRecordData: what it accepts', () => {
     });
   });
 
+  it('reads service parameters spread over lines with parentheses and comments', () => {
+    expect(parseRecordData('HTTPS', '1 . (\n  alpn="h2" ; the protocols\n  port=443\n)')).toEqual({
+      priority: 1,
+      target: '.',
+      params: { alpn: ['h2'], port: 443 },
+    });
+    expect(parseRecordData('SVCB', '1 svc.example.com. alpn=h3 ; trailing comment')).toEqual({
+      priority: 1,
+      target: 'svc.example.com',
+      params: { alpn: ['h3'] },
+    });
+    // a quoted value keeps the spaces, parentheses and semicolons inside it
+    expect(parseRecordData('HTTPS', '( 1 . dohpath="/q (x); y" )')).toEqual({
+      priority: 1,
+      target: '.',
+      params: { dohPath: '/q (x); y' },
+    });
+    expect(() => parseRecordData('HTTPS', '1 . alpn="h2')).toThrow(/not closed/);
+  });
+
+  it('drops a root dot written after an escaped backslash', () => {
+    expect(parseRecordData('CNAME', 'foo\\\\.')).toEqual({ target: 'foo\\\\' });
+    expect(parseRecordData('CNAME', 'foo\\.')).toEqual({ target: 'foo\\.' });
+  });
+
   it('takes any type in the generic form', () => {
     expect(parseRecordData('A', '\\# 4 c0000201')).toEqual({ address: '192.0.2.1' });
     expect(parseRecordData('MX', '\\# 8 000a 046d61696c 00')).toEqual({
