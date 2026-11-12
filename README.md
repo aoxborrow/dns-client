@@ -13,7 +13,7 @@ not compatible with the 0.x versions on npm.
 | `@aoxborrow/dns-client` | everything below, re-exported | Node, Workers |
 | `@aoxborrow/dns-client/records` | typed records, protocol tables, parse/format/validate | any |
 | `@aoxborrow/dns-client/wire` | query encoding and message decoding | any |
-| `@aoxborrow/dns-client/transports/udp` | DNS over UDP on shared sockets | Node |
+| `@aoxborrow/dns-client/transports/udp` | DNS over UDP, a fresh port per query | Node |
 | `@aoxborrow/dns-client/transports/tcp` | DNS over TCP, pooled and pipelined | Node, Workers |
 | `@aoxborrow/dns-client/transports/tls` | DNS over TLS | Node, Workers |
 | `@aoxborrow/dns-client/transports/doh` | DNS over HTTPS | any |
