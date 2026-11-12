@@ -662,6 +662,41 @@ describe('AuthoritativeResolver', () => {
     ]);
   });
 
+  it('follows a referral that comes with records its server has no authority for', async () => {
+    // com puts an address for the name in the answer section, not authoritative, beside
+    // the usual delegation to example.com's servers
+    const forward: SimulatedServer = query => {
+      const referral = decodeMessage(com(query) as Uint8Array);
+      return encodeMessage({
+        ...referral,
+        answers: [
+          {
+            name: 'example.com',
+            type: 1,
+            class: 1,
+            ttl: 300,
+            rdata: Uint8Array.of(203, 0, 113, 9),
+            section: 'answer',
+          },
+        ],
+      });
+    };
+    const answer = await resolver({}, { '10.0.1.1': forward, '10.0.1.2': forward }).query(
+      'example.com',
+      'A'
+    );
+
+    expect(answer.records.map(record => record.address)).toEqual(['192.0.2.1']);
+    expect(answer).toMatchObject({ server: '10.1.0.1', serverName: 'ns1.example.com' });
+    expect(answer.flags.aa).toBe(true);
+    expect(network.log()).toEqual([
+      '10.0.0.1 example.com A',
+      '10.0.1.1 example.com A',
+      '10.1.0.1 example.com A',
+    ]);
+    expect(answer.trace?.[1]).toMatchObject({ zone: 'com', referral: 'example.com' });
+  });
+
   describe('servers that do not help', () => {
     it('moves on from one that cannot be reached, and says so in the trace', async () => {
       const answer = await resolver({}, { '10.1.0.1': undefined }).query('example.com', 'A');

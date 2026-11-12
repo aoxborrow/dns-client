@@ -387,6 +387,12 @@ export class AuthoritativeResolver {
 
     const lenient = { lenient: true };
     if (message.answers.length > 0) {
+      // records from a server without authority for them, beside a delegation further
+      // down, are a referral: the child zone is asked, not taken at the parent's word
+      if (!message.flags.aa) {
+        const referral = this.referral(result, name, zone);
+        if (referral?.kind === 'referral') return referral;
+      }
       const answers = decodeRecords(message.answers, lenient);
       // records of the type asked for, at the name or at the end of its aliases
       if (type === 'ANY' || type === 'CNAME' || type === 'DNAME') return { kind: 'answer' };
@@ -407,11 +413,19 @@ export class AuthoritativeResolver {
     }
 
     // no answer: a referral names the servers of a zone further down
+    return this.referral(result, name, zone) ?? { kind: 'answer' };
+  }
+
+  // the delegation in a response's authority section, or undefined when it has none: no
+  // NS records, or a server authoritative for what it answered
+  private referral(result: ExchangeResult, name: string, zone: string): Outcome | undefined {
+    const { message } = result;
+    const lenient = { lenient: true };
     const authorities = decodeRecords(message.authorities, lenient);
     const delegations = authorities.filter(
       (record): record is Extract<DnsRecord, { type: 'NS' }> => record.type === 'NS'
     );
-    if (delegations.length === 0 || message.flags.aa) return { kind: 'answer' };
+    if (delegations.length === 0 || message.flags.aa) return undefined;
 
     const child = canonicalName(delegations[0].name);
     const below = child !== zone && isSubdomain(child, zone) && isSubdomain(name, child);
