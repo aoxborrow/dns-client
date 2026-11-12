@@ -18,7 +18,7 @@ import {
   parentName,
   toAsciiName,
 } from '../wire/names';
-import { buildAnswer } from './answer';
+import { aliasTarget, buildAnswer } from './answer';
 import type { Answer, QuerySettings, TraceHop } from './answer';
 import { createLimiter, createPacer } from './limiter';
 import type { Limiter } from './limiter';
@@ -396,14 +396,7 @@ export class AuthoritativeResolver {
       const answers = decodeRecords(message.answers, lenient);
       // records of the type asked for, at the name or at the end of its aliases
       if (type === 'ANY' || type === 'CNAME' || type === 'DNAME') return { kind: 'answer' };
-      let owner = name;
-      for (let i = 0; i <= answers.length; i++) {
-        const alias = answers.find(
-          record => record.type === 'CNAME' && canonicalName(record.name) === owner
-        );
-        if (!alias || alias.type !== 'CNAME') break;
-        owner = canonicalName(alias.target);
-      }
+      const owner = aliasTarget(name, answers);
       const answered = answers.some(
         record => record.type === type && canonicalName(record.name) === owner
       );

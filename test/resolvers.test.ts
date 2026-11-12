@@ -9,10 +9,11 @@ import {
 } from '../src/errors';
 import { AuthoritativeResolver, createLruCache, Resolver } from '../src/resolvers/index';
 import type { AuthoritativeResolverOptions, ResolverOptions } from '../src/resolvers/index';
+import { aliasTarget } from '../src/resolvers/answer';
 import { cacheLifetime } from '../src/resolvers/resolver';
 import { toEndpoint } from '../src/transports/endpoint';
 import type { DnsEvent } from '../src/transports/types';
-import { decodeMessage, encodeMessage } from '../src/wire/index';
+import { decodeMessage, encodeMessage, encodeName } from '../src/wire/index';
 import { recursiveServer, simulateNetwork, zoneServer } from './support/simulated-network';
 import type { SimulatedNetwork, SimulatedServer } from './support/simulated-network';
 
@@ -438,6 +439,39 @@ describe('Resolver', () => {
   });
 });
 
+describe('aliasTarget', () => {
+  const base = { class: 'IN', ttl: 300 } as const;
+  const dname = {
+    ...base,
+    name: 'old.example.com',
+    type: 'DNAME',
+    target: 'new.example.net',
+  } as const;
+
+  it('rewrites the suffix of a name below a DNAME, and not the DNAME owner itself', () => {
+    expect(aliasTarget('a.b.old.example.com', [dname])).toBe('a.b.new.example.net');
+    expect(aliasTarget('old.example.com', [dname])).toBe('old.example.com');
+    expect(aliasTarget('a.example.com', [dname])).toBe('a.example.com');
+  });
+
+  it('takes the synthesized CNAME over the DNAME beside it, then keeps following', () => {
+    const cname = {
+      ...base,
+      name: 'www.old.example.com',
+      type: 'CNAME',
+      target: 'x.example.org',
+    } as const;
+    expect(aliasTarget('www.old.example.com', [dname, cname])).toBe('x.example.org');
+    const onward = {
+      ...base,
+      name: 'www.new.example.net',
+      type: 'CNAME',
+      target: 'end.example.org',
+    } as const;
+    expect(aliasTarget('www.old.example.com', [dname, onward])).toBe('end.example.org');
+  });
+});
+
 describe('AuthoritativeResolver', () => {
   // a small internet:
   //   .             10.0.0.1 (a.root), 10.0.0.2 (b.root)
@@ -819,6 +853,46 @@ describe('AuthoritativeResolver', () => {
         'net target.other.net',
         'other.net target.other.net',
       ]);
+    });
+
+    it('follows a DNAME that came without a synthesized CNAME', async () => {
+      // the server answers with the DNAME alone, as RFC 6672 servers should not but some do
+      const dname: SimulatedServer = query =>
+        encodeMessage({
+          id: query.id,
+          flags: { qr: true, aa: true },
+          questions: query.questions,
+          answers: [
+            {
+              name: 'old.example.com',
+              type: 39,
+              class: 1,
+              ttl: 300,
+              rdata: encodeName('other.net'),
+              section: 'answer',
+            },
+          ],
+        });
+      const answer = await resolver({ followCnames: true }, { '10.1.0.1': dname }).query(
+        'target.old.example.com',
+        'A'
+      );
+
+      expect(answer.name).toBe('target.old.example.com');
+      expect(answer.records.map(record => record.address)).toEqual(['203.0.113.5']);
+      expect(answer.answers.map(record => `${record.name} ${record.type}`)).toEqual([
+        'old.example.com DNAME',
+        'target.other.net A',
+      ]);
+      expect(answer.server).toBe('10.3.0.1');
+
+      // without followCnames the walk stops at the DNAME, as it does at a CNAME
+      const stopped = await resolver({}, { '10.1.0.1': dname }).query(
+        'target.old.example.com',
+        'A'
+      );
+      expect(stopped.server).toBe('10.1.0.1');
+      expect(stopped.records).toEqual([]);
     });
 
     it('treats an alias that leads back to itself as an error', async () => {
