@@ -546,6 +546,25 @@ function nextCloserName(name: string, closestEncloser: string): string {
 // NODATA and NXDOMAIN
 // ---------------------------------------------------------------------------
 
+// the NODATA bitmap check: the type asked for is absent, and so is CNAME
+function bitmapStep(qtype: number, present: boolean, aliased: boolean) {
+  if (present) {
+    return step(
+      'Type bitmap',
+      `${recordTypeName(qtype)} is listed in the bitmap, contradicting the empty answer.`,
+      FAILED
+    );
+  }
+  if (aliased) {
+    return step(
+      'Type bitmap',
+      'CNAME is listed in the bitmap, so the name is an alias and an empty answer is wrong.',
+      FAILED
+    );
+  }
+  return step('Type bitmap', `${recordTypeName(qtype)} is absent from the bitmap.`, VERIFIED);
+}
+
 // the zone answered with an empty answer section for a type it does not hold
 export function verifyNodataProof(
   qname: string,
@@ -564,7 +583,10 @@ export function verifyNodataProof(
     );
     const match = matchNsec3(nsec3, name);
     const present = match?.types.includes(qtype) ?? false;
-    const ok = Boolean(match) && !present;
+    // neither the type asked for nor CNAME may be in the bitmap (RFC 5155 §8.5): a CNAME
+    // means the name is an alias, so a bare NODATA is wrong
+    const aliased = match?.types.includes(TYPE_CNAME) ?? false;
+    const ok = Boolean(match) && !present && !aliased;
     return {
       type: PROOF_TYPES.NSEC3,
       purpose: PROOF_PURPOSES.NODATA,
@@ -580,13 +602,7 @@ export function verifyNodataProof(
             : `No NSEC3 record matches ${name}, so the empty answer is unproven.`,
           match ? VERIFIED : FAILED
         ),
-        step(
-          'Type bitmap',
-          present
-            ? `${recordTypeName(qtype)} is listed in the bitmap, contradicting the empty answer.`
-            : `${recordTypeName(qtype)} is absent from the bitmap.`,
-          present ? FAILED : VERIFIED
-        ),
+        bitmapStep(qtype, present, aliased),
       ],
       optOut: params.optOut,
       nsec3Params: params,
@@ -623,13 +639,7 @@ export function verifyNodataProof(
         match ? `Owner ${match.owner} matches the query name.` : `No NSEC record matches ${name}.`,
         match ? VERIFIED : FAILED
       ),
-      step(
-        'Type bitmap',
-        present
-          ? `${recordTypeName(qtype)} is listed in the bitmap, contradicting the empty answer.`
-          : `${recordTypeName(qtype)} is absent from the bitmap.`,
-        present ? FAILED : VERIFIED
-      ),
+      bitmapStep(qtype, present, aliased),
     ],
     optOut: false,
     reason: ok ? undefined : 'The NODATA response is not fully proven.',

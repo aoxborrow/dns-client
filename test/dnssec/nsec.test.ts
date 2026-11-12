@@ -91,7 +91,9 @@ function nsec3Record(
 }
 
 const TYPE_NS = 2;
+const TYPE_CNAME = 5;
 const TYPE_SOA = 6;
+const TYPE_MX = 15;
 const TYPE_DS = 43;
 const TYPE_RRSIG = 46;
 
@@ -289,6 +291,32 @@ describe('verifyNodataProof', () => {
       nsecRecord('example', 'a.example', [TYPE_A, TYPE_SOA]),
     ]);
     expect(proof.result).toBe(FAILED);
+  });
+
+  it('rejects an NSEC3 whose bitmap lists CNAME, an alias with its CNAME stripped', () => {
+    // RFC 5155 §8.5: neither the type asked for nor CNAME may be set
+    const hash = nsec3Hash('alias.example', Buffer.alloc(0), 0)!;
+    const proof = verifyNodataProof('alias.example', TYPE_A, [
+      nsec3Record(hash, 'example', incrementHash(hash), [TYPE_CNAME, TYPE_RRSIG]),
+    ]);
+    expect(proof.result).toBe(FAILED);
+    expect(proof.steps.find(step => step.label === 'Type bitmap')?.detail).toContain('CNAME');
+  });
+
+  it('accepts an NSEC3 that matches the name without the type or CNAME', () => {
+    const hash = nsec3Hash('mail.example', Buffer.alloc(0), 0)!;
+    const proof = verifyNodataProof('mail.example', TYPE_A, [
+      nsec3Record(hash, 'example', incrementHash(hash), [TYPE_MX, TYPE_RRSIG]),
+    ]);
+    expect(proof.result).toBe(VERIFIED);
+  });
+
+  it('rejects an NSEC whose bitmap lists CNAME, and says why', () => {
+    const proof = verifyNodataProof('alias.example', TYPE_A, [
+      nsecRecord('alias.example', 'b.example', [TYPE_CNAME, TYPE_RRSIG]),
+    ]);
+    expect(proof.result).toBe(FAILED);
+    expect(proof.steps.find(step => step.label === 'Type bitmap')?.result).toBe(FAILED);
   });
 });
 
