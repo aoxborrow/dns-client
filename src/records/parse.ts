@@ -1,7 +1,7 @@
 import { ParseError, RecordSyntaxError } from '../errors';
 import { typeCode, typeName } from '../protocol/types';
 import { formatIpv4, formatIpv6, toHex, utf8Decode } from '../wire/bytes';
-import { nameToLabels } from '../wire/names';
+import { endsWithRootDot, nameToLabels } from '../wire/names';
 import { parseIpv4, parseIpv6 } from './addresses';
 import { decodeRecord, isKnownRecordType } from './decode';
 import { formatSignatureTime } from './format';
@@ -99,7 +99,7 @@ function tokenize(data: string, { innerQuotes = false } = {}): Token[] {
 
 // a full name as written, without the dot that marks it as absolute
 const withoutTrailingDot = (text: string) =>
-  text !== '.' && text.endsWith('.') && !text.endsWith('\\.') ? text.slice(0, -1) : text;
+  text !== '.' && endsWithRootDot(text) ? text.slice(0, -1) : text;
 
 // a cursor over a record's tokens
 class Fields {
