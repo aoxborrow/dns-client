@@ -727,8 +727,9 @@ export function verifyNxdomainProof(qname: string, records: WireRecord[]): Denia
   }
 
   const covering = nsec.find(e => nsecCovers(e.owner, e.next, name));
-  // the wildcard that could have synthesised an answer must be proven absent too
-  const wildcardSource = covering ? longestCommonSuffix(covering.owner, name) : name;
+  // the wildcard that could have synthesised an answer must be proven absent too: the one at
+  // the closest encloser, which may be an empty non-terminal only the next name reveals
+  const wildcardSource = covering ? closestEncloserOf(name, covering) : name;
   const wildcard = `*.${wildcardSource}`;
   const wildcardCovered = nsec.find(
     e => e.owner === wildcard || nsecCovers(e.owner, e.next, wildcard)
@@ -842,14 +843,7 @@ export function verifyWildcardProof(
     );
   }
   const covering = nsec.find(e => nsecCovers(e.owner, e.next, name) && e.owner !== name);
-  // the closest encloser is the deeper of the names the covering NSEC shares a suffix with: its
-  // owner and its next name both exist, and nothing between them does
-  let encloser: string | undefined;
-  if (covering) {
-    const byOwner = longestCommonSuffix(name, covering.owner);
-    const byNext = longestCommonSuffix(name, covering.next);
-    encloser = countLabels(byNext) > countLabels(byOwner) ? byNext : byOwner;
-  }
+  const encloser = covering ? closestEncloserOf(name, covering) : undefined;
   const fromEncloser =
     encloser !== undefined && above && countLabels(encloser) === countLabels(source);
   const ok = Boolean(covering) && fromEncloser;
@@ -885,6 +879,14 @@ export function verifyWildcardProof(
       ? undefined
       : 'The wildcard-expanded answer is not proven: the queried name is not shown to be absent below the wildcard that answered.',
   };
+}
+
+// the closest encloser of a name an NSEC covers: the deeper of the suffixes it shares with the
+// NSEC's owner and with its next name. Both of those exist, and nothing between them does
+function closestEncloserOf(name: string, covering: { owner: string; next: string }): string {
+  const byOwner = longestCommonSuffix(name, covering.owner);
+  const byNext = longestCommonSuffix(name, covering.next);
+  return countLabels(byNext) > countLabels(byOwner) ? byNext : byOwner;
 }
 
 // the deepest name that is a suffix of both — the closest encloser in the NSEC case. Labels
