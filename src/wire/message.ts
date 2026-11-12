@@ -69,11 +69,23 @@ export interface Message {
   bytes: number;
 }
 
+// the offset of a name that follows fields of varying length, found from the RDATA itself
+type NameOffset = (rdata: Uint8Array) => number;
+
+// NAPTR's replacement comes after order and preference and three character strings:
+// flags, services and regexp (RFC 3403 §4.1)
+const naptrReplacement: NameOffset = rdata => {
+  let offset = 4;
+  for (let i = 0; i < 3 && offset < rdata.length; i++) offset += 1 + rdata[offset];
+  return offset;
+};
+
 // where domain names sit inside the RDATA of the types that may carry compressed names:
 // the offset each name starts at, with -1 meaning "straight after the previous name".
-// RFC 3597 forbids compression in any type defined later, but these are the well-known
-// types of RFC 1035 plus the handful that servers compress in practice
-const NAMES_IN_RDATA: Record<number, readonly number[]> = {
+// RFC 3597 forbids compression in any type defined later. These are the well-known types
+// of RFC 1035, the ones RFC 3597 §4 says to decompress too (RP, AFSDB, RT, SIG, PX, NXT,
+// NAPTR, SRV), and the handful that servers compress in practice
+const NAMES_IN_RDATA: Record<number, readonly (number | NameOffset)[]> = {
   2: [0], // NS
   3: [0], // MD
   4: [0], // MF
@@ -92,6 +104,7 @@ const NAMES_IN_RDATA: Record<number, readonly number[]> = {
   26: [2, -1], // PX
   30: [0], // NXT
   33: [6], // SRV: priority, weight, port
+  35: [naptrReplacement], // NAPTR: the replacement, after three character strings
   36: [2], // KX
   39: [0], // DNAME
   46: [18], // RRSIG: signer name after the fixed fields
@@ -114,7 +127,8 @@ function readRdata(message: Uint8Array, type: number, start: number, length: num
 
   const chunks: Uint8Array[] = [];
   let position = start;
-  for (const declared of layout) {
+  for (const entry of layout) {
+    const declared = typeof entry === 'function' ? entry(message.subarray(start, end)) : entry;
     if (declared >= 0) {
       const nameStart = start + declared;
       // RDATA too short to hold this name: leave what there is untouched
