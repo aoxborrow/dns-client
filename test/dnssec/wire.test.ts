@@ -112,6 +112,11 @@ describe('encodeName', () => {
   it('tolerates a trailing dot', () => {
     expect(encodeName('example.com.')).toEqual(encodeName('example.com'));
   });
+
+  it('keeps an escaped dot at the end, and drops a root dot after an escaped backslash', () => {
+    expect([...encodeName('a\\.')]).toEqual([2, 0x61, 0x2e, 0]);
+    expect([...encodeName('foo\\\\.')]).toEqual([4, ...Buffer.from('foo\\'), 0]);
+  });
 });
 
 describe('name helpers', () => {

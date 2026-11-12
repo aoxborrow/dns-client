@@ -12,7 +12,7 @@ import {
   writeU32,
 } from '../wire/bytes';
 import type { Message, ResourceRecord } from '../wire/message';
-import { isSubdomain } from '../wire/names';
+import { endsWithRootDot, isSubdomain } from '../wire/names';
 import { sha1, sha256, sha384 } from './hash';
 
 // the DNSSEC view of a DNS message, and the RFC 4034 primitives built on it: key tag, DS
@@ -209,7 +209,7 @@ function escapeLabel(label: Uint8Array): string {
 
 // encode a name to uncompressed, lowercased wire form — the canonical form for signing
 export function encodeName(name: string): Uint8Array {
-  const trimmed = name.replace(/\.$/, '');
+  const trimmed = endsWithRootDot(name) ? name.slice(0, -1) : name;
   if (trimmed === '' || trimmed === '.') return Uint8Array.from([0]);
 
   const parts: Uint8Array[] = [];
