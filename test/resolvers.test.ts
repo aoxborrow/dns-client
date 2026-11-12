@@ -213,6 +213,25 @@ describe('Resolver', () => {
       expect(network.queries).toHaveLength(3);
     });
 
+    it('keeps questions with a different UDP buffer or TCP fallback apart, in the cache and in flight', async () => {
+      // a 512-byte buffer can be truncated where 1232 is not, and without the fallback the
+      // truncated answer is the one kept
+      const stub = resolver();
+      await Promise.all([
+        stub.query('example.com', 'A'),
+        stub.query('example.com', 'A', { udpPayloadSize: 512 }),
+        stub.query('example.com', 'A', { tcpFallback: false }),
+      ]);
+      expect(network.queries).toHaveLength(3);
+
+      // the default buffer written out is still the same question
+      const same = await stub.query('example.com', 'A', { udpPayloadSize: 1232 });
+      expect(same.cached).toBe(true);
+      const again = await stub.query('example.com', 'A', { udpPayloadSize: 512 });
+      expect(again.cached).toBe(true);
+      expect(network.queries).toHaveLength(3);
+    });
+
     it('hands out records nobody else holds', async () => {
       const stub = resolver();
       const first = await stub.query('example.com', 'A');

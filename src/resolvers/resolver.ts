@@ -2,6 +2,7 @@ import { DnsError, InvalidQueryError, NoServerError } from '../errors';
 import { exchange, hasTransportOptions } from '../exchange';
 import type { ExchangeResult } from '../exchange';
 import { classCode, RECORD_CLASSES } from '../protocol/classes';
+import { DEFAULT_UDP_PAYLOAD_SIZE } from '../protocol/edns';
 import { RCODES } from '../protocol/header';
 import { typeCode } from '../protocol/types';
 import { decodeRecords } from '../records/decode';
@@ -186,7 +187,9 @@ export class Resolver {
   // ---- inside
 
   // what makes two questions the same question: the name, the type and class, and the
-  // settings that change what comes back
+  // settings that change what comes back. Those are the header flags, EDNS on or off with
+  // its options and UDP payload size, whether a truncated UDP answer is asked again over
+  // TCP, and the transport and port
   private keyFor(name: string, type: string | number, settings: QuerySettings): string | undefined {
     const merged = { ...this.options, ...settings };
     try {
@@ -201,6 +204,10 @@ export class Resolver {
         merged.edns === false ? 'noedns' : '',
         // options such as a client subnet change the answer as much as the name does
         (merged.ednsOptions ?? []).map(option => `${option.code}=${toHex(option.data)}`).join(','),
+        // a smaller buffer can be truncated where a larger one is not
+        merged.edns === false ? '' : (merged.udpPayloadSize ?? DEFAULT_UDP_PAYLOAD_SIZE),
+        // without the fallback, a truncated UDP answer is what comes back
+        merged.tcpFallback === false ? 'notcp' : '',
         merged.transport ?? '',
         merged.port ?? '',
       ].join('|');
