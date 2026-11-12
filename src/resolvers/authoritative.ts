@@ -60,7 +60,9 @@ export interface AuthoritativeResolverOptions
   maxHops?: number;
   // how long one answer may take altogether, in milliseconds. `timeout` is the patience
   // with one server; a zone whose servers all stay silent would otherwise cost that for
-  // each address of each of them. Default 30000
+  // each address of each of them. The last server a zone has left to ask is given the
+  // rest of this, shared among its attempts, since there is no next one to save it for.
+  // Default 30000
   totalTimeout?: number;
   // addresses for nameservers by name, used before asking for them. Also what puts a
   // name beside an address in the trace
@@ -377,7 +379,7 @@ export class AuthoritativeResolver {
         done: false,
       }));
       servers: for (let round = 0; turns.some(turn => !turn.done); round++) {
-        for (const turn of turns) {
+        for (const [position, turn] of turns.entries()) {
           if (turn.done) continue;
           // out of time: what the zone's servers have said so far is all there will be
           if (outOfTime(run)) {
@@ -414,8 +416,13 @@ export class AuthoritativeResolver {
             timestamp,
           };
           trace?.push(hop);
+          // the last the zone has left to ask gets the rest of the walk's time, not the
+          // patience with one server: that patience is there to leave time for the next, and
+          // there is no next. Only on the walk itself: a nameserver lookup's time belongs to
+          // the zone that sent for it, whose other servers may still need it
+          const last = nesting === 0 && lastToAsk(turns, position, round);
           try {
-            const result = await this.ask(run, name, type, address);
+            const result = await this.ask(run, name, type, address, last);
             const outcome = this.read(result, name, type, cut.zone);
             Object.assign(hop, {
               transport: result.transport,
@@ -671,14 +678,19 @@ export class AuthoritativeResolver {
     }
   }
 
-  // one question to one server, the way an authoritative server is asked: no recursion
+  // one question to one server, the way an authoritative server is asked: no recursion.
+  // `last`: nobody else is left to ask, so the server may take the rest of the time
   private async ask(
     run: Run,
     name: string,
     type: string,
-    address: string
+    address: string,
+    last = false
   ): Promise<ExchangeResult> {
     const merged = { ...this.options, ...run.settings };
+    const patience = merged.timeout ?? DEFAULT_TIMEOUT;
+    // the zone has other servers to turn to, so less patience with each
+    const retries = merged.retries ?? 1;
     await this.pace(address);
     const result = await this.limit(() =>
       withRest(run, left =>
@@ -697,13 +709,14 @@ export class AuthoritativeResolver {
             udpPayloadSize: merged.udpPayloadSize,
             ednsOptions: merged.ednsOptions,
             edns: merged.edns,
-            timeout: merged.timeout ?? DEFAULT_TIMEOUT,
+            // the last server to ask has what is left shared among its attempts, and never
+            // less than any other server would have had
+            timeout: last ? restOfTime(left, patience, retries) : patience,
             // no longer than what is left of the time for the whole query, retries and a
             // TCP fallback included
             totalTimeout: left,
             tcpFallback: merged.tcpFallback,
-            // the zone has other servers to turn to, so less patience with each
-            retries: merged.retries ?? 1,
+            retries,
             transports: this.transports,
             onEvent: this.options.onEvent,
             signal: run.signal,
@@ -717,6 +730,32 @@ export class AuthoritativeResolver {
 }
 
 const isString = (value: string | undefined): value is string => typeof value === 'string';
+
+// nobody is left in the zone to ask after this server at this address: it has no address
+// after this one, and every other server has refused, referred the walk round in a loop,
+// or has no address left to try. Those asked before it this round would next be asked at their following
+// address, those after it at this round's. A server not yet looked up may have addresses,
+// so it counts as one left to ask
+function lastToAsk(
+  turns: readonly { addresses: string[] | undefined; done: boolean }[],
+  position: number,
+  round: number
+): boolean {
+  return turns.every((turn, index) => {
+    if (turn.done && index !== position) return true;
+    if (turn.addresses === undefined) return false;
+    const next = index <= position ? round + 1 : round;
+    return turn.addresses.length <= next;
+  });
+}
+
+// the patience with the last server a zone has to ask: the rest of the walk's time, shared
+// among its attempts, and never less than the patience with any other server. Whole
+// milliseconds, for the error that names it
+function restOfTime(left: number, patience: number, retries: number): number {
+  if (!Number.isFinite(left)) return patience;
+  return Math.min(MAX_TIMER, Math.max(patience, Math.floor(left / (retries + 1))));
+}
 
 // the longest a timer can be set for; anything longer fires at once
 const MAX_TIMER = 2_147_483_647;

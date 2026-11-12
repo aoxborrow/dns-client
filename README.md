@@ -108,8 +108,10 @@ one), `maxTtl`, `concurrency` and `strict`. `AuthoritativeResolver` also takes
 `nameserverOrder`, `addressOrder`, `resolveNameserver`, `cache`, `serverDelay`,
 `concurrency`, `maxHops`, and `totalTimeout`: the time one answer may take altogether (30
 seconds by default), since a zone whose servers all stay silent would otherwise cost a
-timeout for each of them. Retries and a TCP fallback count against it. `exchange` takes a
-`totalTimeout` of its own, for all its attempts together, and has none by default.
+timeout for each of them. Retries and a TCP fallback count against it, and the last server
+a zone has left to ask gets the rest of it, shared among its attempts, rather than
+`timeout`. `exchange` takes a `totalTimeout` of its own, for all its attempts together,
+and has none by default.
 
 Both take `onEvent`, which is told about every query sent, every retry, every fallback to
 TCP and every proxy connection. That is where logging and metrics attach; the library
