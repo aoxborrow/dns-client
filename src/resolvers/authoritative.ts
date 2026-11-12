@@ -431,9 +431,16 @@ export class AuthoritativeResolver {
       .filter((target, index, all) => all.indexOf(target) === index)
       .sort(compareNames)
       .map(target => {
+        // glue is taken only for a nameserver inside the zone of the server that sent it,
+        // which holds authority for that name (RFC 2181 §5.4.1). An address for a name
+        // elsewhere is ignored, and the name is looked up as if it came with none. The
+        // delegated zone alone would be too narrow: the root's glue for the servers of com,
+        // named under net, could then never be used
+        const inBailiwick = isSubdomain(target, zone);
         const addresses = glue
           .filter(
             (record): record is Extract<DnsRecord, { type: 'A' | 'AAAA' }> =>
+              inBailiwick &&
               (record.type === 'A' || record.type === 'AAAA') &&
               canonicalName(record.name) === target
           )

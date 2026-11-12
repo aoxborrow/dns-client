@@ -635,6 +635,33 @@ describe('AuthoritativeResolver', () => {
     expect(answer.serverName).toBe('ns1.dnshost.net');
   });
 
+  it('ignores glue for a nameserver outside the zone that sent it, and looks it up', async () => {
+    // com hands out an address for ns1.dnshost.net, a name in net it has no authority for
+    const offside = zoneServer({
+      zone: 'com',
+      delegations: { 'glueless.com': { 'ns1.dnshost.net': ['10.6.6.6'] } },
+    });
+    const impostor = zoneServer({
+      zone: 'glueless.com',
+      records: [['glueless.com', 'A', '203.0.113.9']],
+    });
+    const answer = await resolver(
+      {},
+      { '10.0.1.1': offside, '10.0.1.2': offside, '10.6.6.6': impostor }
+    ).query('glueless.com', 'A');
+
+    expect(answer.records.map(record => record.address)).toEqual(['192.0.2.77']);
+    expect(answer).toMatchObject({ server: '10.2.0.53', serverName: 'ns1.dnshost.net' });
+    expect(network.log()).toEqual([
+      '10.0.0.1 glueless.com A',
+      '10.0.1.1 glueless.com A',
+      '10.0.0.1 ns1.dnshost.net A',
+      '10.0.2.1 ns1.dnshost.net A',
+      '10.2.0.1 ns1.dnshost.net A',
+      '10.2.0.53 glueless.com A',
+    ]);
+  });
+
   describe('servers that do not help', () => {
     it('moves on from one that cannot be reached, and says so in the trace', async () => {
       const answer = await resolver({}, { '10.1.0.1': undefined }).query('example.com', 'A');
