@@ -250,6 +250,11 @@ describe('parseRecordData: what it accepts', () => {
     expect(() => parseRecordData('HTTPS', '1 . alpn="h2')).toThrow(/not closed/);
   });
 
+  it('drops a root dot written after an escaped backslash', () => {
+    expect(parseRecordData('CNAME', 'foo\\\\.')).toEqual({ target: 'foo\\\\' });
+    expect(parseRecordData('CNAME', 'foo\\.')).toEqual({ target: 'foo\\.' });
+  });
+
   it('takes any type in the generic form', () => {
     expect(parseRecordData('A', '\\# 4 c0000201')).toEqual({ address: '192.0.2.1' });
     expect(parseRecordData('MX', '\\# 8 000a 046d61696c 00')).toEqual({

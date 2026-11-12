@@ -335,6 +335,18 @@ describe('verifyNxdomainProof', () => {
     expect(proof.steps[1].result).toBe(FAILED);
   });
 
+  it('checks the wildcard at an empty non-terminal only the next name reveals', () => {
+    // example.com holds example.com, a.example.com and c.b.example.com, so b.example.com is an
+    // empty non-terminal. For a.b.example.com the one NSEC a.example.com -> c.b.example.com
+    // covers the name and *.b.example.com, the wildcard at the real closest encloser, which is
+    // all RFC 4035 §3.1.3.2 asks a server to send
+    const proof = verifyNxdomainProof('a.b.example.com', [
+      nsecRecord('a.example.com', 'c.b.example.com', [TYPE_A]),
+    ]);
+    expect(proof.result).toBe(VERIFIED);
+    expect(proof.steps[1].detail).toContain('*.b.example.com');
+  });
+
   it('accepts the proof once *.example is shown absent', () => {
     const proof = verifyNxdomainProof('x.b.example', [
       nsecRecord('example', 'a\\.b.example', [TYPE_SOA, TYPE_NS]),

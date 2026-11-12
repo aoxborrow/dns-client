@@ -1,7 +1,14 @@
 import { ParseError, RecordSyntaxError } from '../errors';
 import { className } from '../protocol/classes';
 import { typeCode, typeName } from '../protocol/types';
-import { canonicalName, isSubdomain, nameToLabels, splitName, toAsciiName } from '../wire/names';
+import {
+  canonicalName,
+  endsWithRootDot,
+  isSubdomain,
+  nameToLabels,
+  splitName,
+  toAsciiName,
+} from '../wire/names';
 import { formatRecordData } from './format';
 import type { FlatRecord } from './helpers';
 import { hasRecordParser, parseRecordData } from './parse';
@@ -203,9 +210,7 @@ function textStrings(text: string): string[] {
 // a name inside record data, as written, to its ASCII form without the trailing dot
 function fullAsciiName(written: string): string {
   const ascii = toAsciiName(written);
-  return ascii !== '.' && ascii.endsWith('.') && !ascii.endsWith('\\.')
-    ? ascii.slice(0, -1)
-    : ascii;
+  return ascii !== '.' && endsWithRootDot(ascii) ? ascii.slice(0, -1) : ascii;
 }
 
 function parseKnown(head: Envelope, data: string): DnsRecord {
@@ -294,7 +299,7 @@ function qualifyName(written: string, zone: string, options: QualifyOptions): st
   if (text === '@') return zone;
   if (text === '.') return '.';
   // a trailing dot says the name is already complete
-  if (text.endsWith('.') && !text.endsWith('\\.')) return text.slice(0, -1);
+  if (endsWithRootDot(text)) return text.slice(0, -1);
   if (
     (options.namesEndingInZone ?? 'absolute') === 'absolute' &&
     isSubdomain(toAsciiName(text), zone)
@@ -363,7 +368,7 @@ export function relativize(input: FlatRecord, zone: string): FlatRecord {
   const type = input.type.trim().toUpperCase();
   const strip = (written: string) => {
     const text = written.trim();
-    return text.endsWith('.') && !text.endsWith('\\.') && text !== '.' ? text.slice(0, -1) : text;
+    return endsWithRootDot(text) && text !== '.' ? text.slice(0, -1) : text;
   };
   const name = relativeName(strip(input.name), origin);
 
