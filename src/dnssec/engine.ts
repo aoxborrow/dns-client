@@ -89,7 +89,13 @@ import {
   TYPE_RRSIG,
   TYPE_NSEC3PARAM,
 } from './wire';
-import { verifySignature, isAlgorithmVerifiable, algorithmName, keySizeBits } from './crypto';
+import {
+  verifySignature,
+  isAlgorithmSupported,
+  isAlgorithmVerifiable,
+  algorithmName,
+  keySizeBits,
+} from './crypto';
 import {
   verifyNoDsProof,
   verifyNodataProof,
@@ -973,6 +979,9 @@ export class DnssecEngine {
     // everywhere else. track the specific KEY MATERIAL each entry point vouches for, not the 16-bit
     // tag — tags collide, so a tag alone cannot decide which key the DNSKEY RRset must be signed by
     const authenticatedKeys: DnssecDnskey[] = [];
+    // the algorithms the entry points name: the anchored keys' at the root, and elsewhere
+    // those of the DS records the digest selection kept (RFC 6840 §5.2)
+    let entryAlgorithms: number[] = [];
     if (trustAnchor) {
       // a published key is an entry point only if its own MATERIAL hashes to a current IANA anchor,
       // never merely because it shares a tag with one — otherwise a colliding-tag key added to a
@@ -981,6 +990,7 @@ export class DnssecEngine {
       for (const key of dnskeys) {
         if (this.keyMatchesAnchor(key)) authenticatedKeys.push(key);
       }
+      entryAlgorithms = authenticatedKeys.map(key => key.algorithm);
     } else if (delegation) {
       // the DS authenticates the child only if the parent's own response was validly signed. a
       // secure parent serving an unsigned or tampered DS RRset anchors nothing, so a digest match
@@ -993,6 +1003,7 @@ export class DnssecEngine {
         );
       } else {
         authenticatedKeys.push(...this.checkDelegationDigests(delegation, dnskeys, build.name));
+        entryAlgorithms = delegation.dsRecords.filter(ds => ds.selected).map(ds => ds.algorithm);
       }
     }
 
@@ -1003,6 +1014,7 @@ export class DnssecEngine {
       build,
       dnskeys,
       authenticatedKeys,
+      entryAlgorithms,
       dnskeyFetch
     );
 
@@ -1328,6 +1340,7 @@ export class DnssecEngine {
     build: ZoneBuild,
     dnskeys: DnssecDnskey[],
     authenticatedKeys: DnssecDnskey[],
+    entryAlgorithms: number[],
     fetched?: Fetched
   ): Promise<{ verified: boolean; indeterminate?: boolean; reason?: string; keyTag?: number }> {
     if (!fetched?.message) {
@@ -1370,12 +1383,10 @@ export class DnssecEngine {
     }
 
     let verifiedTag: number | undefined;
-    let sawUnsupported = false;
 
     for (const rr of sigs) {
       const described = await this.verifyOneSignature(zone, rr, rrset, dnskeys, fetched, false);
       zone.rrsigs.push(described);
-      if (described.check.result === UNCHECKED) sawUnsupported = true;
       // authenticate against the key MATERIAL the parent's DS (or the anchor) actually vouched for,
       // never the 16-bit tag: tags collide, and a lying child can publish a colliding key and sign
       // the DNSKEY RRset with it. verify the signature directly against a vouched key (RFC 4035 §5.2)
@@ -1411,10 +1422,16 @@ export class DnssecEngine {
     }
 
     if (authenticatedKeys.length === 0) {
+      // the DS set links no key. That is indeterminate only when every algorithm it names is
+      // one this runtime cannot verify, so the validator would treat the zone as unsigned
+      // (RFC 4035 §5.2). A selected DS naming a supported algorithm that matches nothing is
+      // a break (RFC 6840 §5.2), whatever algorithm some other RRSIG happens to use
+      const supported = await Promise.all(entryAlgorithms.map(isAlgorithmSupported));
+      const unlinkable = entryAlgorithms.length > 0 && !supported.includes(true);
       return {
         verified: false,
-        indeterminate: sawUnsupported,
-        reason: sawUnsupported
+        indeterminate: unlinkable,
+        reason: unlinkable
           ? `No supported algorithm links ${build.name} to its parent.`
           : `No key in ${build.name}'s DNSKEY RRset is authenticated by its parent.`,
       };
