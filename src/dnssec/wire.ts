@@ -269,9 +269,10 @@ function lowercaseAscii(buf: Uint8Array): Uint8Array {
   return out;
 }
 
-// normalise a name for comparison and display: lowercase, no trailing dot, '.' for root
+// normalise a name for comparison and display: lowercase, no trailing dot, '.' for root.
+// Only the root's dot goes: `a\.` keeps its escaped dot, and `foo\\.` loses the root's
 export function canonicalName(name: string): string {
-  const trimmed = name.replace(/\.+$/, '');
+  const trimmed = endsWithRootDot(name) ? name.slice(0, -1) : name;
   return trimmed === '' ? '.' : trimmed.toLowerCase();
 }
 
