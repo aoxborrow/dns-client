@@ -9,6 +9,7 @@ import {
   isInZone,
   groupRrsets,
   buildSignedData,
+  canonicalRdata,
   decodeRrsig,
   decodeDnskey,
   decodeTypeBitmap,
@@ -199,6 +200,73 @@ describe('parseMessage', () => {
     // point the owner name at itself, which would loop forever if followed
     message.writeUInt16BE(0xc000 | (message.length - 1), message.length - 8);
     expect(() => parseMessage(message)).toThrow();
+  });
+});
+
+describe('canonicalRdata', () => {
+  // a name in wire form, keeping the case it was written in
+  const wire = (name: string) => [
+    ...name.split('.').flatMap(label => [label.length, ...Buffer.from(label)]),
+    0,
+  ];
+  const string = (text: string) => [text.length, ...Buffer.from(text)];
+  const canonical = (type: number, rdata: number[]) => [
+    ...canonicalRdata(type, Uint8Array.from(rdata)),
+  ];
+
+  it('downcases the NAPTR replacement and leaves its character strings alone', () => {
+    // RFC 4034 §6.2 lists NAPTR, and RFC 6840 §5.1 keeps it
+    const strings = [...string('U'), ...string('E2U+SIP'), ...string('!^.*$!SIP:A@B!')];
+    const rdata = [0, 100, 0, 10, ...strings, ...wire('SIP.Example')];
+    expect(canonical(35, rdata)).toEqual([0, 100, 0, 10, ...strings, ...wire('sip.example')]);
+  });
+
+  it('downcases the NXT next name and leaves its bitmap alone', () => {
+    const bitmap = [0x40, 0x01, 0x00, 0x00, 0x00, 0x03];
+    expect(canonical(30, [...wire('Next.Example'), ...bitmap])).toEqual([
+      ...wire('next.example'),
+      ...bitmap,
+    ]);
+  });
+
+  it('downcases both PX names, after the preference', () => {
+    expect(canonical(26, [0, 10, ...wire('Map822.Example'), ...wire('MapX400.Example')])).toEqual([
+      0,
+      10,
+      ...wire('map822.example'),
+      ...wire('mapx400.example'),
+    ]);
+  });
+
+  it('downcases the SIG signer name, after the fixed fields', () => {
+    const fixed = Array.from({ length: 18 }, (_, i) => 0x41 + i);
+    expect(canonical(24, [...fixed, ...wire('Signer.Example'), 0x41, 0x42])).toEqual([
+      ...fixed,
+      ...wire('signer.example'),
+      0x41,
+      0x42,
+    ]);
+  });
+
+  it('downcases the A6 prefix name, after the address suffix', () => {
+    // prefix length 64 leaves an 8-byte suffix; 0x41 is an uppercase letter in the address
+    const suffix = [0x41, 0x41, 0, 0, 0, 0, 0, 1];
+    expect(canonical(38, [64, ...suffix, ...wire('Prefix.Example')])).toEqual([
+      64,
+      ...suffix,
+      ...wire('prefix.example'),
+    ]);
+    // a prefix length of 0 carries the whole address and no name
+    const whole = Array.from({ length: 16 }, () => 0x41);
+    expect(canonical(38, [0, ...whole])).toEqual([0, ...whole]);
+  });
+
+  it('leaves the NSEC next name as published (RFC 6840 §5.1)', () => {
+    const bitmap = [0, 1, 0x40];
+    expect(canonical(47, [...wire('Next.Example'), ...bitmap])).toEqual([
+      ...wire('Next.Example'),
+      ...bitmap,
+    ]);
   });
 });
 

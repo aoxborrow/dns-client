@@ -53,10 +53,26 @@ export const TYPE_CDS = 59;
 export const TYPE_CDNSKEY = 60;
 export const TYPE_OPT = 41;
 
-// RDATA layouts that embed domain names, mapped to the byte offset each name starts at.
-// these are the only types where a name may legally be compressed on the wire (RFC 1035),
-// so they are the only ones needing decompression before the bytes can be signed over
-const NAME_OFFSETS_IN_RDATA: Record<number, number[]> = {
+// the offset of a name that follows fields of varying length, found from the RDATA itself
+type NameOffset = (rdata: Uint8Array) => number;
+
+// NAPTR's replacement comes after order and preference and three character strings:
+// flags, services and regexp (RFC 3403 §4.1)
+const naptrReplacement: NameOffset = rdata => {
+  let offset = 4;
+  for (let i = 0; i < 3 && offset < rdata.length; i++) offset += 1 + rdata[offset];
+  return offset;
+};
+
+// A6's prefix name comes after the prefix length and the address suffix, whose length is
+// what the prefix leaves of 128 bits (RFC 2874 §3.1.1). A prefix length of 0 has no name
+const a6PrefixName: NameOffset = rdata =>
+  rdata[0] === 0 ? rdata.length : 1 + Math.ceil((128 - rdata[0]) / 8);
+
+// RDATA layouts that embed domain names, mapped to the byte offset each name starts at,
+// with -1 meaning "straight after the previous name". The names to downcase for canonical
+// form are found by walking these
+const NAME_OFFSETS_IN_RDATA: Record<number, (number | NameOffset)[]> = {
   2: [0], // NS
   3: [0], // MD
   4: [0], // MF
@@ -73,16 +89,22 @@ const NAME_OFFSETS_IN_RDATA: Record<number, number[]> = {
   21: [2], // RT
   18: [2], // AFSDB
   36: [2], // KX
-  26: [4], // PX
+  24: [18], // SIG — signer name after the fixed fields
+  26: [2, -1], // PX — preference, then MAP822 and MAPX400 back to back
+  30: [0], // NXT — next domain name, then a type bitmap
   33: [6], // SRV — priority, weight, port
+  35: [naptrReplacement], // NAPTR — the replacement, after three character strings
+  38: [a6PrefixName], // A6 — the prefix name, after the address suffix
   47: [0], // NSEC — next domain name
 };
 
-// RFC 4034 §6.2 as corrected by RFC 6840 §5.1: the types whose embedded names are
-// downcased for canonical form. note NSEC and RRSIG are NOT in this list — the erratum
-// removed them, so an NSEC next-domain name keeps the case the signer published
+// RFC 4034 §6.2 item 3 as RFC 6840 §5.1 corrects it: the types whose embedded names are
+// downcased for canonical form. HINFO holds no names and NSEC is left as published, so an
+// NSEC next-domain name keeps the case the signer gave it. RRSIG stays on the list, but
+// its signer name is downcased where the signed data is built (decodeRrsig), so it needs
+// no entry here
 const DOWNCASE_NAMES_IN_RDATA = new Set([
-  2, 3, 4, 5, 6, 7, 8, 9, 12, 14, 15, 17, 18, 21, 24, 26, 33, 36, 38, 39,
+  2, 3, 4, 5, 6, 7, 8, 9, 12, 14, 15, 17, 18, 21, 24, 26, 30, 33, 35, 36, 38, 39,
 ]);
 
 export type WireSection = 'answer' | 'authority' | 'additional';
@@ -287,7 +309,8 @@ export function canonicalRdata(type: number, rdata: Uint8Array): Uint8Array {
 
   const out = Uint8Array.from(rdata);
   let pos = 0;
-  for (const declared of layout) {
+  for (const entry of layout) {
+    const declared = typeof entry === 'function' ? entry(out) : entry;
     // a declared offset of -1 means "immediately after the previous name"
     if (declared >= 0) pos = declared;
     for (;;) {
