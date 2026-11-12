@@ -102,6 +102,19 @@ data an error.
 | `flattenRecords(records)` returning `{ name, type, ttl, content }` | `flattenRecords(records)` returning `{ name, type, ttl, data }` |
 | `reverseIp(ip)` | `reverseIp(ip)`, unchanged |
 
+## DNSSEC analysis
+
+This one breaks code written against the 1.0.0-dev builds, not 0.x. Those builds also
+carried a chain-of-trust analysis, which has moved out of the library into DNS.Tools.
+`@aoxborrow/dns-client/dnssec` now holds only the primitives a validator is built from.
+
+| 1.0.0-dev | 1.0 |
+| --- | --- |
+| `analyze(name, options)`, `DnssecEngine` | removed. Walking a chain of trust and reaching a verdict is left to the caller, built from the primitives |
+| `AnalyzeOptions`, `DnssecReport`, `EngineOptions`, `EngineOutput` | removed with them |
+| `@aoxborrow/dns-client/dnssec/types`: the report types, the finding catalog and the status vocabularies | removed. The primitives' own types (`DenialProof`, `ProofStep`, `TrustAnchor`, `Nsec3Params`, `VerificationResult` and the like) come from `@aoxborrow/dns-client/dnssec` |
+| `KSK_2024_SIGNING_DATE`, `KSK_2017_REVOCATION_DATE` | removed. `ROOT_TRUST_ANCHORS` and `isAnchorCurrent` remain |
+
 ## Requirements
 
 Node 20 or later (0.x allowed 18). The package now ships CommonJS as well as ES modules.
