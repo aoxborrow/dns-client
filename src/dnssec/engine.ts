@@ -1036,8 +1036,17 @@ export class DnssecEngine {
     }
 
     if (!keySetVerified.verified) {
-      zone.status = keySetVerified.indeterminate ? INDETERMINATE : BOGUS;
-      zone.reason = keySetVerified.reason;
+      // a DS set with no digest type this tool can verify is, to a validator, no DS set at
+      // all (RFC 4035 §5.2, RFC 4509 §3): nothing links the zone, which is not a broken link.
+      // The delegation already reads indeterminate for it, and the zone follows
+      const noUsableDs =
+        !keySetVerified.indeterminate &&
+        delegation?.status === INDETERMINATE &&
+        delegation.dsRecords.length > 0;
+      zone.status = keySetVerified.indeterminate || noUsableDs ? INDETERMINATE : BOGUS;
+      zone.reason = noUsableDs
+        ? `No DS record for ${build.name} uses a digest type this tool can verify.`
+        : keySetVerified.reason;
       this.assessKeyHygiene(zone, dnskeys, delegation);
       zone.findings = this.findings.slice(before);
       return zone;

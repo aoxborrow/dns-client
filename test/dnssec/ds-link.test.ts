@@ -106,9 +106,15 @@ async function signKeySet(key: Key, keyRecords: WireRecord[]): Promise<WireRecor
   return record(TYPE_RRSIG, 'RRSIG', Uint8Array.from([...unsigned, ...signature]));
 }
 
-function dsRecord(key: Key): WireRecord {
-  const digest = computeDsDigest(ZONE, key.rdata, 2)!;
-  return record(TYPE_DS, 'DS', Uint8Array.from([...u16(key.keyTag), key.algorithm, 2, ...digest]));
+// a DS with SHA-256, or with a digest type nothing here computes, whose bytes then stand in
+function dsRecord(key: Key, digestType = 2): WireRecord {
+  const digest =
+    digestType === 2 ? computeDsDigest(ZONE, key.rdata, 2)! : new Uint8Array(32).fill(5);
+  return record(
+    TYPE_DS,
+    'DS',
+    Uint8Array.from([...u16(key.keyTag), key.algorithm, digestType, ...digest])
+  );
 }
 
 // the engine's zone assembly, reached past `private` for want of a zone signed this way
@@ -127,7 +133,10 @@ interface ZoneAssembly {
   ): Promise<DnssecZone>;
 }
 
-async function assemble(options: { ds: Key[]; keys: Key[]; signers: Key[] }) {
+// a DS is a key, with SHA-256, or a key with a digest type to use instead
+type DsSpec = Key | { key: Key; digestType: number };
+
+async function assemble(options: { ds: DsSpec[]; keys: Key[]; signers: Key[] }) {
   const engine = new DnssecEngine({ now, crossCheck: false }) as unknown as ZoneAssembly;
   const from = { server: '192.0.2.1', queryIndex: 0 };
 
@@ -138,7 +147,10 @@ async function assemble(options: { ds: Key[]; keys: Key[]; signers: Key[] }) {
   const delegation: DnssecDelegation = {
     parent: PARENT,
     child: ZONE,
-    dsRecords: options.ds.map(key => engine.describeDs(dsRecord(key), ZONE, from, new Map())),
+    dsRecords: options.ds.map(spec => {
+      const rr = 'key' in spec ? dsRecord(spec.key, spec.digestType) : dsRecord(spec);
+      return engine.describeDs(rr, ZONE, from, new Map());
+    }),
     status: 'indeterminate',
     parentResponseVerified: true,
   };
@@ -180,5 +192,33 @@ describe('a DS set that links no key in the zone', () => {
     const zone = await assemble({ ds: [vouched], keys: [published], signers: [published] });
     expect(zone.status).toBe('indeterminate');
     expect(zone.reason).toContain('No supported algorithm links');
+  });
+
+  it('is indeterminate when no DS uses a digest type this tool can verify', async () => {
+    // RFC 4035 §5.2 and RFC 4509 §3: a DS set with no usable digest is treated as absent, so
+    // the zone cannot be linked, which is not the same as a link that failed
+    const key = await ecdsaKey();
+    const zone = await assemble({
+      ds: [{ key, digestType: 3 }],
+      keys: [key],
+      signers: [key],
+    });
+    expect(zone.status).toBe('indeterminate');
+    expect(zone.reason).toContain('digest type');
+    expect(zone.delegation?.status).toBe('indeterminate');
+    expect(zone.findings.map(finding => finding.slug)).toContain('ds-digest-unsupported');
+  });
+
+  it('is bogus when a usable digest beside the unusable one matches nothing', async () => {
+    // the SHA-256 DS names a key the zone does not publish; the GOST-digest one cannot be
+    // checked, and does not soften the failure of the one that could
+    const [vouched, published] = [await ecdsaKey(), await ecdsaKey()];
+    const zone = await assemble({
+      ds: [vouched, { key: published, digestType: 3 }],
+      keys: [published],
+      signers: [published],
+    });
+    expect(zone.status).toBe('bogus');
+    expect(zone.delegation?.status).toBe('bogus');
   });
 });
