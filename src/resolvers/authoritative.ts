@@ -74,7 +74,8 @@ export interface AuthoritativeResolverOptions
   // find a nameserver's addresses some other way before it is resolved from the root: a
   // local cache, another resolver. `timeout` is what is left of the total timeout, in
   // milliseconds, and `signal` is the query's, for a lookup that should not outlast
-  // either. Return nothing to leave it to the resolver
+  // either. Return nothing, or nothing of the address family asked for, to leave it to
+  // the resolver
   resolveNameserver?: (
     name: string,
     limits: { timeout: number; signal?: AbortSignal }
@@ -622,10 +623,12 @@ export class AuthoritativeResolver {
         const supplied = await withRest(run, async timeout =>
           lookup(server.written ?? name, { timeout, ...(run.signal && { signal: run.signal }) })
         );
-        if (supplied?.length) {
-          const normalized = supplied.map(normalizeAddress);
+        const normalized = (supplied ?? []).map(normalizeAddress);
+        const usable = this.usable(normalized);
+        // nothing usable, as when every address is of a family not asked for, is the same
+        // as nothing at all: the name is looked up below, and nothing is kept
+        if (usable.length > 0) {
           for (const address of normalized) this.names.set(address, server.written ?? name);
-          const usable = this.usable(normalized);
           run.knowledge.addresses.set(name, {
             addresses: usable,
             expires: Date.now() + SUPPLIED_ADDRESS_TTL * 1000,

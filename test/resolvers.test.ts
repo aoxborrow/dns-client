@@ -752,6 +752,23 @@ describe('AuthoritativeResolver', () => {
     expect(network.queries.some(query => query.name === 'ns1.dnshost.net')).toBe(true);
   });
 
+  it('falls back to resolving from the root when the lookup has nothing usable', async () => {
+    // an IPv6 address, with only IPv4 asked for, is as good as no address: it is neither
+    // kept nor allowed to stand in for the nameserver's own A record
+    const asked: string[] = [];
+    const lookup = resolver({
+      resolveNameserver: name => {
+        asked.push(name);
+        return ['2001:db8::53'];
+      },
+    });
+    const answer = await lookup.query('glueless.com', 'A');
+    expect(answer.records.map(record => record.address)).toEqual(['192.0.2.77']);
+    expect(answer).toMatchObject({ server: '10.2.0.53', serverName: 'ns1.dnshost.net' });
+    expect(asked).toEqual(['ns1.dnshost.net']);
+    expect(network.queries.some(query => query.name === 'ns1.dnshost.net')).toBe(true);
+  });
+
   it('tries nameservers in the order it is given', async () => {
     // reverse order: ns2 before ns1
     const answer = await resolver({ nameserverOrder: (a, b) => b.localeCompare(a) }).query(
