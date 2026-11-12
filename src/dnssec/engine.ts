@@ -88,6 +88,7 @@ import {
   TYPE_DNSKEY,
   TYPE_RRSIG,
   TYPE_NSEC3PARAM,
+  wildcardOwner,
 } from './wire';
 import {
   verifySignature,
@@ -1764,16 +1765,25 @@ export class DnssecEngine {
     // queried name has no exact match. without it, a wildcard RRset the zone really signed could be
     // replayed for a name that holds different records or should not exist
     if (fetched.answers.length > 0 && zone.status === SECURE && qname !== undefined) {
-      const wildcardAnswer = zone.rrsigs.some(
-        s =>
-          s.check.result === VERIFIED &&
-          s.wildcard &&
-          !s.fromParent &&
-          canonicalName(s.name) === canonicalName(qname)
+      // the wildcards that answered, rebuilt from each verified RRSIG's labels: the proof has
+      // to show the answer came from the wildcard at the closest encloser, not merely that the
+      // queried name has no records (RFC 4035 §5.3.4, RFC 5155 §8.8)
+      const wildcards = new Set(
+        zone.rrsigs
+          .filter(
+            s =>
+              s.check.result === VERIFIED &&
+              s.wildcard &&
+              !s.fromParent &&
+              canonicalName(s.name) === canonicalName(qname)
+          )
+          .map(s => wildcardOwner(s.name, s.labels))
       );
-      if (wildcardAnswer) {
+      if (wildcards.size > 0) {
         await this.verifyDenialRecords(zone, fetched.authorities, fetched);
-        const proof = verifyWildcardProof(qname, fetched.authorities);
+      }
+      for (const wildcard of wildcards) {
+        const proof = verifyWildcardProof(qname, fetched.authorities, wildcard);
         zone.denialOfExistence.push(proof);
         if (proof.result !== VERIFIED) {
           this.finding(
