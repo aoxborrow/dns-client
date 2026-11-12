@@ -23,19 +23,23 @@ import type {
   TransportResponse,
 } from './types';
 
-// DNS over UDP on a few shared sockets.
+// DNS over UDP, on a fresh socket for every query.
 //
-// a socket per query costs a system call to open, one to close and a file descriptor in
-// between, which is most of what a query costs. Here a handful of sockets per address
-// family stay open, every query goes out on one of them, and an answer finds its query
-// by where it came from and the ID it carries. Several sockets rather than one so the
-// source port still varies between queries.
+// each query gets its own socket, bound by the system to a new ephemeral port, and the
+// socket is closed once the query is over: when the send ends, or with a `lifetime`,
+// when the exchange does, so its retransmissions share the port and an answer to any
+// copy is heard. The source port is then as unpredictable as the system makes it, and
+// an off-path attacker forging an answer has to guess it as well as the 16-bit ID
+// (RFC 5452 §4.5, §9.2). A few long-lived shared sockets would save the system calls,
+// but leave the port one of a handful of values. An answer still finds its query by
+// where it came from and the ID it carries.
 //
 // through a SOCKS5 proxy the same thing runs over one UDP association; through a proxy
 // that cannot carry UDP the query goes over TCP instead, and the response says so
 
 export interface UdpTransportOptions extends Pick<
   TransportOptions,
+  // `udpSockets` is accepted and ignored: there is no shared pool to size any more
   'proxy' | 'tls' | 'udpSockets'
 > {
   // the transport a query is handed to when the proxy cannot carry UDP. One is made on
@@ -82,15 +86,16 @@ interface Setup {
   settled: boolean;
 }
 
-const DEFAULT_SOCKETS = 4;
 const UNSPECIFIED = new Set(['0.0.0.0', '::']);
 
 const keyOf = (address: string, port: number, id: number) => `${address}|${port}|${id}`;
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 export function createUdpTransport(options: UdpTransportOptions = {}): Transport {
-  const size = Math.max(1, options.udpSockets ?? DEFAULT_SOCKETS);
-  const pools: Record<Family, (SharedSocket | undefined)[]> = { udp4: [], udp6: [] };
+  // the sockets of the queries in flight, each closed when its query ends
+  const open = new Set<SharedSocket>();
+  // the socket an exchange's retransmissions go out on, until its lifetime ends
+  const held = new WeakMap<AbortSignal, Map<Family, SharedSocket>>();
   const associations = new Map<string, Setup>();
   // proxies that turned down UDP ASSOCIATE: no point asking again
   const withoutUdp = new Set<string>();
@@ -146,16 +151,6 @@ export function createUdpTransport(options: UdpTransportOptions = {}): Transport
     } catch {
       // already closed
     }
-  }
-
-  function pooled(module: typeof import('node:dgram'), family: Family, id: number): SharedSocket {
-    const pool = pools[family];
-    // by ID, so a retransmission goes out on the socket the first copy did and an answer
-    // to either is heard
-    const slot = id % size;
-    return (pool[slot] ??= openSocket(module, family, deliver, shared => {
-      if (pool[slot] === shared) pool[slot] = undefined;
-    }));
   }
 
   // hand an answer to whoever is waiting for it
@@ -246,14 +241,38 @@ export function createUdpTransport(options: UdpTransportOptions = {}): Transport
     const address = isIp(endpoint.host) ? endpoint.host : await resolveHost(endpoint.host);
     if (request.signal?.aborted) throw request.signal.reason;
     const id = (query[0] << 8) | query[1];
-    const shared = pooled(module, address.includes(':') ? 'udp6' : 'udp4', id);
-    return sendAndWait(
-      shared,
-      keyOf(normalizeAddress(address), endpoint.port, id),
-      query,
-      { host: address, port: endpoint.port },
-      request
-    );
+    const family: Family = address.includes(':') ? 'udp6' : 'udp4';
+    const lifetime = request.lifetime?.aborted ? undefined : request.lifetime;
+    const release = (socket: SharedSocket) => {
+      open.delete(socket);
+      failAll(socket, new ConnectionError('The UDP query is over'));
+    };
+    let shared = lifetime ? held.get(lifetime)?.get(family) : undefined;
+    if (!shared || shared.closed) {
+      // unbound until the first send, when the system picks a new ephemeral port for it
+      const opened = openSocket(module, family, deliver, socket => open.delete(socket));
+      open.add(opened);
+      if (lifetime) {
+        const sockets = held.get(lifetime) ?? new Map<Family, SharedSocket>();
+        sockets.set(family, opened);
+        held.set(lifetime, sockets);
+        lifetime.addEventListener('abort', () => release(opened), { once: true });
+      }
+      shared = opened;
+    }
+    try {
+      return await sendAndWait(
+        shared,
+        keyOf(normalizeAddress(address), endpoint.port, id),
+        query,
+        { host: address, port: endpoint.port },
+        request
+      );
+    } finally {
+      // answered, timed out, failed or given up on: the socket goes with the query, or
+      // with the exchange when it may be sent again
+      if (!lifetime) release(shared);
+    }
   }
 
   // ---- through a SOCKS5 association
@@ -507,9 +526,8 @@ export function createUdpTransport(options: UdpTransportOptions = {}): Transport
     close() {
       closed = true;
       const error = new ConnectionError('The UDP transport was closed');
-      for (const pool of Object.values(pools)) {
-        for (const shared of pool.splice(0)) if (shared) failAll(shared, error);
-      }
+      for (const shared of [...open]) failAll(shared, error);
+      open.clear();
       for (const setup of associations.values()) {
         // one still being set up stops, and its callers hear why
         setup.opening.abort(error);

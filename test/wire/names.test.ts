@@ -122,6 +122,17 @@ describe('name helpers', () => {
     expect(splitName('example.com.')).toEqual(['example', 'com']);
   });
 
+  it('tells a root dot after an escaped backslash from an escaped dot', () => {
+    // `foo\\.` is the label `foo\` and the root; `foo\.` is one label ending in a dot
+    expect(splitName('foo\\\\.')).toEqual(['foo\\\\']);
+    expect(splitName('foo\\.')).toEqual(['foo\\.']);
+    expect(splitName('foo\\\\\\.')).toEqual(['foo\\\\\\.']);
+    expect(canonicalName('Foo\\\\.')).toBe(canonicalName('foo\\\\'));
+    expect(nameToLabels('foo\\\\.example.')).toHaveLength(2);
+    expect(nameToLabels('foo\\\\.')).toEqual([Uint8Array.from(Buffer.from('foo\\'))]);
+    expect(toAsciiName('foo\\\\.')).toBe('foo\\\\.');
+  });
+
   it('folds ASCII case and drops the trailing dot for comparison', () => {
     expect(canonicalName('WWW.Example.COM.')).toBe('www.example.com');
     expect(canonicalName('.')).toBe('.');

@@ -40,6 +40,7 @@ export {
   nsec3Hash,
   presentRecord,
   toWireMessage,
+  wildcardOwner,
 } from './wire';
 export type { Rrset, WireMessage, WireRecord } from './wire';
 export { sha1, sha256, sha384 } from './hash';

@@ -91,7 +91,9 @@ function nsec3Record(
 }
 
 const TYPE_NS = 2;
+const TYPE_CNAME = 5;
 const TYPE_SOA = 6;
+const TYPE_MX = 15;
 const TYPE_DS = 43;
 const TYPE_RRSIG = 46;
 
@@ -290,6 +292,32 @@ describe('verifyNodataProof', () => {
     ]);
     expect(proof.result).toBe(FAILED);
   });
+
+  it('rejects an NSEC3 whose bitmap lists CNAME, an alias with its CNAME stripped', () => {
+    // RFC 5155 §8.5: neither the type asked for nor CNAME may be set
+    const hash = nsec3Hash('alias.example', Buffer.alloc(0), 0)!;
+    const proof = verifyNodataProof('alias.example', TYPE_A, [
+      nsec3Record(hash, 'example', incrementHash(hash), [TYPE_CNAME, TYPE_RRSIG]),
+    ]);
+    expect(proof.result).toBe(FAILED);
+    expect(proof.steps.find(step => step.label === 'Type bitmap')?.detail).toContain('CNAME');
+  });
+
+  it('accepts an NSEC3 that matches the name without the type or CNAME', () => {
+    const hash = nsec3Hash('mail.example', Buffer.alloc(0), 0)!;
+    const proof = verifyNodataProof('mail.example', TYPE_A, [
+      nsec3Record(hash, 'example', incrementHash(hash), [TYPE_MX, TYPE_RRSIG]),
+    ]);
+    expect(proof.result).toBe(VERIFIED);
+  });
+
+  it('rejects an NSEC whose bitmap lists CNAME, and says why', () => {
+    const proof = verifyNodataProof('alias.example', TYPE_A, [
+      nsecRecord('alias.example', 'b.example', [TYPE_CNAME, TYPE_RRSIG]),
+    ]);
+    expect(proof.result).toBe(FAILED);
+    expect(proof.steps.find(step => step.label === 'Type bitmap')?.result).toBe(FAILED);
+  });
 });
 
 describe('verifyNxdomainProof', () => {
@@ -305,6 +333,18 @@ describe('verifyNxdomainProof', () => {
     expect(proof.result).toBe(FAILED);
     expect(proof.steps[1].detail).toContain('*.example');
     expect(proof.steps[1].result).toBe(FAILED);
+  });
+
+  it('checks the wildcard at an empty non-terminal only the next name reveals', () => {
+    // example.com holds example.com, a.example.com and c.b.example.com, so b.example.com is an
+    // empty non-terminal. For a.b.example.com the one NSEC a.example.com -> c.b.example.com
+    // covers the name and *.b.example.com, the wildcard at the real closest encloser, which is
+    // all RFC 4035 §3.1.3.2 asks a server to send
+    const proof = verifyNxdomainProof('a.b.example.com', [
+      nsecRecord('a.example.com', 'c.b.example.com', [TYPE_A]),
+    ]);
+    expect(proof.result).toBe(VERIFIED);
+    expect(proof.steps[1].detail).toContain('*.b.example.com');
   });
 
   it('accepts the proof once *.example is shown absent', () => {
@@ -385,34 +425,42 @@ describe('verifyWildcardProof', () => {
   it('accepts an NSEC that covers the queried name (no exact match exists)', () => {
     // foo.example was synthesised from *.example; an NSEC covering foo.example proves it has no
     // records of its own, so the wildcard legitimately answered
-    const proof = verifyWildcardProof('foo.example', [
-      nsecRecord('example', 'www.example', [TYPE_A]),
-    ]);
+    const proof = verifyWildcardProof(
+      'foo.example',
+      [nsecRecord('example', 'www.example', [TYPE_A])],
+      '*.example'
+    );
     expect(proof.result).toBe(VERIFIED);
     expect(proof.status).toBe(PROOF_STATUSES.VERIFIED);
   });
 
   it('rejects an NSEC that does not cover the queried name', () => {
-    const proof = verifyWildcardProof('foo.example', [
-      nsecRecord('aaa.example', 'bbb.example', [TYPE_A]),
-    ]);
+    const proof = verifyWildcardProof(
+      'foo.example',
+      [nsecRecord('aaa.example', 'bbb.example', [TYPE_A])],
+      '*.example'
+    );
     expect(proof.result).toBe(FAILED);
   });
 
   it('rejects a wildcard answer that carries no proof at all', () => {
-    const proof = verifyWildcardProof('foo.example', []);
+    const proof = verifyWildcardProof('foo.example', [], '*.example');
     expect(proof.result).toBe(FAILED);
   });
 
   it('accepts an NSEC3 closest-encloser + next-closer cover', () => {
     const encloser = nsec3Hash('example', Buffer.alloc(0), 0)!;
     const nextCloser = nsec3Hash('foo.example', Buffer.alloc(0), 0)!;
-    const proof = verifyWildcardProof('foo.example', [
-      // the closest encloser (example) exists — a matching NSEC3
-      nsec3Record(encloser, 'example', incrementHash(encloser), [TYPE_SOA]),
-      // the next-closer name (foo.example) is covered, so it has no exact match
-      nsec3Record(decrementHash(nextCloser), 'example', incrementHash(nextCloser), []),
-    ]);
+    const proof = verifyWildcardProof(
+      'foo.example',
+      [
+        // the closest encloser (example) exists — a matching NSEC3
+        nsec3Record(encloser, 'example', incrementHash(encloser), [TYPE_SOA]),
+        // the next-closer name (foo.example) is covered, so it has no exact match
+        nsec3Record(decrementHash(nextCloser), 'example', incrementHash(nextCloser), []),
+      ],
+      '*.example'
+    );
     expect(proof.result).toBe(VERIFIED);
     expect(proof.status).toBe(PROOF_STATUSES.VERIFIED);
   });
@@ -425,16 +473,70 @@ describe('verifyWildcardProof', () => {
     const right = nsec3Hash('b\\.c.example', Buffer.alloc(0), 0)!;
     const apex = nsec3Record(encloser, 'example', incrementHash(encloser), [TYPE_SOA]);
 
-    const rejected = verifyWildcardProof('a.b\\.c.example', [
-      apex,
-      nsec3Record(decrementHash(wrong), 'example', incrementHash(wrong), []),
-    ]);
+    const rejected = verifyWildcardProof(
+      'a.b\\.c.example',
+      [apex, nsec3Record(decrementHash(wrong), 'example', incrementHash(wrong), [])],
+      '*.example'
+    );
     expect(rejected.result).toBe(FAILED);
 
-    const accepted = verifyWildcardProof('a.b\\.c.example', [
-      apex,
-      nsec3Record(decrementHash(right), 'example', incrementHash(right), []),
-    ]);
+    const accepted = verifyWildcardProof(
+      'a.b\\.c.example',
+      [apex, nsec3Record(decrementHash(right), 'example', incrementHash(right), [])],
+      '*.example'
+    );
     expect(accepted.result).toBe(VERIFIED);
+  });
+
+  it('rejects a higher wildcard replayed under a nearer closest encloser (NSEC)', () => {
+    // *.example.com's signed A replayed for a.b.example.com. The NSEC from b.example.com to
+    // c.example.com covers a.b.example.com, but b.example.com exists, so the closest encloser
+    // is b.example.com and only *.b.example.com could have answered
+    const nsec = [nsecRecord('b.example.com', 'c.example.com', [TYPE_A])];
+    const replayed = verifyWildcardProof('a.b.example.com', nsec, '*.example.com');
+    expect(replayed.result).toBe(FAILED);
+    expect(replayed.steps.find(step => step.label === 'Wildcard')?.result).toBe(FAILED);
+
+    const nearer = verifyWildcardProof('a.b.example.com', nsec, '*.b.example.com');
+    expect(nearer.result).toBe(VERIFIED);
+  });
+
+  it('takes the closest encloser from the next name when it is the deeper one (NSEC)', () => {
+    // z.b.example exists, so b.example does too: the closest encloser of x.b.example is
+    // b.example even though the NSEC's owner shares only example with it
+    const nsec = [nsecRecord('a.example', 'z.b.example', [TYPE_A])];
+    expect(verifyWildcardProof('x.b.example', nsec, '*.example').result).toBe(FAILED);
+    expect(verifyWildcardProof('x.b.example', nsec, '*.b.example').result).toBe(VERIFIED);
+  });
+
+  it('rejects a higher wildcard replayed under a nearer closest encloser (NSEC3)', () => {
+    // b.example exists (an NSEC3 matches it), so the next closer under *.example is b.example,
+    // which no range covers. The cover of a.b.example only fits *.b.example
+    const salt = Buffer.alloc(0);
+    const encloser = nsec3Hash('b.example', salt, 0)!;
+    const qnameHash = nsec3Hash('a.b.example', salt, 0)!;
+    const records = [
+      nsec3Record(encloser, 'example', incrementHash(encloser), [TYPE_A]),
+      nsec3Record(decrementHash(qnameHash), 'example', incrementHash(qnameHash), []),
+    ];
+    expect(verifyWildcardProof('a.b.example', records, '*.example').result).toBe(FAILED);
+    expect(verifyWildcardProof('a.b.example', records, '*.b.example').result).toBe(VERIFIED);
+  });
+
+  it('needs no NSEC3 matching the closest encloser, which the RRSIG labels already give', () => {
+    // RFC 5155 §7.2.5: a wildcard answer carries only the NSEC3 covering the next closer name
+    const nextCloser = nsec3Hash('foo.example', Buffer.alloc(0), 0)!;
+    const proof = verifyWildcardProof(
+      'foo.example',
+      [nsec3Record(decrementHash(nextCloser), 'example', incrementHash(nextCloser), [])],
+      '*.example'
+    );
+    expect(proof.result).toBe(VERIFIED);
+  });
+
+  it('rejects a wildcard that is not above the queried name', () => {
+    const nsec = [nsecRecord('example', 'www.example', [TYPE_A])];
+    expect(verifyWildcardProof('foo.example', nsec, '*.other').result).toBe(FAILED);
+    expect(verifyWildcardProof('foo.example', nsec, '*.foo.example').result).toBe(FAILED);
   });
 });

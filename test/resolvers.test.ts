@@ -13,11 +13,12 @@ import type {
   ResolverOptions,
   TraceHop,
 } from '../src/resolvers/index';
+import { aliasTarget } from '../src/resolvers/answer';
 import { cacheLifetime } from '../src/resolvers/resolver';
 import { toEndpoint } from '../src/transports/endpoint';
 import { isNode } from '../src/transports/runtime';
 import type { DnsEvent } from '../src/transports/types';
-import { decodeMessage, encodeMessage } from '../src/wire/index';
+import { decodeMessage, encodeMessage, encodeName } from '../src/wire/index';
 import { recursiveServer, simulateNetwork, zoneServer } from './support/simulated-network';
 import type { SimulatedNetwork, SimulatedServer } from './support/simulated-network';
 
@@ -221,6 +222,25 @@ describe('Resolver', () => {
       expect(network.queries).toHaveLength(3);
 
       const again = await stub.query('example.com', 'A', { ednsOptions: [subnet(2)] });
+      expect(again.cached).toBe(true);
+      expect(network.queries).toHaveLength(3);
+    });
+
+    it('keeps questions with a different UDP buffer or TCP fallback apart, in the cache and in flight', async () => {
+      // a 512-byte buffer can be truncated where 1232 is not, and without the fallback the
+      // truncated answer is the one kept
+      const stub = resolver();
+      await Promise.all([
+        stub.query('example.com', 'A'),
+        stub.query('example.com', 'A', { udpPayloadSize: 512 }),
+        stub.query('example.com', 'A', { tcpFallback: false }),
+      ]);
+      expect(network.queries).toHaveLength(3);
+
+      // the default buffer written out is still the same question
+      const same = await stub.query('example.com', 'A', { udpPayloadSize: 1232 });
+      expect(same.cached).toBe(true);
+      const again = await stub.query('example.com', 'A', { udpPayloadSize: 512 });
       expect(again.cached).toBe(true);
       expect(network.queries).toHaveLength(3);
     });
@@ -432,6 +452,39 @@ describe('Resolver', () => {
     const pending = stub.query('example.com', 'A', { signal: controller.signal });
     controller.abort(reason);
     await expect(pending).rejects.toBe(reason);
+  });
+});
+
+describe('aliasTarget', () => {
+  const base = { class: 'IN', ttl: 300 } as const;
+  const dname = {
+    ...base,
+    name: 'old.example.com',
+    type: 'DNAME',
+    target: 'new.example.net',
+  } as const;
+
+  it('rewrites the suffix of a name below a DNAME, and not the DNAME owner itself', () => {
+    expect(aliasTarget('a.b.old.example.com', [dname])).toBe('a.b.new.example.net');
+    expect(aliasTarget('old.example.com', [dname])).toBe('old.example.com');
+    expect(aliasTarget('a.example.com', [dname])).toBe('a.example.com');
+  });
+
+  it('takes the synthesized CNAME over the DNAME beside it, then keeps following', () => {
+    const cname = {
+      ...base,
+      name: 'www.old.example.com',
+      type: 'CNAME',
+      target: 'x.example.org',
+    } as const;
+    expect(aliasTarget('www.old.example.com', [dname, cname])).toBe('x.example.org');
+    const onward = {
+      ...base,
+      name: 'www.new.example.net',
+      type: 'CNAME',
+      target: 'end.example.org',
+    } as const;
+    expect(aliasTarget('www.old.example.com', [dname, onward])).toBe('end.example.org');
   });
 });
 
@@ -715,6 +768,23 @@ describe('AuthoritativeResolver', () => {
     expect(network.queries.some(query => query.name === 'ns1.dnshost.net')).toBe(true);
   });
 
+  it('falls back to resolving from the root when the lookup has nothing usable', async () => {
+    // an IPv6 address, with only IPv4 asked for, is as good as no address: it is neither
+    // kept nor allowed to stand in for the nameserver's own A record
+    const asked: string[] = [];
+    const lookup = resolver({
+      resolveNameserver: name => {
+        asked.push(name);
+        return ['2001:db8::53'];
+      },
+    });
+    const answer = await lookup.query('glueless.com', 'A');
+    expect(answer.records.map(record => record.address)).toEqual(['192.0.2.77']);
+    expect(answer).toMatchObject({ server: '10.2.0.53', serverName: 'ns1.dnshost.net' });
+    expect(asked).toEqual(['ns1.dnshost.net']);
+    expect(network.queries.some(query => query.name === 'ns1.dnshost.net')).toBe(true);
+  });
+
   it('tries nameservers in the order it is given', async () => {
     // reverse order: ns2 before ns1
     const answer = await resolver({ nameserverOrder: (a, b) => b.localeCompare(a) }).query(
@@ -815,6 +885,68 @@ describe('AuthoritativeResolver', () => {
       '10.0.1.1',
       '10.2.0.53',
     ]);
+  });
+
+  it('ignores glue for a nameserver outside the zone that sent it, and looks it up', async () => {
+    // com hands out an address for ns1.dnshost.net, a name in net it has no authority for
+    const offside = zoneServer({
+      zone: 'com',
+      delegations: { 'glueless.com': { 'ns1.dnshost.net': ['10.6.6.6'] } },
+    });
+    const impostor = zoneServer({
+      zone: 'glueless.com',
+      records: [['glueless.com', 'A', '203.0.113.9']],
+    });
+    const answer = await resolver(
+      {},
+      { '10.0.1.1': offside, '10.0.1.2': offside, '10.6.6.6': impostor }
+    ).query('glueless.com', 'A');
+
+    expect(answer.records.map(record => record.address)).toEqual(['192.0.2.77']);
+    expect(answer).toMatchObject({ server: '10.2.0.53', serverName: 'ns1.dnshost.net' });
+    expect(network.log()).toEqual([
+      '10.0.0.1 glueless.com A',
+      '10.0.1.1 glueless.com A',
+      '10.0.0.1 ns1.dnshost.net A',
+      '10.0.2.1 ns1.dnshost.net A',
+      '10.2.0.1 ns1.dnshost.net A',
+      '10.2.0.53 glueless.com A',
+    ]);
+  });
+
+  it('follows a referral that comes with records its server has no authority for', async () => {
+    // com puts an address for the name in the answer section, not authoritative, beside
+    // the usual delegation to example.com's servers
+    const forward: SimulatedServer = query => {
+      const referral = decodeMessage(com(query) as Uint8Array);
+      return encodeMessage({
+        ...referral,
+        answers: [
+          {
+            name: 'example.com',
+            type: 1,
+            class: 1,
+            ttl: 300,
+            rdata: Uint8Array.of(203, 0, 113, 9),
+            section: 'answer',
+          },
+        ],
+      });
+    };
+    const answer = await resolver({}, { '10.0.1.1': forward, '10.0.1.2': forward }).query(
+      'example.com',
+      'A'
+    );
+
+    expect(answer.records.map(record => record.address)).toEqual(['192.0.2.1']);
+    expect(answer).toMatchObject({ server: '10.1.0.1', serverName: 'ns1.example.com' });
+    expect(answer.flags.aa).toBe(true);
+    expect(network.log()).toEqual([
+      '10.0.0.1 example.com A',
+      '10.0.1.1 example.com A',
+      '10.1.0.1 example.com A',
+    ]);
+    expect(answer.trace?.[1]).toMatchObject({ zone: 'com', referral: 'example.com' });
   });
 
   describe('servers that do not help', () => {
@@ -1066,6 +1198,46 @@ describe('AuthoritativeResolver', () => {
         'net target.other.net',
         'other.net target.other.net',
       ]);
+    });
+
+    it('follows a DNAME that came without a synthesized CNAME', async () => {
+      // the server answers with the DNAME alone, as RFC 6672 servers should not but some do
+      const dname: SimulatedServer = query =>
+        encodeMessage({
+          id: query.id,
+          flags: { qr: true, aa: true },
+          questions: query.questions,
+          answers: [
+            {
+              name: 'old.example.com',
+              type: 39,
+              class: 1,
+              ttl: 300,
+              rdata: encodeName('other.net'),
+              section: 'answer',
+            },
+          ],
+        });
+      const answer = await resolver({ followCnames: true }, { '10.1.0.1': dname }).query(
+        'target.old.example.com',
+        'A'
+      );
+
+      expect(answer.name).toBe('target.old.example.com');
+      expect(answer.records.map(record => record.address)).toEqual(['203.0.113.5']);
+      expect(answer.answers.map(record => `${record.name} ${record.type}`)).toEqual([
+        'old.example.com DNAME',
+        'target.other.net A',
+      ]);
+      expect(answer.server).toBe('10.3.0.1');
+
+      // without followCnames the walk stops at the DNAME, as it does at a CNAME
+      const stopped = await resolver({}, { '10.1.0.1': dname }).query(
+        'target.old.example.com',
+        'A'
+      );
+      expect(stopped.server).toBe('10.1.0.1');
+      expect(stopped.records).toEqual([]);
     });
 
     it('treats an alias that leads back to itself as an error', async () => {

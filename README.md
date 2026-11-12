@@ -241,7 +241,9 @@ the runtime cannot verify comes back not checked, never as a pass, and
 `isAlgorithmSupported` says beforehand whether it can (a WebCrypto may lack Ed25519 or
 Ed448). `computeDsDigest` and `computeKeyTag` match a DS record to the key it names. `verifyNoDsProof`,
 `verifyNxdomainProof`, `verifyNodataProof` and `verifyWildcardProof` check NSEC and NSEC3
-denial proofs and return the reasoning step by step. `ROOT_TRUST_ANCHORS` holds the IANA
+denial proofs and return the reasoning step by step; `verifyWildcardProof` takes the
+wildcard an answer was synthesised from, which `wildcardOwner` rebuilds from the RRSIG's
+labels field. `ROOT_TRUST_ANCHORS` holds the IANA
 root keys, and `isAnchorCurrent` says whether one is valid at a given time. Digests and
 NSEC3 hashes use the library's own SHA-1, SHA-256 and SHA-384.
 
@@ -268,7 +270,7 @@ returned in ASCII.
 | `@aoxborrow/dns-client` | everything below | Node |
 | `@aoxborrow/dns-client/records` | typed records, protocol tables, parsing, formatting, validation | anywhere |
 | `@aoxborrow/dns-client/wire` | encoding queries and decoding messages | anywhere |
-| `@aoxborrow/dns-client/transports/udp` | DNS over UDP on shared sockets | Node |
+| `@aoxborrow/dns-client/transports/udp` | DNS over UDP, a fresh port per query | Node |
 | `@aoxborrow/dns-client/transports/tcp` | DNS over TCP | Node, Cloudflare Workers |
 | `@aoxborrow/dns-client/transports/tls` | DNS over TLS | Node, Cloudflare Workers |
 | `@aoxborrow/dns-client/transports/doh` | DNS over HTTPS | anywhere with `fetch` |
