@@ -13,6 +13,8 @@ export type Transport = 'udp' | 'tcp';
 export interface ReceivedQuery {
   transport: Transport;
   query: Uint8Array;
+  // UDP only: the port the query came from
+  sourcePort?: number;
 }
 
 export interface Reply {
@@ -124,7 +126,11 @@ export async function startFixtureServer(respond: Responder): Promise<FixtureSer
   udp.removeAllListeners('error');
   const otherSource = dgram.createSocket('udp4');
   udp.on('message', (message, remote) => {
-    const entry: ReceivedQuery = { transport: 'udp', query: Uint8Array.from(message) };
+    const entry: ReceivedQuery = {
+      transport: 'udp',
+      query: Uint8Array.from(message),
+      sourcePort: remote.port,
+    };
     received.push(entry);
     const reply = respond(entry);
     if (!reply) return;

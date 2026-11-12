@@ -233,7 +233,6 @@ export function hasTransportOptions(options: TransportOptions): boolean {
     options.fetch !== undefined ||
     options.connect !== undefined ||
     options.tls !== undefined ||
-    options.udpSockets !== undefined ||
     options.idleTimeout !== undefined ||
     options.pipeline !== undefined ||
     options.dohMethod !== undefined
@@ -320,6 +319,8 @@ export async function exchange(
   const transports =
     options.transports ?? (ownTransports ? createTransports(options) : defaultTransports());
 
+  // over when the exchange is: a UDP socket is kept for the retransmissions until then
+  const lifetime = new AbortController();
   // one listener for the whole exchange, pointed at whichever attempt is in flight
   let attemptAbort: AbortController | undefined;
   const onAbort = () => attemptAbort?.abort(signal?.reason);
@@ -373,6 +374,7 @@ export async function exchange(
           endpoint,
           query: queryBytes,
           signal: current.signal,
+          lifetime: lifetime.signal,
           onEvent,
           // over UDP anyone can send a datagram to the socket, so what does not match
           // the query is not the answer and is not allowed to end the wait
@@ -407,8 +409,8 @@ export async function exchange(
           attempt: attempt + 1,
           error: errorData(error),
         });
-        // a UDP query that went unanswered is sent again as it was, so an answer to
-        // either copy counts. Anything else starts over with a new ID
+        // a UDP query that went unanswered is sent again as it was, from the same socket,
+        // so an answer to either copy counts. Anything else starts over with a new ID
         if (
           !(transportName === 'udp' && error instanceof TimeoutError) &&
           transportName !== 'doh'
@@ -488,6 +490,7 @@ export async function exchange(
     }
   } finally {
     signal?.removeEventListener('abort', onAbort);
+    lifetime.abort();
     if (ownTransports) transports.close();
   }
 }

@@ -3,6 +3,7 @@ import {
   className,
   InvalidQueryError,
   rcodeName,
+  RCODES,
   RECORD_TYPES,
   typeCode,
   typeName,
@@ -65,5 +66,19 @@ describe('classes and response codes', () => {
     expect(rcodeName(3)).toBe('NXDOMAIN');
     expect(rcodeName(16)).toBe('BADVERS');
     expect(rcodeName(99)).toBe('RCODE99');
+  });
+
+  it('numbers the TSIG and TKEY codes as the IANA registry does', () => {
+    expect(RCODES.BADVERS).toBe(16);
+    expect(RCODES.BADSIG).toBe(16);
+    expect(RCODES.BADKEY).toBe(17);
+    expect(RCODES.BADTIME).toBe(18);
+    expect(RCODES.BADMODE).toBe(19);
+    expect(RCODES.BADNAME).toBe(20);
+    // a header rcode of 16 is the EDNS code, so the shared value keeps the BADVERS name
+    expect(rcodeName(16)).toBe('BADVERS');
+    expect(rcodeName(17)).toBe('BADKEY');
+    expect(rcodeName(18)).toBe('BADTIME');
+    expect(rcodeName(19)).toBe('BADMODE');
   });
 });

@@ -695,6 +695,13 @@ function compareRdata(a: WireRecord, b: WireRecord): number {
   return compareBytes(a.rdata, b.rdata);
 }
 
+// the wildcard an answer at `name` was synthesised from, given its RRSIG's labels field: `*.`
+// and the rightmost `labels` labels, the source of synthesis (RFC 4035 §5.3.2)
+export function wildcardOwner(name: string, labels: number): string {
+  const parts = splitName(canonicalName(name));
+  return `*.${parts.slice(parts.length - labels).join('.')}`;
+}
+
 // the exact bytes an RRSIG covers: `RRSIG RDATA (through the signer name) || canonical RRset`
 // (RFC 4034 §3.1.8.1). returns null when the RRset cannot be canonicalised
 export function buildSignedData(
@@ -707,11 +714,7 @@ export function buildSignedData(
   // RFC 4035 §5.3.2: fewer labels in the RRSIG than in the owner name means the answer was
   // synthesised from a wildcard, and the name that was actually signed is *.<closest encloser>
   const wildcard = rrsig.labels < ownerLabels;
-  let signedOwner = rrset.name;
-  if (wildcard) {
-    const parts = splitName(canonicalName(rrset.name));
-    signedOwner = `*.${parts.slice(parts.length - rrsig.labels).join('.')}`;
-  }
+  const signedOwner = wildcard ? wildcardOwner(rrset.name, rrsig.labels) : rrset.name;
 
   const encodedOwner = encodeName(signedOwner);
   const parts: Uint8Array[] = [rrsig.signedPrefix];

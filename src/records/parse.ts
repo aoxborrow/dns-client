@@ -35,8 +35,10 @@ const encoder = new TextEncoder();
 
 // split record data into tokens: whitespace separates them, double quotes group one,
 // a backslash escapes the next character or a three-digit decimal byte. Parentheses and
-// `;` comments, which zone files use to spread a record over lines, are skipped
-function tokenize(data: string): Token[] {
+// `;` comments, which zone files use to spread a record over lines, are skipped. With
+// `innerQuotes`, a quoted run inside a token stays part of it, so a service parameter
+// written `key="a value"` is one token (RFC 9460 §2.1)
+function tokenize(data: string, { innerQuotes = false } = {}): Token[] {
   const tokens: Token[] = [];
   let i = 0;
   while (i < data.length) {
@@ -55,9 +57,15 @@ function tokenize(data: string): Token[] {
     if (quoted) i += 1;
     const bytes: number[] = [];
     let closed = !quoted;
+    let inner = false;
     while (i < data.length) {
       const current = data[i];
-      if (quoted ? current === '"' : /[\s();]/.test(current)) {
+      if (!quoted && innerQuotes && current === '"') {
+        inner = !inner;
+        i += 1;
+        continue;
+      }
+      if (quoted ? current === '"' : !inner && /[\s();]/.test(current)) {
         if (quoted) {
           closed = true;
           i += 1;
@@ -83,7 +91,7 @@ function tokenize(data: string): Token[] {
       bytes.push(...encoder.encode(point));
       i += point.length;
     }
-    if (!closed) throw new RecordSyntaxError('A quoted string is not closed');
+    if (!closed || inner) throw new RecordSyntaxError('A quoted string is not closed');
     tokens.push({ bytes, raw: data.slice(start, i), quoted });
   }
   return tokens;
@@ -441,9 +449,10 @@ function serviceBinding(fields: Fields, data: string) {
   const params: ServiceParams = {};
   const seen = new Set<number>();
 
-  // parameters are `key` or `key=value`; the value may be quoted. Re-tokenize the rest of
-  // the data so a quoted value stays attached to its key
-  for (const raw of serviceParamTokens(data).slice(2)) {
+  // parameters are `key` or `key=value`; the value may be quoted. Re-tokenize the data so
+  // a quoted value stays attached to its key, skipping parentheses and comments as every
+  // other type does. Priority and target are plain words, so they are the first two tokens
+  for (const { raw } of tokenize(data, { innerQuotes: true }).slice(2)) {
     const equals = raw.indexOf('=');
     const keyText = equals < 0 ? raw : raw.slice(0, equals);
     const key = serviceParamKey(keyText);
@@ -518,29 +527,6 @@ function serviceBinding(fields: Fields, data: string) {
     }
   }
   return { priority, target: targetName, params };
-}
-
-// the data split on unquoted whitespace, leaving quotes and escapes in place
-function serviceParamTokens(data: string): string[] {
-  const out: string[] = [];
-  let current = '';
-  let inQuotes = false;
-  for (let i = 0; i < data.length; i++) {
-    const char = data[i];
-    if (char === '\\' && i + 1 < data.length) {
-      current += char + data[++i];
-    } else if (char === '"') {
-      inQuotes = !inQuotes;
-      current += char;
-    } else if (/\s/.test(char) && !inQuotes) {
-      if (current) out.push(current);
-      current = '';
-    } else {
-      current += char;
-    }
-  }
-  if (current) out.push(current);
-  return out;
 }
 
 // ---------------------------------------------------------------------------

@@ -19,6 +19,26 @@ export function isAlgorithmVerifiable(algorithm: number): boolean {
   return Boolean(entry?.verify);
 }
 
+// whether this runtime can verify an algorithm, which is narrower than the library knowing
+// it: a WebCrypto may lack Ed25519 or Ed448 (Cloudflare Workers has no Ed448). RSA and
+// ECDSA are in every WebCrypto. Each probe runs once per process
+const runtimeSupport = new Map<number, Promise<boolean>>();
+
+export function isAlgorithmSupported(algorithm: number): Promise<boolean> {
+  if (!isAlgorithmVerifiable(algorithm)) return Promise.resolve(false);
+  if (algorithm !== 15 && algorithm !== 16) return Promise.resolve(true);
+  let probe = runtimeSupport.get(algorithm);
+  if (!probe) {
+    const name = algorithm === 15 ? 'Ed25519' : 'Ed448';
+    probe = crypto.subtle.generateKey({ name }, false, ['sign', 'verify']).then(
+      () => true,
+      () => false
+    );
+    runtimeSupport.set(algorithm, probe);
+  }
+  return probe;
+}
+
 export function algorithmName(algorithm: number): string {
   const entry = DNSSEC_ALGORITHMS[algorithm as keyof typeof DNSSEC_ALGORITHMS];
   return entry?.name ?? `UNKNOWN(${algorithm})`;

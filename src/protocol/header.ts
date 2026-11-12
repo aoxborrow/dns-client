@@ -36,9 +36,10 @@ export const RCODES = {
   NOTZONE: 10, // a name is not within the zone
   DSOTYPENI: 11, // DSO type not implemented
   BADVERS: 16, // unsupported EDNS version
-  BADSIG: 17, // TSIG signature failure
-  BADKEY: 18, // key not recognised
-  BADTIME: 19, // signature outside its time window
+  BADSIG: 16, // TSIG signature failure, sharing 16 with BADVERS as the registry lists it
+  BADKEY: 17, // key not recognised
+  BADTIME: 18, // signature outside its time window
+  BADMODE: 19, // TKEY mode not supported
   BADNAME: 20, // duplicate key name
   BADALG: 21, // algorithm not supported
   BADTRUNC: 22, // bad truncation
@@ -47,9 +48,13 @@ export const RCODES = {
 
 export type RcodeName = keyof typeof RCODES;
 
-const RCODE_NAMES = new Map<number, string>(
-  Object.entries(RCODES).map(([name, code]) => [code, name])
-);
+// the first name listed for a code wins. 16 reads as BADVERS because a header rcode of 16
+// can only be the EDNS one: a TSIG BADSIG travels in the TSIG record's error field with a
+// header rcode of NOTAUTH (RFC 8945 §5.2)
+const RCODE_NAMES = new Map<number, string>();
+for (const [name, code] of Object.entries(RCODES)) {
+  if (!RCODE_NAMES.has(code)) RCODE_NAMES.set(code, name);
+}
 
 // the mnemonic for a response code, or `RCODE<n>` for one with no name
 export function rcodeName(code: number): string {
