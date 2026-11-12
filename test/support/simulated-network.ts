@@ -13,8 +13,10 @@ import { canonicalName, isSubdomain } from '../../src/wire/names';
 // their own tests against real sockets; this is for everything above them, where what
 // matters is which server is asked what, and in what order
 
-// answer a query, fail it, or (undefined) never answer
-export type SimulatedServer = (query: Message) => Uint8Array | Error | undefined;
+// answer a query, fail it, or (undefined) never answer. A promise of one is the same,
+// later: see `late`
+type SimulatedReply = Uint8Array | Error | undefined;
+export type SimulatedServer = (query: Message) => SimulatedReply | Promise<SimulatedReply>;
 
 export interface SimulatedQuery {
   server: string;
@@ -51,17 +53,18 @@ export function simulateNetwork(servers: Record<string, SimulatedServer>): Simul
       if (!server) {
         return Promise.reject(new ConnectionError(`Cannot reach ${endpoint.host}: no route`));
       }
-      const reply = server(asked);
-      if (reply instanceof Error) return Promise.reject(reply);
-      if (reply === undefined) {
-        // silence: only the caller's timeout or abort ends the wait
-        return new Promise((_, reject) => {
-          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      return new Promise((resolve, reject) => {
+        // only the caller's timeout or abort ends the wait for a server that is silent, or
+        // has not answered yet
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+        void Promise.resolve(server(asked)).then(reply => {
+          if (signal?.aborted || reply === undefined) return;
+          if (reply instanceof Error) return reject(reply);
+          const bytes = Uint8Array.from(reply);
+          bytes.set(query.subarray(0, 2), 0);
+          resolve({ bytes, transport: name });
         });
-      }
-      const bytes = Uint8Array.from(reply);
-      bytes.set(query.subarray(0, 2), 0);
-      return Promise.resolve({ bytes, transport: name });
+      });
     },
     close() {},
   });
@@ -71,6 +74,11 @@ export function simulateNetwork(servers: Record<string, SimulatedServer>): Simul
     queries,
     log: () => queries.map(query => `${query.server} ${query.name} ${query.type}`),
   };
+}
+
+// a server that answers as `server` does, `ms` milliseconds after it is asked
+export function late(ms: number, server: SimulatedServer): SimulatedServer {
+  return query => new Promise(resolve => setTimeout(() => resolve(server(query)), ms));
 }
 
 // ---- zones
