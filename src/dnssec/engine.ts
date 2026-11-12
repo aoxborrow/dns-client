@@ -196,8 +196,10 @@ export class DnssecEngine {
   private serverMatrix: ServerMatrixCell[] = [];
   private findings: DnssecFinding[] = [];
   private transport: DnsTransportType;
-  // names the walk could not get an answer about from their parent's servers
-  private unanswered: string[] = [];
+  // names the walk could not get an answer about, each with the zone whose servers were
+  // asked. The walk keeps going past one, so it may later find a deeper zone cut under
+  // the same zone, and the name then is not on the path to it
+  private unanswered: { name: string; askedOf: string }[] = [];
   private timeoutMs: number;
   private deep: boolean;
   private crossCheckEnabled: boolean;
@@ -642,7 +644,7 @@ export class DnssecEngine {
       // nobody answered, which is not the same as "there is no delegation here". Whether
       // the name is a zone of its own is now unknown, and so is everything below it: the
       // parent's verdict must not be handed down to a name it was never asked about
-      this.unanswered.push(candidate);
+      this.unanswered.push({ name: candidate, askedOf: parent.name });
       this.finding(
         'zone-unreachable',
         `The servers for ${parent.name === '.' ? 'the root' : parent.name} did not answer for ${candidate}, so it is not known whether ${candidate} is a zone of its own or how it is delegated.`,
@@ -2262,8 +2264,12 @@ export class DnssecEngine {
     // a break that was found stands, and so does a proven insecure delegation: nothing
     // below an unsigned zone can be part of a chain of trust, whatever was not answered.
     // Only a secure verdict can be undone by a name the walk could not be asked about,
-    // since that zone being secure says nothing about a delegation nobody answered for
-    if (status === SECURE && this.unanswered.length > 0) return INDETERMINATE;
+    // since that zone being secure says nothing about a delegation nobody answered for.
+    // Only a name asked of this zone counts: one asked of a zone higher up was passed by
+    // when that zone went on to delegate this one itself
+    const last = canonicalName(chain[chain.length - 1].zone);
+    const inDoubt = this.unanswered.some(entry => canonicalName(entry.askedOf) === last);
+    if (status === SECURE && inDoubt) return INDETERMINATE;
     return status;
   }
 
