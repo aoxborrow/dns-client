@@ -125,6 +125,19 @@ describe('name helpers', () => {
     expect(canonicalName('')).toBe('.');
   });
 
+  it('keeps an escaped dot at the end, and drops a root dot after an escaped backslash', () => {
+    expect(canonicalName('A\\.')).toBe('a\\.');
+    expect(canonicalName('Foo\\\\.')).toBe('foo\\\\');
+    expect(canonicalName('foo\\\\.')).toBe(canonicalName('foo\\\\'));
+    expect(countLabels('a\\.')).toBe(1);
+    expect(countLabels('foo\\\\.')).toBe(1);
+    expect(parentName('a\\.example.com.')).toBe('com');
+    expect(parentName('www.a\\.')).toBe('a\\.');
+    expect(isInZone('www.a\\.', 'a\\.')).toBe(true);
+    expect(isInZone('www.a\\.', 'a')).toBe(false);
+    expect(isInZone('www.foo\\\\.', 'foo\\\\')).toBe(true);
+  });
+
   it('counts labels excluding the root', () => {
     expect(countLabels('.')).toBe(0);
     expect(countLabels('com')).toBe(1);
