@@ -20,6 +20,7 @@ export type SimulatedServer = (query: Message) => SimulatedReply | Promise<Simul
 
 export interface SimulatedQuery {
   server: string;
+  port: number;
   name: string;
   type: string;
   transport: TransportName;
@@ -44,6 +45,7 @@ export function simulateNetwork(servers: Record<string, SimulatedServer>): Simul
       const [question] = asked.questions;
       queries.push({
         server: endpoint.host,
+        port: endpoint.port,
         name: question.name,
         type: typeName(question.type),
         transport: name,

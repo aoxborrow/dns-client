@@ -943,3 +943,58 @@ describe('validate: how long what was learned is kept', () => {
     expect(later.security?.reason.code).toBe('signature-expired');
   });
 });
+
+describe('validate: the chain is asked the way the data was', () => {
+  const zones = [root, tld, secure('secure.example', [['www.secure.example', 'A', '192.0.2.1']])];
+
+  it('sends every chain query with the per-query transport and port', async () => {
+    const { network, authoritative, recursive } = setUp(zones);
+    for (const resolver of [authoritative, recursive]) {
+      network.queries.length = 0;
+      const answer = await resolver.query('www.secure.example', 'A', {
+        transport: 'tcp',
+        port: 5353,
+      });
+      expect(answer.security?.status).toBe('secure');
+      expect(network.queries.some(query => query.type === 'DNSKEY')).toBe(true);
+      for (const query of network.queries) {
+        expect(query).toMatchObject({ transport: 'tcp', port: 5353 });
+      }
+    }
+  });
+
+  it.each(['recursive', 'authoritative'] as const)(
+    'rejects with the reason when the %s query is aborted while the chain is fetched',
+    async kind => {
+      const controller = new AbortController();
+      const reason = new Error('never mind');
+      const signed = signedNetwork(zones);
+      // every server stops answering, and the caller gives up, once the chain is asked for
+      for (const [address, server] of Object.entries(signed.servers)) {
+        signed.servers[address] = query => {
+          if (query.questions[0].type !== 48) return server(query);
+          controller.abort(reason);
+          return undefined;
+        };
+      }
+      const network = simulateNetwork(signed.servers);
+      const resolver =
+        kind === 'recursive'
+          ? new Resolver({
+              transports: network.transports,
+              servers: [signed.recursive],
+              trustAnchors: signed.trustAnchors,
+              validate: true,
+            })
+          : new AuthoritativeResolver({
+              transports: network.transports,
+              rootServers: signed.rootServers,
+              trustAnchors: signed.trustAnchors,
+              validate: true,
+            });
+      await expect(
+        resolver.query('www.secure.example', 'A', { signal: controller.signal })
+      ).rejects.toBe(reason);
+    }
+  );
+});

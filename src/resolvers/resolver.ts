@@ -146,16 +146,18 @@ export class Resolver {
     const answer = await this.lookup(name, type, { ...options, ...dnssec });
     // a server asked to recurse owes the whole answer, the target of every alias included
     const recursive = (options.recursionDesired ?? this.options.recursionDesired) !== false;
+    // the chain goes where the data query went, the same way: the same server, transport,
+    // port, timeouts and EDNS settings, with header flags of its own
+    const {
+      recursionDesired: _recursionDesired,
+      authenticData: _authenticData,
+      ...sameWay
+    } = options;
     answer.security = await this.validator.validate(
       [{ ...dnssecResponse(answer.message, answer.query.name, typeCode(type)), recursive }],
       async (chainName, chainType) =>
-        (
-          await this.lookup(chainName, chainType, {
-            ...dnssec,
-            ...(options.server !== undefined && { server: options.server }),
-            signal: options.signal,
-          })
-        ).message
+        (await this.lookup(chainName, chainType, { ...sameWay, ...dnssec })).message,
+      options.signal
     );
     return answer;
   }

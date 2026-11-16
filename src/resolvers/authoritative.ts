@@ -286,12 +286,18 @@ export class AuthoritativeResolver {
     // every response on the way is judged, the aliases followed included
     const responses: DnssecResponse[] = [];
     const answer = await this.walk(name, type, { ...options, dnssecOk: true }, follow, responses);
-    // the chain's records are asked for as they are: no alias is followed
+    // the chain's records are asked for as they are: no alias is followed. They go the way
+    // the data query went: the same transport, port, timeouts and EDNS settings
+    const {
+      checkingDisabled: _checkingDisabled,
+      authenticData: _authenticData,
+      ...sameWay
+    } = options;
     answer.security = await this.validator.validate(
       responses,
       async (chainName, chainType) =>
-        (await this.walk(chainName, chainType, { dnssecOk: true, signal: options.signal }, false))
-          .message
+        (await this.walk(chainName, chainType, { ...sameWay, dnssecOk: true }, false)).message,
+      options.signal
     );
     return answer;
   }
