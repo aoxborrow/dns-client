@@ -1,5 +1,6 @@
 import type { ClientHttp2Session, ClientHttp2Stream, IncomingHttpHeaders } from 'node:http2';
 import type { TLSSocket } from 'node:tls';
+import { ConnectionError } from '../errors';
 import { nodeTlsOptions, whenReady } from './node';
 import { openTunnel } from './proxy';
 import type { Proxy } from './proxy';
@@ -108,6 +109,10 @@ export function createHttp2Client(options: Http2ClientOptions = {}): Http2Client
   const idleTimeout = options.idleTimeout ?? DEFAULT_IDLE_TIMEOUT;
   const slots = new Map<string, Slot>();
   const open = new Set<Session>();
+  // after close() nothing is sent, and nothing in flight is sent again: a query fails as
+  // one on a closed TCP transport does
+  let closed = false;
+  const closedError = () => new ConnectionError('The DoH transport was closed');
 
   async function openSession(
     mods: Modules,
@@ -353,14 +358,17 @@ export function createHttp2Client(options: Http2ClientOptions = {}): Http2Client
       const mods = await loadModules();
       if (!mods) return undefined;
       if (request.signal?.aborted) throw request.signal.reason;
+      if (closed) throw closedError();
       const url = new URL(request.url);
       // once on the session there is, and once more on a fresh one if that one went
       for (let attempt = 1; ; attempt++) {
-        const record = await sessionFor(mods, url, request);
-        if (!record) return undefined;
         try {
+          const record = await sessionFor(mods, url, request);
+          if (!record) return undefined;
           return await send(mods, record, url, request);
         } catch (error) {
+          if (request.signal?.aborted) throw request.signal.reason;
+          if (closed) throw closedError();
           if (!(error instanceof SessionGone)) throw error;
           if (attempt >= 2) throw error.error;
         }
@@ -368,6 +376,7 @@ export function createHttp2Client(options: Http2ClientOptions = {}): Http2Client
     },
 
     close() {
+      closed = true;
       for (const slot of slots.values()) slot.opening.abort();
       slots.clear();
       for (const record of open) {
