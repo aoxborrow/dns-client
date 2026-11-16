@@ -194,6 +194,42 @@ describe('DNS over HTTPS on HTTP/2', () => {
     expect(server.openSessions).toBe(0);
   });
 
+  it('fails a query in flight when the transports close, without opening a new session', async () => {
+    server = await startDoh2Server(() => undefined);
+    const send = make()
+      .get('doh')
+      .send({
+        endpoint: { host: '127.0.0.1', port: server.port, url: server.url },
+        query: encodeQuery({ id: 0, name: 'example.com', type: 'A' }),
+      })
+      .catch(caught => caught);
+    // the query is on the wire, waiting for an answer that never comes
+    for (let tries = 0; server.requests.length === 0 && tries < 100; tries++) await wait(10);
+    transports!.close();
+    const error = await send;
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toMatch(/closed/);
+    await wait(30);
+    expect(server.sessions).toBe(1);
+    expect(server.requests).toHaveLength(1);
+    expect(server.openSessions).toBe(0);
+  });
+
+  it('fails a query waiting for its session when the transports close', async () => {
+    server = await startDoh2Server(query => answerTo(query));
+    const send = make()
+      .get('doh')
+      .send({
+        endpoint: { host: '127.0.0.1', port: server.port, url: server.url },
+        query: encodeQuery({ id: 0, name: 'example.com', type: 'A' }),
+      })
+      .catch(caught => caught);
+    transports!.close();
+    const error = await send;
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toMatch(/closed/);
+  });
+
   it('uses the fetch it is given instead', async () => {
     server = await startDoh2Server(query => answerTo(query));
     const calls: string[] = [];

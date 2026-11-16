@@ -23,7 +23,13 @@ import { toEndpoint } from '../../src/transports/endpoint';
 import { isNode } from '../../src/transports/runtime';
 import type { DnsEvent } from '../../src/transports/types';
 import { decodeMessage, encodeMessage, encodeName } from '../../src/wire/index';
-import { late, recursiveServer, simulateNetwork, zoneServer } from '../support/simulated-network';
+import {
+  late,
+  recursiveServer,
+  simulateNetwork,
+  soaRecord,
+  zoneServer,
+} from '../support/simulated-network';
 import type { SimulatedNetwork, SimulatedServer } from '../support/simulated-network';
 
 // UDP where there is UDP, which is Node; TCP elsewhere
@@ -81,6 +87,7 @@ describe('Resolver', () => {
     expect(network.queries).toEqual([
       {
         server: '10.0.0.1',
+        port: 53,
         name: 'example.com',
         type: 'MX',
         transport: DEFAULT_TRANSPORT,
@@ -215,6 +222,73 @@ describe('Resolver', () => {
       expect(cacheLifetime(bare)).toBe(0);
       const cut = decodeMessage(encodeMessage({ id: 1, flags: { qr: true, tc: true } }));
       expect(cacheLifetime(cut)).toBe(0);
+    });
+
+    it('keeps an empty answer reached through an alias for the negative lifetime', () => {
+      const alias = {
+        name: 'www.example.com',
+        type: 5,
+        class: 1,
+        ttl: 3600,
+        rdata: encodeName('host.example.com'),
+        section: 'answer' as const,
+      };
+      const address = {
+        name: 'host.example.com',
+        type: 1,
+        class: 1,
+        ttl: 1800,
+        rdata: Uint8Array.of(192, 0, 2, 1),
+        section: 'answer' as const,
+      };
+      const lifetime = (parts: Parameters<typeof encodeMessage>[0]) =>
+        cacheLifetime(
+          decodeMessage(
+            encodeMessage({ questions: [{ name: 'www.example.com', type: 1, class: 1 }], ...parts })
+          )
+        );
+      const header = { id: 1, flags: { qr: true } };
+      // the alias and its target's address: the shortest TTL
+      expect(lifetime({ ...header, answers: [alias, address] })).toBe(1800);
+      // the alias, and the target has no address: the SOA's minimum, not the alias's TTL
+      expect(
+        lifetime({
+          ...header,
+          answers: [alias],
+          authorities: [soaRecord('example.com', 3600, 300)],
+        })
+      ).toBe(300);
+      // nor longer than the alias lives
+      expect(
+        lifetime({
+          ...header,
+          answers: [{ ...alias, ttl: 60 }],
+          authorities: [soaRecord('example.com', 3600, 300)],
+        })
+      ).toBe(60);
+      // the target does not exist
+      expect(
+        lifetime({
+          ...header,
+          rcode: 3,
+          answers: [alias],
+          authorities: [soaRecord('example.com', 3600, 300)],
+        })
+      ).toBe(300);
+      // with no SOA, nothing says how long the empty part lives
+      expect(lifetime({ ...header, answers: [alias] })).toBe(0);
+      // a question for the alias itself is answered by it
+      expect(
+        cacheLifetime(
+          decodeMessage(
+            encodeMessage({
+              ...header,
+              questions: [{ name: 'www.example.com', type: 5, class: 1 }],
+              answers: [alias],
+            })
+          )
+        )
+      ).toBe(3600);
     });
 
     it('keeps questions with different settings apart', async () => {

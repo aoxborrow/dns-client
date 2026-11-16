@@ -74,6 +74,10 @@ export interface DnssecResponse {
   rcode: number;
   answers: WireRecord[];
   authorities: WireRecord[];
+  // the server was asked to recurse, so it follows every alias to its end: a response that
+  // stops at an alias without the target's records owes a proof that the target has none.
+  // A zone's own server hands over an alias that leads out of its zone and nothing more
+  recursive?: boolean;
 }
 
 // a name between the trust anchor and the data, with what was fetched for it
@@ -899,11 +903,14 @@ async function judgeResponse(
     }
   }
 
-  // the end of the alias chain, and whether it holds what was asked for
+  // the end of the alias chain, the name the last alias was found at, and whether the end
+  // holds what was asked for
   let target = canonicalName(response.name);
+  let lastAlias = target;
   for (let step = 0; step <= rrsets.length; step++) {
     const next = aliasStep(target, rrsets);
     if (next === undefined) break;
+    lastAlias = target;
     target = next;
   }
   const answered = rrsets.some(
@@ -914,17 +921,22 @@ async function judgeResponse(
   if (answered || (response.type === CNAME && rrsets.some(rrset => rrset.type === CNAME)))
     return links;
   const aliased = target !== canonicalName(response.name);
-  if (aliased && response.rcode === RCODES.NOERROR) {
-    // the alias is answered by another response, or this one stops at the alias: a server
-    // answering for its own zone hands over the alias and nothing about a name elsewhere.
-    // Only a response that speaks for the target's zone (its SOA beside the empty answer)
-    // says the target has nothing
+  if (aliased && response.rcode === RCODES.NOERROR && !asked.has(target)) {
+    // this response stops at the alias. A server answering for its own zone hands over an
+    // alias that leads elsewhere and nothing about the name it leads to; one that leads
+    // inside its zone it follows. A recursive resolver follows every alias. Otherwise only a
+    // response that speaks for the target's zone (its SOA beside the empty answer) says the
+    // target has nothing. Where the target has to be accounted for, it takes a proof
     const targetZone = enclosing(target)?.zone;
     const speaksForTarget = response.authorities.some(
       record =>
         record.type === SOA && targetZone !== undefined && canonicalName(record.name) === targetZone
     );
-    if (asked.has(target) || !speaksForTarget) return links;
+    const insideZone = targetZone !== undefined && enclosing(lastAlias)?.zone === targetZone;
+    if (!response.recursive && !insideZone && !speaksForTarget) return links;
+  } else if (aliased && response.rcode === RCODES.NOERROR) {
+    // the alias is answered by another response
+    return links;
   }
   if (response.rcode !== RCODES.NOERROR && response.rcode !== RCODES.NXDOMAIN) {
     links.push({

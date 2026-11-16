@@ -5,7 +5,7 @@ import type { ExchangeResult } from '../exchange';
 import { classCode, RECORD_CLASSES } from '../protocol/classes';
 import { DEFAULT_UDP_PAYLOAD_SIZE } from '../protocol/edns';
 import { RCODES } from '../protocol/header';
-import { typeCode } from '../protocol/types';
+import { typeCode, typeName } from '../protocol/types';
 import { decodeRecords } from '../records/decode';
 import type { DnsRecord, KnownRecordType, RecordOf } from '../records/types';
 import { createTransports, defaultTransports } from '../transports/index';
@@ -18,7 +18,7 @@ import type { Message } from '../wire/message';
 import { comparableName, toAsciiName } from '../wire/names';
 import { dnssecResponse, Validator } from '../dnssec/validate';
 import type { TrustAnchor } from '../dnssec/types';
-import { buildAnswer } from './answer';
+import { buildAnswer, matchingRecords } from './answer';
 import type { Answer, QuerySettings } from './answer';
 import { resolveCache } from './cache';
 import type { Cache, CacheOption } from './cache';
@@ -82,19 +82,29 @@ const TRY_NEXT = new Set<number>([RCODES.SERVFAIL, RCODES.NOTIMP, RCODES.REFUSED
 // how long a response may be cached, in seconds. Zero for one that should not be
 export function cacheLifetime(message: Message): number {
   if (message.flags.tc) return 0;
+  if (message.rcode !== RCODES.NOERROR && message.rcode !== RCODES.NXDOMAIN) return 0;
+  const answerTtl = Math.min(...message.answers.map(record => record.ttl));
+  const [question] = message.questions;
   if (message.rcode === RCODES.NOERROR && message.answers.length > 0) {
-    return Math.min(...message.answers.map(record => record.ttl));
+    // records that answer the question: they live as long as the shortest TTL. Only an
+    // alias chain, with nothing of the type at its end, is a negative answer as well
+    const answered =
+      !question ||
+      matchingRecords(
+        question.name,
+        typeName(question.type),
+        decodeRecords(message.answers, { lenient: true })
+      ).length > 0;
+    if (answered) return answerTtl;
   }
-  if (message.rcode === RCODES.NOERROR || message.rcode === RCODES.NXDOMAIN) {
-    // a negative answer lives for the smaller of the SOA's TTL and its minimum field
-    // (RFC 2308 §5); with no SOA there is nothing to say how long
-    const soa = decodeRecords(
-      message.authorities.filter(record => record.type === 6),
-      { lenient: true }
-    ).find((record): record is Extract<DnsRecord, { type: 'SOA' }> => record.type === 'SOA');
-    return soa ? Math.min(soa.ttl, soa.minimum) : 0;
-  }
-  return 0;
+  // a negative answer lives for the smaller of the SOA's TTL and its minimum field
+  // (RFC 2308 §5), and no longer than an alias that led to it; with no SOA there is
+  // nothing to say how long
+  const soa = decodeRecords(
+    message.authorities.filter(record => record.type === 6),
+    { lenient: true }
+  ).find((record): record is Extract<DnsRecord, { type: 'SOA' }> => record.type === 'SOA');
+  return soa ? Math.min(soa.ttl, soa.minimum, answerTtl) : 0;
 }
 
 export class Resolver {
@@ -144,16 +154,20 @@ export class Resolver {
     // instead of answering SERVFAIL
     const dnssec = { dnssecOk: true, checkingDisabled: true };
     const answer = await this.lookup(name, type, { ...options, ...dnssec });
+    // a server asked to recurse owes the whole answer, the target of every alias included
+    const recursive = (options.recursionDesired ?? this.options.recursionDesired) !== false;
+    // the chain goes where the data query went, the same way: the same server, transport,
+    // port, timeouts and EDNS settings, with header flags of its own
+    const {
+      recursionDesired: _recursionDesired,
+      authenticData: _authenticData,
+      ...sameWay
+    } = options;
     answer.security = await this.validator.validate(
-      [dnssecResponse(answer.message, answer.query.name, typeCode(type))],
+      [{ ...dnssecResponse(answer.message, answer.query.name, typeCode(type)), recursive }],
       async (chainName, chainType) =>
-        (
-          await this.lookup(chainName, chainType, {
-            ...dnssec,
-            ...(options.server !== undefined && { server: options.server }),
-            signal: options.signal,
-          })
-        ).message
+        (await this.lookup(chainName, chainType, { ...sameWay, ...dnssec })).message,
+      options.signal
     );
     return answer;
   }

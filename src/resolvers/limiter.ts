@@ -22,17 +22,31 @@ export function createLimiter(max: number): Limiter {
   };
 }
 
+export interface Pacer {
+  (server: string): Promise<void>;
+  // the servers it still remembers a time for
+  readonly size: number;
+}
+
 // wait until `gap` milliseconds have passed since the last query to the same server. A
-// burst of questions for one authoritative server then goes out spaced, not all at once
-export function createPacer(gap: number): (server: string) => Promise<void> {
+// burst of questions for one authoritative server then goes out spaced, not all at once.
+// A server whose turn has passed is the same as one never asked, so it is forgotten: at
+// most once a gap, the map is swept of them, and holds only the servers asked lately
+export function createPacer(gap: number): Pacer {
   const next = new Map<string, number>();
-  return async server => {
+  let swept = 0;
+  const pace = async (server: string) => {
     if (gap <= 0) return;
     const now = Date.now();
+    if (now - swept >= gap) {
+      swept = now;
+      for (const [key, at] of next) if (at <= now) next.delete(key);
+    }
     const at = Math.max(now, next.get(server) ?? 0);
     next.set(server, at + gap);
     if (at > now) await new Promise<void>(resolve => setTimeout(resolve, at - now));
   };
+  return Object.defineProperty(pace, 'size', { get: () => next.size }) as Pacer;
 }
 
 export type KeyedLimiter = <T>(key: string, task: () => Promise<T>) => Promise<T>;

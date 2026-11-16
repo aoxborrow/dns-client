@@ -24,7 +24,7 @@ import type { TrustAnchor } from '../dnssec/types';
 import { aliasTarget, buildAnswer } from './answer';
 import type { Answer, QuerySettings, TraceHop } from './answer';
 import { createKeyedLimiter, createLimiter, createPacer } from './limiter';
-import type { KeyedLimiter, Limiter } from './limiter';
+import type { KeyedLimiter, Limiter, Pacer } from './limiter';
 import { ROOT_HINTS } from './root-hints';
 import type { NameserverHint } from './root-hints';
 
@@ -227,7 +227,7 @@ export class AuthoritativeResolver {
   private readonly options: AuthoritativeResolverOptions;
   private readonly limit: Limiter;
   private readonly limitServer: KeyedLimiter;
-  private readonly pace: (server: string) => Promise<void>;
+  private readonly pace: Pacer;
   private readonly transports: Transports;
   private readonly ownsTransports: boolean;
   private readonly knowledge: Knowledge = { cuts: new Map(), addresses: new Map() };
@@ -286,12 +286,18 @@ export class AuthoritativeResolver {
     // every response on the way is judged, the aliases followed included
     const responses: DnssecResponse[] = [];
     const answer = await this.walk(name, type, { ...options, dnssecOk: true }, follow, responses);
-    // the chain's records are asked for as they are: no alias is followed
+    // the chain's records are asked for as they are: no alias is followed. They go the way
+    // the data query went: the same transport, port, timeouts and EDNS settings
+    const {
+      checkingDisabled: _checkingDisabled,
+      authenticData: _authenticData,
+      ...sameWay
+    } = options;
     answer.security = await this.validator.validate(
       responses,
       async (chainName, chainType) =>
-        (await this.walk(chainName, chainType, { dnssecOk: true, signal: options.signal }, false))
-          .message
+        (await this.walk(chainName, chainType, { ...sameWay, dnssecOk: true }, false)).message,
+      options.signal
     );
     return answer;
   }

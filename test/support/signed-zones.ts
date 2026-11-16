@@ -571,8 +571,29 @@ function serve(data: ZoneData): SimulatedServer {
     const cname = data.get(name, 5);
     if (cname) {
       const answers = data.records(cname, 'answer', dnssec);
-      const target = data.get(decodeTarget(cname.rdatas[0]), type);
+      const targetName = decodeTarget(cname.rdatas[0]);
+      const target = data.get(targetName, type);
       if (target) answers.push(...data.records(target, 'answer', dnssec));
+      // an alias inside the zone is followed to its end, and a target with nothing of the
+      // type is proven so (RFC 6604)
+      const inside =
+        isSubdomain(targetName, zone) &&
+        ![...data.children].some(delegated => isSubdomain(targetName, delegated));
+      if (!target && inside && type !== 5) {
+        if (data.exists(targetName)) {
+          return reply({
+            aa: true,
+            answers,
+            authorities: [...soa(), ...proof(data.nodataProof(targetName))],
+          });
+        }
+        return reply({
+          aa: true,
+          rcode: 3,
+          answers,
+          authorities: [...soa(), ...proof(data.nxdomainProof(targetName))],
+        });
+      }
       return reply({ aa: true, answers });
     }
 

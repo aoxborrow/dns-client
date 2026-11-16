@@ -881,7 +881,9 @@ export function verifyNxdomainProof(qname: string, records: WireRecord[]): Denia
     let wildcardOk = false;
     if (closest) {
       const nextCloser = nextCloserName(name, closest.name);
-      const covered = coverNsec3(nsec3, nextCloser);
+      // an NSEC3 of the name's own says it exists, an empty non-terminal at least, whatever
+      // range also seems to cover it
+      const covered = matchNsec3(nsec3, name) ? undefined : coverNsec3(nsec3, nextCloser);
       nextOk = Boolean(covered);
       steps.push(
         step(
@@ -933,7 +935,11 @@ export function verifyNxdomainProof(qname: string, records: WireRecord[]): Denia
     );
   }
 
-  const covering = nsec.find(e => nsecProvesAbsent(e, name));
+  // a range whose next name lies below the name says the name exists, as an empty
+  // non-terminal: that is a NODATA, never an NXDOMAIN
+  const below = (e: NsecEntry) => e.next !== name && isSubdomain(e.next, name);
+  const covering = nsec.find(e => nsecProvesAbsent(e, name) && !below(e));
+  const revealing = covering ? undefined : nsec.find(e => nsecProvesAbsent(e, name) && below(e));
   // the wildcard that could have synthesised an answer must be proven absent too: the one at
   // the closest encloser, which may be an empty non-terminal only the next name reveals
   const wildcardSource = covering ? closestEncloserOf(name, covering) : name;
@@ -954,7 +960,9 @@ export function verifyNxdomainProof(qname: string, records: WireRecord[]): Denia
         'Covering NSEC',
         covering
           ? `${name} falls between ${covering.owner} and ${covering.next}.`
-          : `No NSEC record covers ${name}.`,
+          : revealing
+            ? `${revealing.next} lies below ${name}, so ${name} exists as an empty non-terminal.`
+            : `No NSEC record covers ${name}.`,
         covering ? VERIFIED : FAILED
       ),
       step(

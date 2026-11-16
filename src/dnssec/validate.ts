@@ -76,8 +76,14 @@ export class Validator {
     this.facts.clear();
   }
 
-  // judge the data in `responses`, fetching whatever chain it needs
-  async validate(responses: DnssecResponse[], fetch: ValidationFetch): Promise<Security> {
+  // judge the data in `responses`, fetching whatever chain it needs. A fetch that fails
+  // leaves its link indeterminate, unless `signal` has been aborted: then the failure is
+  // the caller's, and validation rejects with it
+  async validate(
+    responses: DnssecResponse[],
+    fetch: ValidationFetch,
+    signal?: AbortSignal
+  ): Promise<Security> {
     const now = new Date();
     const anchorZone = canonicalName(this.anchors[0]?.zone ?? '.');
     const known: ZoneFact[] = [];
@@ -97,7 +103,10 @@ export class Validator {
     };
 
     const ask = async (name: string, type: number): Promise<DnssecResponse | undefined> => {
-      const message = await fetch(name, type).catch(() => undefined);
+      const message = await fetch(name, type).catch((error: unknown) => {
+        if (signal?.aborted) throw error;
+        return undefined;
+      });
       return message && dnssecResponse(message, name, type);
     };
 
