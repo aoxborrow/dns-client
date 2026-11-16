@@ -96,7 +96,7 @@ The 100 names in `bench/top-100.ts`, A records, against three public resolvers o
 | :-- | --: | --: | --: | --: | --: | --: | --: |
 | @aoxborrow/dns Resolver | UDP | 16.4 | 13.0 | 96.3 | 2,421 | 202 | 0 |
 | @aoxborrow/dns Resolver, TCP pipelined | TCP | 22.5 | 12.1 | 26.0 | 1,370 | 117 | 0 |
-| @aoxborrow/dns Resolver, DoH | DoH | 20.6 | 15.3 | 25.3 | 1,648 | 272 | 0 |
+| @aoxborrow/dns Resolver, DoH‡ | DoH | 187.1 | 12.3 | 93.1 | 1,934 | 205 | 0 |
 | @aoxborrow/dns/promises resolve4 | UDP | 12.4 | 13.0 | 24.3 | 1,642 | 201 | 0 |
 | node:dns Resolver (c-ares) | UDP | 11.7 | 11.7 | 21.1 | 1,418 | 200 | 0 |
 | dns2 UDPClient | UDP | 13.6 | 14.8 | 144.1 | 3,806 | 218 | 0 |
@@ -110,7 +110,7 @@ The 100 names in `bench/top-100.ts`, A records, against three public resolvers o
 | :-- | --: | --: | --: | --: | --: | --: | --: |
 | @aoxborrow/dns Resolver | UDP | 18.2 | 18.3 | 30.7 | 1,927 | 251 | 0 |
 | @aoxborrow/dns Resolver, TCP pipelined | TCP | 31.6 | 17.9 | 33.0 | 1,936 | 162 | 0 |
-| @aoxborrow/dns Resolver, DoH | DoH | 149.6 | 81.2 | 211.4 | 9,672 | 378 | 0 |
+| @aoxborrow/dns Resolver, DoH‡ | DoH | 102.9 | 22.3 | 47.9 | 2,493 | 362 | 0 |
 | @aoxborrow/dns/promises resolve4 | UDP | 18.0 | 16.7 | 25.5 | 1,814 | 2,295 | 0 |
 | node:dns Resolver (c-ares) | UDP | 16.4 | 16.3 | 22.5 | 1,504 | 245 | 0 |
 | dns2 UDPClient | UDP | 17.6 | 17.2 | 148.9 | 3,013 | 594 | 0 |
@@ -124,7 +124,7 @@ The 100 names in `bench/top-100.ts`, A records, against three public resolvers o
 | :-- | --: | --: | --: | --: | --: | --: | --: |
 | @aoxborrow/dns Resolver | UDP | 9.4 | 10.8 | 181.0 | 4,309 | 1,806 | 0 |
 | @aoxborrow/dns Resolver, TCP pipelined | TCP | 152.5 | 10.6 | 150.5 | 3,133 | 80 | 0 |
-| @aoxborrow/dns Resolver, DoH | DoH | 34.2 | 33.2 | 43.2 | 3,464 | 472 | 210 |
+| @aoxborrow/dns Resolver, DoH‡ | DoH | 43.7 | 11.9 | 150.6 | 2,588 | 138 | 0 |
 | @aoxborrow/dns/promises resolve4 | UDP | 9.0 | 8.9 | 12.4 | 926 | 68 | 0 |
 | node:dns Resolver (c-ares) | UDP | 8.1 | 9.1 | 123.1 | 1,635 | 83 | 0 |
 | dns2 UDPClient | UDP | 8.4 | 8.7 | 11.8 | 901 | 90 | 0 |
@@ -132,7 +132,9 @@ The 100 names in `bench/top-100.ts`, A records, against three public resolvers o
 | fetch + dns-packet (DoH) | DoH | 185.5 | 38.5 | 180.8 | 5,665 | 393 | 210 |
 | `dig`, a process per query | process | n/a | 14.0 (query 10) | 21.5 | 1,537 | n/a | 0 |
 
-DoH failures here are HTTP 505s: some of this resolver's sites answer only HTTP/2, as RFC 8484 §5.2 recommends, and the clients built on Node's own `fetch` speak HTTP/1.1. tangerine brings undici 8, which negotiates HTTP/2. `@aoxborrow/dns` takes a `fetch` option for a client that does.
+DoH failures here are HTTP 505s: some of this resolver's sites answer only HTTP/2, as RFC 8484 §5.2 recommends, and the clients built on Node's own `fetch` speak HTTP/1.1. tangerine brings undici 8, which negotiates HTTP/2. `@aoxborrow/dns` now sends DoH over HTTP/2 with `node:http2` on Node.
+
+‡ Re-run on its own on the same day, after DoH on Node moved from `fetch` (HTTP/1.1) to `node:http2`; the other rows are from the full run. Before the change this row failed all 210 queries to Quad9 with HTTP 505, like the `fetch` client. Cold is higher than the `fetch` rows because a new client opens its own TLS connection and HTTP/2 session, where Node's `fetch` keeps one connection pool for the whole process, so its "cold" query reuses a connection an earlier client opened.
 
 ### The operating system's resolver
 

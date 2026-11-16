@@ -40,6 +40,13 @@ A server is an address, a name, `host:port`, or an `https://` URL, which is aske
 over HTTPS (`https://cloudflare-dns.com/dns-query`). For DNS over TLS, name the server and
 set `transport: 'tls'`.
 
+On Node, DNS over HTTPS goes over HTTP/2 with `node:http2`, one session per server shared
+by every query to it (RFC 8484 recommends HTTP/2 at least, and some servers refuse
+HTTP/1.1). A session idle for `idleTimeout` milliseconds (5000 by default) is closed, and
+`tls` (`ca`, `rejectUnauthorized`) applies to it as to DNS over TLS. A server that does not
+offer HTTP/2, an `http://` URL, and every other runtime go through `fetch`; pass your own
+`fetch` to use it everywhere.
+
 `Resolver` caches by TTL, shares one query between callers asking the same thing at the
 same moment, and moves to the next server when one fails or answers SERVFAIL, NOTIMP or
 REFUSED.
@@ -274,7 +281,7 @@ returned in ASCII.
 | `@aoxborrow/dns/transports/udp` | DNS over UDP, a fresh port per query | Node |
 | `@aoxborrow/dns/transports/tcp` | DNS over TCP | Node, Cloudflare Workers |
 | `@aoxborrow/dns/transports/tls` | DNS over TLS | Node, Cloudflare Workers |
-| `@aoxborrow/dns/transports/doh` | DNS over HTTPS | anywhere with `fetch` |
+| `@aoxborrow/dns/transports/doh` | DNS over HTTPS: HTTP/2 on Node, `fetch` elsewhere | anywhere with `fetch` |
 | `@aoxborrow/dns/dnssec` | signature verification, DS digests, NSEC/NSEC3 proofs, trust anchors | anywhere |
 
 Node 20 or later. The package ships ES modules and CommonJS, with type declarations for
@@ -299,7 +306,7 @@ const resolver = new Resolver({ servers: ['1.1.1.1'], proxy: 'socks5://user:pass
 | --- | --- |
 | TCP, DNS over TLS | a tunnel to the server; TLS starts inside it |
 | UDP | a SOCKS5 UDP association where the proxy offers one, otherwise TCP through the tunnel. The answer's `transport` says which |
-| DNS over HTTPS | not by itself: pass a `fetch` that uses the proxy. Without one the query fails |
+| DNS over HTTPS | on Node, HTTP/2 through a tunnel to the server; a server that does not offer HTTP/2 fails. Elsewhere, pass a `fetch` that uses the proxy. Without one the query fails |
 
 `proxy` can be a function that picks a proxy per server, or returns nothing to leave a
 server unproxied. An explicit `connect` wins over `proxy` for TCP and TLS. Credentials

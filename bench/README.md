@@ -70,6 +70,8 @@ query where it has that setting, and its cache off except in the cache scenario.
   sockets cost throughput at high concurrency; they are what makes a forged answer much
   harder to land (RFC 5452).
 - The DoH clients that use Node's own `fetch` speak HTTP/1.1 and open a connection for each
-  query in flight.
+  query in flight. `@aoxborrow/dns` sends DoH to an `https://` URL over HTTP/2 with
+  `node:http2`, one multiplexed session per server; the fixture DoH server is plain HTTP,
+  so on it the library uses `fetch` like the others.
 - Real-network numbers are one run from one place. The differences between clients there
   are mostly smaller than the network's own variance; compare rows within one table.
