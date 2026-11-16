@@ -446,6 +446,13 @@ export class Resolver {
     syscall: string,
     convert: (records: DnsRecord[], aliasTtl: number) => Out
   ): Promise<Out> {
+    // an empty list set on purpose asks no one, where an unset one means the machine's
+    // servers. c-ares has no code of its own for this that Node knows: its queries fail as
+    // UNKNOWN_ARES_ERROR, and a reverse lookup finds nothing
+    if (this.#servers?.length === 0) {
+      const code = syscall === 'getHostByAddr' ? 'ENOTFOUND' : 'UNKNOWN_ARES_ERROR';
+      return Promise.reject(nodeError(code, syscall, hostname));
+    }
     return new Promise<Out>((resolve, reject) => {
       const cancel = (code: string) => {
         this.#pending.delete(cancel);

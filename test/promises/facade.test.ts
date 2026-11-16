@@ -4,6 +4,7 @@ import * as facade from '../../src/promises/index';
 import { Resolver } from '../../src/promises/index';
 import { startFixtureServer } from '../support/fixture-server';
 import type { FixtureServer } from '../support/fixture-server';
+import { simulateNetwork } from '../support/simulated-network';
 import { ZONE, zoneResponder } from '../support/zone';
 
 // the facade against Node's own resolver, both asking the same in-process server: every
@@ -216,6 +217,33 @@ describe('servers', () => {
         expect.objectContaining({ code: 'ERR_INVALID_IP_ADDRESS' })
       );
     }
+  });
+
+  it('asks no one after setServers([]), with the errors node:dns gives', async () => {
+    const theirs = new nodeDns.Resolver({ timeout: 300, tries: 1 });
+    theirs.setServers([]);
+    const network = simulateNetwork({});
+    const mine = new Resolver({ timeout: 300, tries: 1, transports: network.transports });
+    mine.setServers([]);
+    expect(mine.getServers()).toEqual([]);
+    const cases: [Method, ...unknown[]][] = [
+      ['resolve4', `www.${ZONE}`],
+      ['resolveTxt', `www.${ZONE}`],
+      ['resolveAny', `www.${ZONE}`],
+      ['reverse', '192.0.2.99'],
+    ];
+    for (const [method, ...args] of cases) {
+      expect(await errorOf(() => call(mine, method, args)), method).toEqual(
+        await errorOf(() => call(theirs, method, args))
+      );
+    }
+    // the same from a constructor given none
+    const given = new Resolver({ servers: [], transports: network.transports });
+    expect(given.getServers()).toEqual([]);
+    expect(await errorOf(() => given.resolve4(`www.${ZONE}`))).toMatchObject({
+      code: 'UNKNOWN_ARES_ERROR',
+    });
+    expect(network.queries).toEqual([]);
   });
 
   it("starts from the machine's own", () => {
