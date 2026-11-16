@@ -24,7 +24,7 @@ import type { TrustAnchor } from '../dnssec/types';
 import { aliasTarget, buildAnswer } from './answer';
 import type { Answer, QuerySettings, TraceHop } from './answer';
 import { createKeyedLimiter, createLimiter, createPacer } from './limiter';
-import type { KeyedLimiter, Limiter } from './limiter';
+import type { KeyedLimiter, Limiter, Pacer } from './limiter';
 import { ROOT_HINTS } from './root-hints';
 import type { NameserverHint } from './root-hints';
 
@@ -227,7 +227,7 @@ export class AuthoritativeResolver {
   private readonly options: AuthoritativeResolverOptions;
   private readonly limit: Limiter;
   private readonly limitServer: KeyedLimiter;
-  private readonly pace: (server: string) => Promise<void>;
+  private readonly pace: Pacer;
   private readonly transports: Transports;
   private readonly ownsTransports: boolean;
   private readonly knowledge: Knowledge = { cuts: new Map(), addresses: new Map() };
