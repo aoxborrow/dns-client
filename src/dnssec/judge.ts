@@ -229,9 +229,11 @@ export async function judgeChain(
 
   // the data
   const dataLinks: ChainLink[] = [];
+  // a response that ends at an alias another response was asked about is continued there
+  const asked = new Set((input.responses ?? []).map(response => canonicalName(response.name)));
   for (const response of input.responses ?? []) {
     if (done()) break;
-    const judged = await judgeResponse(response, enclosing, rrsetOptions, stopAtFirst);
+    const judged = await judgeResponse(response, enclosing, rrsetOptions, stopAtFirst, asked);
     links.push(...judged);
     dataLinks.push(...judged);
   }
@@ -568,6 +570,24 @@ async function judgeName(
     return { cut: judged.zone, ...(fact && { fact }) };
   }
 
+  // a name below a DNAME is rewritten, never looked up, so it cannot be a zone cut
+  // (RFC 6672 §2.3)
+  const dname = answerSets.find(
+    rrset =>
+      rrset.type === DNAME &&
+      canonicalName(rrset.name) !== owner &&
+      isSubdomain(owner, rrset.name) &&
+      isSubdomain(rrset.name, parent.zone)
+  );
+  if (dname) {
+    const signed = await checkRrset(parent, dname, rrsigs, options);
+    if (signed.code === RRSET_CODES.VERIFIED) {
+      return { inside: true, fact: factOf(parent, false, dname.ttl, name) };
+    }
+    const verdict = rrsetVerdict(signed, parent.zone);
+    return cut(verdict.status, verdict.reason.code, { name: dname.name, type: 'DNAME' });
+  }
+
   // a CNAME at the name: an alias cannot be a zone cut
   const alias = answerSets.find(
     rrset => rrset.type === CNAME && canonicalName(rrset.name) === owner
@@ -683,7 +703,8 @@ async function judgeResponse(
   response: DnssecResponse,
   enclosing: (name: string, strict?: boolean) => ZoneState | undefined,
   options: RrsetOptions,
-  stopAtFirst: boolean
+  stopAtFirst: boolean,
+  asked: Set<string>
 ): Promise<ChainLink[]> {
   const links: ChainLink[] = [];
   const rrsigs = signaturesIn(response);
@@ -778,6 +799,19 @@ async function judgeResponse(
   );
   if (answered || (response.type === CNAME && rrsets.some(rrset => rrset.type === CNAME)))
     return links;
+  const aliased = target !== canonicalName(response.name);
+  if (aliased && response.rcode === RCODES.NOERROR) {
+    // the alias is answered by another response, or this one stops at the alias: a server
+    // answering for its own zone hands over the alias and nothing about a name elsewhere.
+    // Only a response that speaks for the target's zone (its SOA beside the empty answer)
+    // says the target has nothing
+    const targetZone = enclosing(target)?.zone;
+    const speaksForTarget = response.authorities.some(
+      record =>
+        record.type === SOA && targetZone !== undefined && canonicalName(record.name) === targetZone
+    );
+    if (asked.has(target) || !speaksForTarget) return links;
+  }
   if (response.rcode !== RCODES.NOERROR && response.rcode !== RCODES.NXDOMAIN) {
     links.push({
       kind: 'denial',

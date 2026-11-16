@@ -1,0 +1,527 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AuthoritativeResolver, Resolver } from '../../src/index';
+import type { Answer } from '../../src/index';
+import { simulateNetwork } from '../support/simulated-network';
+import { ecdsaKey, revokedKey, signedNetwork, unverifiableKey } from '../support/signed-zones';
+import type { SignedZone } from '../support/signed-zones';
+import { computeDsDigest } from '../../src/dnssec/canonical';
+import { toHex } from '../../src/wire/bytes';
+import { decodeMessage, encodeMessage, encodeName } from '../../src/wire/index';
+
+// validation end to end: signed zones built in memory, served over the simulated network,
+// asked through both resolvers with `validate: true`
+
+const DAY = 86_400_000;
+
+function setUp(zones: SignedZone[]) {
+  const signed = signedNetwork(zones);
+  const network = simulateNetwork(signed.servers);
+  const authoritative = new AuthoritativeResolver({
+    transports: network.transports,
+    rootServers: signed.rootServers,
+    trustAnchors: signed.trustAnchors,
+    validate: true,
+  });
+  const recursive = new Resolver({
+    transports: network.transports,
+    servers: [signed.recursive],
+    trustAnchors: signed.trustAnchors,
+    validate: true,
+  });
+  return { signed, network, authoritative, recursive };
+}
+
+// both resolvers, asked the same question, and what each made of it
+async function both(zones: SignedZone[], name: string, type: string) {
+  const { authoritative, recursive } = setUp(zones);
+  return Promise.all([authoritative.query(name, type), recursive.query(name, type)]);
+}
+
+const root: SignedZone = { zone: '.' };
+const tld: SignedZone = { zone: 'example' };
+
+function expectStatus(answers: Answer[], status: string, code?: string) {
+  for (const answer of answers) {
+    expect(
+      answer.security?.status,
+      `${answer.server}: ${JSON.stringify(answer.security?.reason)}`
+    ).toBe(status);
+    if (code) expect(answer.security?.reason.code).toBe(code);
+  }
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('validate: a signed answer', () => {
+  it('is secure when every link from the root verifies', async () => {
+    const answers = await both(
+      [root, tld, { zone: 'secure.example', records: [['www.secure.example', 'A', '192.0.2.1']] }],
+      'www.secure.example',
+      'A'
+    );
+    expectStatus(answers, 'secure', 'verified');
+    for (const answer of answers) {
+      expect(answer.records).toMatchObject([{ type: 'A', address: '192.0.2.1' }]);
+      expect(
+        answer.security?.chain.filter(link => link.kind === 'keys').map(link => link.zone)
+      ).toEqual(['.', 'example', 'secure.example']);
+      expect(answer.security?.failure).toBeUndefined();
+    }
+  });
+
+  it('leaves the answer alone without `validate`', async () => {
+    const signed = signedNetwork([
+      root,
+      tld,
+      { zone: 'secure.example', records: [['www.secure.example', 'A', '192.0.2.1']] },
+    ]);
+    const network = simulateNetwork(signed.servers);
+    const resolver = new AuthoritativeResolver({
+      transports: network.transports,
+      rootServers: signed.rootServers,
+    });
+    const answer = await resolver.query('www.secure.example', 'A');
+    expect(answer.security).toBeUndefined();
+    expect(network.log().some(line => line.endsWith('DNSKEY') || line.endsWith(' DS'))).toBe(false);
+    expect(answer.answers.map(record => record.type)).toEqual(['A']);
+  });
+});
+
+const secure = (zone: string, records: SignedZone['records'] = []): SignedZone => ({
+  zone,
+  records,
+});
+
+describe('validate: aliases', () => {
+  it('follows a CNAME into another secure zone', async () => {
+    const zones = [
+      root,
+      tld,
+      secure('a.example', [['www.a.example', 'CNAME', 'host.b.example']]),
+      secure('b.example', [['host.b.example', 'A', '192.0.2.7']]),
+    ];
+    const signed = signedNetwork(zones);
+    const network = simulateNetwork(signed.servers);
+    const options = { transports: network.transports, trustAnchors: signed.trustAnchors };
+    const authoritative = new AuthoritativeResolver({
+      ...options,
+      rootServers: signed.rootServers,
+      validate: true,
+      followCnames: true,
+    });
+    const recursive = new Resolver({ ...options, servers: [signed.recursive], validate: true });
+    const answers = await Promise.all([
+      authoritative.query('www.a.example', 'A'),
+      recursive.query('www.a.example', 'A'),
+    ]);
+    expectStatus(answers, 'secure', 'verified');
+    for (const answer of answers) {
+      expect(answer.records).toMatchObject([{ name: 'host.b.example', address: '192.0.2.7' }]);
+      const data = answer.security!.chain.filter(link => link.kind === 'rrset');
+      expect(data.map(link => [link.zone, link.type])).toEqual([
+        ['a.example', 'CNAME'],
+        ['b.example', 'A'],
+      ]);
+    }
+  });
+
+  it('is insecure when the CNAME leads into an unsigned zone', async () => {
+    const [authoritative, recursive] = await both(
+      [
+        root,
+        tld,
+        secure('a.example', [['www.a.example', 'CNAME', 'host.plain.example']]),
+        {
+          zone: 'plain.example',
+          unsigned: true,
+          records: [['host.plain.example', 'A', '192.0.2.8']],
+        },
+      ],
+      'www.a.example',
+      'A'
+    );
+    // the authoritative resolver stops at the alias, which is signed; the recursive one
+    // follows it into the unsigned zone
+    expect(authoritative.security?.status).toBe('secure');
+    expect(recursive.security?.status).toBe('insecure');
+    expect(recursive.security?.reason).toMatchObject({ code: 'no-ds', zone: 'plain.example' });
+  });
+
+  it('is bogus when the CNAME leads to a record with a broken signature', async () => {
+    const [, recursive] = await both(
+      [
+        root,
+        tld,
+        secure('a.example', [['www.a.example', 'CNAME', 'host.b.example']]),
+        {
+          ...secure('b.example', [['host.b.example', 'A', '192.0.2.7']]),
+          inception: new Date(Date.now() - 30 * DAY),
+          expiration: new Date(Date.now() - DAY),
+        },
+      ],
+      'www.a.example',
+      'A'
+    );
+    expect(recursive.security?.status).toBe('bogus');
+    expect(recursive.security?.failure).toMatchObject({ zone: 'b.example' });
+  });
+
+  it('accepts the unsigned CNAME a DNAME synthesizes', async () => {
+    const answers = await both(
+      [
+        root,
+        tld,
+        secure('old.example', [['old.example', 'DNAME', 'new.example']]),
+        secure('new.example', [['www.new.example', 'A', '192.0.2.9']]),
+      ],
+      'www.old.example',
+      'A'
+    );
+    expectStatus(answers, 'secure');
+    const [, recursive] = answers;
+    expect(recursive.records).toMatchObject([{ name: 'www.new.example', address: '192.0.2.9' }]);
+    expect(
+      recursive.security?.chain.filter(link => link.kind === 'rrset').map(l => l.type)
+    ).toEqual(['DNAME', 'CNAME', 'A']);
+  });
+
+  it('rejects a CNAME beside a DNAME that does not make it', async () => {
+    const zones = [root, tld, secure('old.example', [['old.example', 'DNAME', 'new.example']])];
+    const signed = signedNetwork(zones);
+    const address = Object.keys(signed.servers).find(key => key === '10.53.0.3')!;
+    const honest = signed.servers[address];
+    // the DNAME is signed, and the CNAME that comes with it points somewhere else
+    signed.servers[address] = async query => {
+      const reply = await honest(query);
+      if (!(reply instanceof Uint8Array)) return reply;
+      const message = decodeMessage(reply);
+      for (const record of message.answers) {
+        if (record.type === 5) record.rdata = encodeName('www.elsewhere.example');
+      }
+      return encodeMessage(message);
+    };
+    const network = simulateNetwork(signed.servers);
+    const resolver = new AuthoritativeResolver({
+      transports: network.transports,
+      rootServers: signed.rootServers,
+      trustAnchors: signed.trustAnchors,
+      validate: true,
+    });
+    const answer = await resolver.query('www.old.example', 'A');
+    expect(answer.security?.status).toBe('bogus');
+    expect(answer.security?.reason).toMatchObject({ code: 'rrsigs-missing', type: 'CNAME' });
+  });
+});
+
+describe('validate: proofs of non-existence', () => {
+  const zones = (nsec3?: SignedZone['nsec3']): SignedZone[] => [
+    root,
+    tld,
+    { ...secure('secure.example', [['www.secure.example', 'A', '192.0.2.1']]), nsec3 },
+  ];
+
+  it.each([
+    ['NSEC', undefined],
+    ['NSEC3', { iterations: 0 }],
+  ])('proves a name does not exist with %s', async (_kind, nsec3) => {
+    const answers = await both(zones(nsec3), 'nothing.secure.example', 'A');
+    expectStatus(answers, 'secure', 'verified');
+    for (const answer of answers) {
+      expect(answer.rcodeName).toBe('NXDOMAIN');
+      expect(answer.security?.chain.at(-1)).toMatchObject({
+        kind: 'denial',
+        name: 'nothing.secure.example',
+      });
+    }
+  });
+
+  it.each([
+    ['NSEC', undefined],
+    ['NSEC3', { iterations: 0 }],
+  ])('proves a name has no records of a type with %s', async (_kind, nsec3) => {
+    const answers = await both(zones(nsec3), 'www.secure.example', 'TXT');
+    expectStatus(answers, 'secure', 'verified');
+    for (const answer of answers) expect(answer.records).toEqual([]);
+  });
+
+  it('is bogus when a negative answer comes without its proof', async () => {
+    const answers = await both(
+      [root, tld, { ...secure('secure.example'), dropProofs: true }],
+      'nothing.secure.example',
+      'A'
+    );
+    // the DS question for the name finds no proof first: either way, NSEC Missing
+    expectStatus(answers, 'bogus');
+    for (const answer of answers) expect(answer.security?.reason.ede).toBe(12);
+  });
+
+  it('is insecure past the NSEC3 iteration count validators hash (RFC 9276)', async () => {
+    const answers = await both(zones({ iterations: 150 }), 'nothing.secure.example', 'A');
+    expectStatus(answers, 'insecure', 'nsec3-iterations');
+    for (const answer of answers) expect(answer.security?.reason.ede).toBe(27);
+  });
+});
+
+describe('validate: wildcards', () => {
+  it.each([
+    ['NSEC', undefined],
+    ['NSEC3', { iterations: 0 }],
+  ])('accepts an answer from a wildcard with its %s proof', async (_kind, nsec3) => {
+    const answers = await both(
+      [root, tld, { ...secure('wild.example', [['*.wild.example', 'A', '192.0.2.5']]), nsec3 }],
+      'anything.wild.example',
+      'A'
+    );
+    expectStatus(answers, 'secure', 'verified');
+    for (const answer of answers) {
+      expect(answer.records).toMatchObject([
+        { name: 'anything.wild.example', address: '192.0.2.5' },
+      ]);
+      expect(answer.security?.chain.some(link => link.kind === 'denial')).toBe(true);
+    }
+  });
+
+  it('is bogus when a wildcard answer comes without the proof the name is not there', async () => {
+    const answers = await both(
+      [
+        root,
+        tld,
+        {
+          ...secure('wild.example', [['*.wild.example', 'A', '192.0.2.5']]),
+          dropProofs: 'wildcard',
+        },
+      ],
+      'anything.wild.example',
+      'A'
+    );
+    expectStatus(answers, 'bogus', 'denial-missing');
+    for (const answer of answers) {
+      expect(answer.security?.failure).toMatchObject({
+        kind: 'denial',
+        name: 'anything.wild.example',
+      });
+    }
+  });
+});
+
+describe('validate: delegations', () => {
+  const plain: SignedZone = {
+    zone: 'plain.example',
+    unsigned: true,
+    records: [['www.plain.example', 'A', '192.0.2.3']],
+  };
+
+  it('is insecure below a delegation with no DS', async () => {
+    const answers = await both([root, tld, plain], 'www.plain.example', 'A');
+    expectStatus(answers, 'insecure', 'no-ds');
+    for (const answer of answers) {
+      expect(answer.security?.reason.zone).toBe('plain.example');
+      expect(answer.security?.failure).toBeUndefined();
+    }
+  });
+
+  it('is insecure below an NSEC3 opt-out range', async () => {
+    const answers = await both(
+      [root, { zone: 'example', nsec3: { iterations: 0, optOut: true } }, plain],
+      'www.plain.example',
+      'A'
+    );
+    expectStatus(answers, 'insecure', 'opt-out');
+  });
+
+  it('is bogus when the DS does not match the key', async () => {
+    const answers = await both(
+      [
+        root,
+        tld,
+        { ...secure('broken.example', [['www.broken.example', 'A', '192.0.2.4']]), badDs: true },
+      ],
+      'www.broken.example',
+      'A'
+    );
+    expectStatus(answers, 'bogus', 'ds-digest-mismatch');
+    for (const answer of answers) {
+      expect(answer.security?.failure).toMatchObject({ kind: 'keys', zone: 'broken.example' });
+      expect(answer.security?.reason.ede).toBe(9);
+    }
+  });
+
+  it('is bogus when the parent has a DS and the zone serves no keys', async () => {
+    const answers = await both(
+      [
+        root,
+        tld,
+        {
+          zone: 'unkeyed.example',
+          unsigned: true,
+          ds: [ecdsaKey()],
+          records: [['www.unkeyed.example', 'A', '192.0.2.6']],
+        },
+      ],
+      'www.unkeyed.example',
+      'A'
+    );
+    expectStatus(answers, 'bogus', 'dnskey-missing');
+    for (const answer of answers) expect(answer.security?.reason.ede).toBe(9);
+  });
+
+  it('treats a zone signed only in an algorithm it cannot verify as unsigned (RFC 6840 §5.2)', async () => {
+    const answers = await both(
+      [
+        root,
+        tld,
+        {
+          zone: 'gost.example',
+          keys: [unverifiableKey()],
+          records: [['www.gost.example', 'A', '192.0.2.2']],
+        },
+      ],
+      'www.gost.example',
+      'A'
+    );
+    expectStatus(answers, 'insecure', 'unsupported-algorithm');
+    for (const answer of answers) {
+      expect(answer.security?.reason).toMatchObject({ algorithm: 12, ede: 1 });
+    }
+  });
+});
+
+describe('validate: signatures', () => {
+  const now = Date.now();
+
+  it('is bogus when the signatures have expired', async () => {
+    const answers = await both(
+      [
+        root,
+        tld,
+        {
+          ...secure('stale.example', [['www.stale.example', 'A', '192.0.2.1']]),
+          inception: new Date(now - 30 * DAY),
+          expiration: new Date(now - DAY),
+        },
+      ],
+      'www.stale.example',
+      'A'
+    );
+    expectStatus(answers, 'bogus', 'signature-expired');
+    for (const answer of answers) expect(answer.security?.reason.ede).toBe(7);
+  });
+
+  it('is bogus when the signatures are not valid yet', async () => {
+    const answers = await both(
+      [
+        root,
+        tld,
+        {
+          ...secure('early.example', [['www.early.example', 'A', '192.0.2.1']]),
+          inception: new Date(now + DAY),
+          expiration: new Date(now + 30 * DAY),
+        },
+      ],
+      'www.early.example',
+      'A'
+    );
+    expectStatus(answers, 'bogus', 'signature-not-yet-valid');
+    for (const answer of answers) expect(answer.security?.reason.ede).toBe(8);
+  });
+
+  it('is bogus when a signed zone serves its data without signatures', async () => {
+    const answers = await both(
+      [
+        root,
+        tld,
+        {
+          ...secure('bare.example', [['www.bare.example', 'A', '192.0.2.1']]),
+          stripSignatures: true,
+        },
+      ],
+      'www.bare.example',
+      'A'
+    );
+    expectStatus(answers, 'bogus');
+    for (const answer of answers) expect(answer.security?.reason.ede).toBe(10);
+  });
+
+  it('does not use a trust anchor whose key is published revoked (RFC 5011)', async () => {
+    const old = ecdsaKey();
+    const current = ecdsaKey();
+    const revoked = revokedKey(old);
+    const signed = signedNetwork([
+      { zone: '.', keys: [revoked, current], signers: [revoked, current] },
+      tld,
+      secure('secure.example', [['www.secure.example', 'A', '192.0.2.1']]),
+    ]);
+    const network = simulateNetwork(signed.servers);
+    const anchor = (id: string, key: typeof old) => ({
+      id,
+      keyTag: key.keyTag,
+      algorithm: 13,
+      digestType: 2,
+      digest: toHex(computeDsDigest('.', key.rdata, 2)!),
+    });
+    const resolver = (trustAnchors: ReturnType<typeof anchor>[]) =>
+      new AuthoritativeResolver({
+        transports: network.transports,
+        rootServers: signed.rootServers,
+        trustAnchors,
+        validate: true,
+      });
+
+    // anchored on both, the old key revoked and still signing: the new one carries the chain
+    const both_ = await resolver([anchor('old', old), anchor('current', current)]).query(
+      'www.secure.example',
+      'A'
+    );
+    expect(both_.security?.status).toBe('secure');
+
+    // anchored on the old key alone: once it is revoked, nothing anchors the root
+    const alone = await resolver([anchor('old', old)]).query('www.secure.example', 'A');
+    expect(alone.security?.status).toBe('bogus');
+    expect(alone.security?.reason.code).toBe('no-trust-anchor');
+  });
+});
+
+describe('validate: the key cache', () => {
+  const zones: SignedZone[] = [
+    root,
+    tld,
+    {
+      ...secure('secure.example', [
+        ['www.secure.example', 'A', '192.0.2.1'],
+        ['mail.secure.example', 'A', '192.0.2.2'],
+      ]),
+      keyTtl: 600,
+    },
+  ];
+  const fetches = (network: { log(): string[] }, suffix: string) =>
+    network.log().filter(line => line.endsWith(suffix)).length;
+
+  it('keeps validated key sets for their TTL, and asks again after', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const { network, authoritative } = setUp(zones);
+
+    expect((await authoritative.query('www.secure.example', 'A')).security?.status).toBe('secure');
+    expect(fetches(network, ' secure.example DNSKEY')).toBe(1);
+
+    // another name in the same zone: its keys are known
+    expect((await authoritative.query('mail.secure.example', 'A')).security?.status).toBe('secure');
+    expect(fetches(network, ' secure.example DNSKEY')).toBe(1);
+
+    // past the key set's TTL, it is fetched again
+    vi.setSystemTime(Date.now() + 601_000);
+    expect((await authoritative.query('mail.secure.example', 'A')).security?.status).toBe('secure');
+    expect(fetches(network, ' secure.example DNSKEY')).toBe(2);
+  });
+
+  it('forgets them on clearCache()', async () => {
+    const { network, recursive } = setUp(zones);
+    await recursive.query('www.secure.example', 'A');
+    await recursive.query('www.secure.example', 'A');
+    expect(fetches(network, ' secure.example DNSKEY')).toBe(1);
+    recursive.clearCache();
+    await recursive.query('www.secure.example', 'A');
+    expect(fetches(network, ' secure.example DNSKEY')).toBe(2);
+  });
+});
