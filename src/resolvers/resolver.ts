@@ -16,6 +16,8 @@ import type { OnEvent, Server, TransportOptions } from '../transports/types';
 import { toHex } from '../wire/bytes';
 import type { Message } from '../wire/message';
 import { comparableName, toAsciiName } from '../wire/names';
+import { dnssecResponse, Validator } from '../dnssec/validate';
+import type { TrustAnchor } from '../dnssec/types';
 import { buildAnswer } from './answer';
 import type { Answer, QuerySettings } from './answer';
 import { resolveCache } from './cache';
@@ -49,6 +51,12 @@ export interface ResolverOptions extends TransportOptions, QuerySettings {
   // sockets and connections to share with other resolvers. The resolver does not close
   // a set it was given
   transports?: Transports;
+  // check each answer's DNSSEC chain from the trust anchors down, and say what came of it
+  // in `answer.security`. Queries are then sent with DO and CD set, so the answer's
+  // `answers` holds its signatures too. Default false
+  validate?: boolean;
+  // the trust anchors validation starts from. Default: IANA's root trust anchors
+  trustAnchors?: readonly TrustAnchor[];
 }
 
 export interface ResolverQueryOptions extends QuerySettings {
@@ -98,6 +106,7 @@ export class Resolver {
   private readonly ownsTransports: boolean;
   private readonly inFlight = new Map<string, Promise<CachedResponse>>();
   private system: Promise<string[]> | undefined;
+  private readonly validator: Validator | undefined;
 
   constructor(options: ResolverOptions = {}) {
     this.options = options;
@@ -107,6 +116,12 @@ export class Resolver {
     this.ownsTransports = !options.transports && hasTransportOptions(options);
     this.transports =
       options.transports ?? (this.ownsTransports ? createTransports(options) : defaultTransports());
+    if (options.validate) {
+      this.validator = new Validator({
+        trustAnchors: options.trustAnchors,
+        ...(options.cache === false && { maxZones: 0 }),
+      });
+    }
   }
 
   // ask a question. The answer carries the response code, so a name that does not exist
@@ -122,6 +137,37 @@ export class Resolver {
     name: string,
     type: string | number,
     options: ResolverQueryOptions = {}
+  ): Promise<Answer> {
+    if (!this.validator) return this.lookup(name, type, options);
+    // the data and every record of the chain are asked for with their signatures, and with
+    // Checking Disabled, so a validating resolver upstream hands over what is broken
+    // instead of answering SERVFAIL
+    const dnssec = { dnssecOk: true, checkingDisabled: true };
+    const answer = await this.lookup(name, type, { ...options, ...dnssec });
+    answer.security = await this.validator.validate(
+      [dnssecResponse(answer.message, answer.query.name, typeCode(type))],
+      async (chainName, chainType) =>
+        (
+          await this.lookup(chainName, chainType, {
+            ...dnssec,
+            ...(options.server !== undefined && { server: options.server }),
+            signal: options.signal,
+          })
+        ).message
+    );
+    return answer;
+  }
+
+  // forget every cached answer and every zone validation has judged
+  clearCache(): void {
+    this.cache?.clear();
+    this.validator?.clear();
+  }
+
+  private async lookup(
+    name: string,
+    type: string | number,
+    options: ResolverQueryOptions
   ): Promise<Answer> {
     const { strict } = this.options;
     const { server, signal, ...settings } = options;
@@ -187,7 +233,7 @@ export class Resolver {
   // close the sockets and connections this resolver opened, and empty its cache. A
   // resolver that shares the process-wide set, or was given one, leaves it open
   close(): void {
-    this.cache?.clear();
+    this.clearCache();
     if (this.ownsTransports) this.transports.close();
   }
 

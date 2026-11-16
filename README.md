@@ -1,8 +1,8 @@
 # dns-client
 
 A DNS client for TypeScript with nothing underneath it: its own wire codec, typed records,
-resolvers that ask a recursive resolver or walk from the root, record validation, and the
-DNSSEC primitives to verify signatures, digests and denial proofs. No runtime dependencies.
+resolvers that ask a recursive resolver or walk from the root, record validation, and DNSSEC
+validation with the primitives it is built from. No runtime dependencies.
 
 ```bash
 npm install @aoxborrow/dns
@@ -211,6 +211,79 @@ relative to a zone, `@` included.
 
 ## DNSSEC
 
+### Validating answers
+
+```ts
+import { AuthoritativeResolver, Resolver } from '@aoxborrow/dns';
+
+const resolver = new Resolver({ servers: ['1.1.1.1'], validate: true });
+const answer = await resolver.query('example.com', 'A');
+
+answer.security?.status; // 'secure', 'insecure', 'bogus' or 'indeterminate'
+answer.security?.reason; // { code: 'verified', zone: 'example.com', keyTag: 370 }
+
+const iterative = new AuthoritativeResolver({ validate: true });
+const broken = await iterative.query('dnssec-failed.org', 'A');
+broken.security?.status; // 'bogus'
+broken.security?.reason; // { code: 'no-matching-dnskey', zone: 'dnssec-failed.org', keyTag: …, ede: 9 }
+broken.security?.failure; // the first link that broke: { kind: 'keys', zone: 'dnssec-failed.org', … }
+```
+
+With `validate: true`, both resolvers check every answer's chain of trust and say what came
+of it in `answer.security`. The data is asked for with DO set (and CD, for `Resolver`, so a
+validating resolver upstream hands over broken records instead of a SERVFAIL); then each
+zone between the root and the data has its DS and DNSKEY records fetched the same way, and
+the judging core decides. The answer itself is unchanged apart from carrying its
+signatures in `answers`; nothing is withheld, whatever the verdict. Without `validate`,
+nothing changes.
+
+| Status | Meaning |
+| --- | --- |
+| `secure` | a chain of valid signatures runs from a trust anchor to the data |
+| `insecure` | the data is proven to sit below a delegation with no DS (or an opt-out range, or a DS set naming only algorithms this runtime cannot verify, RFC 6840 §5.2), so nothing could sign it |
+| `bogus` | a chain should be there and is broken: an expired or invalid signature, a DS that matches no key, a missing proof |
+| `indeterminate` | it could not be told: a response missing, or every signature in an algorithm this runtime cannot check |
+
+`reason` is a code and the values it is about (zone, name, type, key tag, algorithm), never
+English, with `ede` set to the extended DNS error (RFC 8914) a validating resolver would send
+for it, where one fits: 7 for an expired signature, 9 for a missing DNSKEY, 10 for missing
+RRSIGs, 12 for a missing NSEC proof, 1 for an unsupported algorithm, 27 for an NSEC3
+iteration count past 100. `chain` lists every link judged, each zone's key set from the root
+down and then each RRset and denial proof of the data, each with its own status and reason;
+`failure` is the first bogus or indeterminate one. CNAME and DNAME chains are judged link by
+link (a CNAME synthesized from a signed DNAME needs no signature of its own), answers from a
+wildcard need the proof that the name itself does not exist, and NXDOMAIN and NODATA need
+their NSEC or NSEC3 proofs.
+
+What each zone's key set came to is kept for as long as the TTLs and signatures it rests on
+allow (with `cache: false`, not at all), and `clearCache()` forgets it. Validation starts
+from `trustAnchors`, IANA's root anchors by default (`ROOT_TRUST_ANCHORS`, with
+`ROOT_TRUST_ANCHORS_DATA_VERSION` and `ROOT_TRUST_ANCHORS_REFRESHED`). A key published with the
+RFC 5011 revoke bit anchors nothing and signs nothing.
+
+### The judging core
+
+```ts
+import { judgeChain } from '@aoxborrow/dns/dnssec';
+
+const judgement = await judgeChain(
+  { anchored, names, responses }, // the records fetched, as DnssecResponse objects
+  { mode: 'all', now: new Date() }
+);
+judgement.links; // every link, with a status and a reason
+```
+
+The resolvers fetch, and `judgeChain` judges: given the root's DNSKEY response, each name's
+DS response (and DNSKEY response, where it is a zone of its own), the responses holding the
+data, the trust anchors and a time, it returns the status and reason of every link. It
+fetches nothing and keeps nothing, so the same records and time always give the same
+judgement. `mode: 'first'` (what the resolvers use) stops at the first link that settles the
+outcome; `mode: 'all'` judges every link and every signature. The checks it is made of are
+exported one by one, each returning codes: `checkAnchors`, `checkDsSet`, `checkKeySet`,
+`checkSignature`, `checkRrset`, and `judgeKeys` for a zone's key set as a whole.
+
+### The primitives
+
 ```ts
 import { Resolver } from '@aoxborrow/dns';
 import {
@@ -243,7 +316,7 @@ for (const record of answers.filter(rr => rr.typeName === 'RRSIG')) {
 }
 ```
 
-These are the pieces a validator is built from, each checking one thing.
+These are the pieces the judging core is built from, each checking one thing.
 `verifySignature` checks RSA, ECDSA and EdDSA signatures through WebCrypto; an algorithm
 the runtime cannot verify comes back not checked, never as a pass, and
 `isAlgorithmSupported` says beforehand whether it can (a WebCrypto may lack Ed25519 or
@@ -251,13 +324,10 @@ Ed448). `computeDsDigest` and `computeKeyTag` match a DS record to the key it na
 `verifyNxdomainProof`, `verifyNodataProof` and `verifyWildcardProof` check NSEC and NSEC3
 denial proofs and return the reasoning step by step; `verifyWildcardProof` takes the
 wildcard an answer was synthesised from, which `wildcardOwner` rebuilds from the RRSIG's
-labels field. `ROOT_TRUST_ANCHORS` holds the IANA
-root keys, and `isAnchorCurrent` says whether one is valid at a given time. Digests and
-NSEC3 hashes use the library's own SHA-1, SHA-256 and SHA-384.
-
-Walking a name's chain of trust from the root and reaching a verdict is left to the
-caller. The resolvers do not validate answers yet: `dnssecOk` asks for signatures and
-`flags.ad` reports what a validating resolver decided.
+labels field. `isAnchorCurrent` says whether a trust anchor is valid at a given time.
+Digests and NSEC3 hashes use the library's own SHA-1, SHA-256 and SHA-384. Owner names in
+`toWireMessage`'s records keep the case the server wrote them in; record data is in the
+canonical form signatures are computed over.
 
 ## The wire format
 
@@ -282,7 +352,7 @@ returned in ASCII.
 | `@aoxborrow/dns/transports/tcp` | DNS over TCP | Node, Cloudflare Workers |
 | `@aoxborrow/dns/transports/tls` | DNS over TLS | Node, Cloudflare Workers |
 | `@aoxborrow/dns/transports/doh` | DNS over HTTPS: HTTP/2 on Node, `fetch` elsewhere | anywhere with `fetch` |
-| `@aoxborrow/dns/dnssec` | signature verification, DS digests, NSEC/NSEC3 proofs, trust anchors | anywhere |
+| `@aoxborrow/dns/dnssec` | the judging core, signature verification, DS digests, NSEC/NSEC3 proofs, trust anchors | anywhere |
 
 Node 20 or later. The package ships ES modules and CommonJS, with type declarations for
 both. Node built-ins are imported only by the transports, and only when a query needs

@@ -101,6 +101,7 @@
     "check:browser": "node scripts/browser-check.mjs",
     "check:pack": "node scripts/pack-check.mjs",
     "capture": "yarn run -T tsx scripts/capture-messages.ts",
+    "refresh-anchors": "yarn run -T tsx scripts/refresh-anchors.ts",
     "bench": "yarn run -T tsx bench/run.ts",
     "lint": "yarn typecheck && yarn eslint && yarn format",
     "lint:fix": "yarn eslint:fix && yarn format:fix",

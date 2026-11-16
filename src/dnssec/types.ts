@@ -58,6 +58,8 @@ export interface ProofStep {
 
 export interface TrustAnchor {
   id: string;
+  // the zone the anchor is for. Default: the root
+  zone?: string;
   keyTag: number;
   algorithm: number;
   digestType: number;

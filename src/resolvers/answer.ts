@@ -1,3 +1,4 @@
+import type { Security } from '../dnssec/validate';
 import type { ErrorData } from '../errors';
 import type { ExchangeOptions, ExchangeResult, SentQuery } from '../exchange';
 import { rcodeName } from '../protocol/header';
@@ -61,6 +62,10 @@ export interface Answer<Rec extends DnsRecord = DnsRecord> {
 
   // every server asked on the way from the root. AuthoritativeResolver only
   trace?: TraceHop[];
+
+  // what DNSSEC validation made of the answer, when the resolver was asked to validate:
+  // secure, insecure, bogus or indeterminate, why, and the chain it judged
+  security?: Security;
 }
 
 // one step of a resolution from the root

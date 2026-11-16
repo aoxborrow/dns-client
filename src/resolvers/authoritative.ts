@@ -18,6 +18,9 @@ import type { Transports } from '../transports/index';
 import { now } from '../transports/runtime';
 import type { OnEvent, TransportOptions } from '../transports/types';
 import { canonicalName, comparableName, isSubdomain, parentName, toAsciiName } from '../wire/names';
+import { dnssecResponse, Validator } from '../dnssec/validate';
+import type { DnssecResponse } from '../dnssec/judge';
+import type { TrustAnchor } from '../dnssec/types';
 import { aliasTarget, buildAnswer } from './answer';
 import type { Answer, QuerySettings, TraceHop } from './answer';
 import { createKeyedLimiter, createLimiter, createPacer } from './limiter';
@@ -94,6 +97,13 @@ export interface AuthoritativeResolverOptions
   // sockets and connections to share with other resolvers. The resolver does not close
   // a set it was given
   transports?: Transports;
+  // check each answer's DNSSEC chain from the trust anchors down, and say what came of it
+  // in `answer.security`. Queries are then sent with DO set, so the answer's `answers`
+  // holds its signatures too. Validated key sets are kept by zone for as long as their
+  // TTLs allow, unless `cache` is false. Default false
+  validate?: boolean;
+  // the trust anchors validation starts from. Default: IANA's root trust anchors
+  trustAnchors?: readonly TrustAnchor[];
 }
 
 // what `serverOrder` is asked to put in order, and what it is given for each:
@@ -227,6 +237,7 @@ export class AuthoritativeResolver {
   private readonly givenNames = new Map<string, string>();
   private readonly names = new Map<string, string>();
   private readonly hosts = new Map<string, string[]>();
+  private readonly validator: Validator | undefined;
 
   constructor(options: AuthoritativeResolverOptions = {}) {
     this.options = options;
@@ -249,6 +260,12 @@ export class AuthoritativeResolver {
       for (const address of addresses) if (written) this.givenNames.set(address, written);
       return { name, ...(written !== name && { written }), addresses };
     });
+    if (options.validate) {
+      this.validator = new Validator({
+        trustAnchors: options.trustAnchors,
+        ...(options.cache === false && { maxZones: 0 }),
+      });
+    }
   }
 
   // resolve from the root. As with `Resolver`, a name that does not exist is an answer,
@@ -263,6 +280,30 @@ export class AuthoritativeResolver {
     name: string,
     type: string | number,
     options: AuthoritativeQueryOptions = {}
+  ): Promise<Answer> {
+    const follow = this.options.followCnames === true;
+    if (!this.validator) return this.walk(name, type, options, follow);
+    // every response on the way is judged, the aliases followed included
+    const responses: DnssecResponse[] = [];
+    const answer = await this.walk(name, type, { ...options, dnssecOk: true }, follow, responses);
+    // the chain's records are asked for as they are: no alias is followed
+    answer.security = await this.validator.validate(
+      responses,
+      async (chainName, chainType) =>
+        (await this.walk(chainName, chainType, { dnssecOk: true, signal: options.signal }, false))
+          .message
+    );
+    return answer;
+  }
+
+  // resolve from the root, following aliases when `follow`, and keep each response that
+  // ended a walk in `responses`
+  private async walk(
+    name: string,
+    type: string | number,
+    options: AuthoritativeQueryOptions,
+    follow: boolean,
+    responses?: DnssecResponse[]
   ): Promise<Answer> {
     const { signal, totalTimeout: perQuery, ...settings } = options;
     const totalTimeout = perQuery ?? this.options.totalTimeout ?? DEFAULT_TOTAL_TIMEOUT;
@@ -311,7 +352,8 @@ export class AuthoritativeResolver {
           throw error;
         }
       );
-      if (outcome.kind !== 'alias' || this.options.followCnames !== true) {
+      responses?.push(dnssecResponse(result.message, current, typeCode(typeText)));
+      if (outcome.kind !== 'alias' || !follow) {
         return buildAnswer(result, {
           strict: this.options.strict,
           name: shown,
@@ -349,11 +391,13 @@ export class AuthoritativeResolver {
     }
   }
 
-  // forget every delegation, nameserver address and nameserver name learned so far
+  // forget every delegation, nameserver address and nameserver name learned so far, and
+  // every zone validation has judged
   clearCache(): void {
     this.knowledge.cuts.clear();
     this.knowledge.addresses.clear();
     this.names.clear();
+    this.validator?.clear();
   }
 
   // close the sockets and connections this resolver opened. A resolver that shares the
@@ -432,7 +476,9 @@ export class AuthoritativeResolver {
     nesting: number
   ): Promise<{ result: ExchangeResult; outcome: Outcome }> {
     const maxHops = this.options.maxHops ?? DEFAULT_MAX_HOPS;
-    let cut = this.closestCut(run, name);
+    // a DS RRset is the parent's: the question goes to the zone above the name, even when
+    // the name's own zone is already known (RFC 4035 §4.2)
+    let cut = this.closestCut(run, type === 'DS' && name !== '.' ? parentName(name) : name);
 
     for (;;) {
       // ask the zone's servers in turn until one gives something to go on
