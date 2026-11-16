@@ -42,6 +42,54 @@ export function readRrsig(record: WireRecord): RrsigFields | undefined {
 }
 
 // ---------------------------------------------------------------------------
+// the work one judgement may do
+// ---------------------------------------------------------------------------
+
+// how much signature checking one judgement may do. A zone that publishes many keys with
+// the same tag, or signs an RRset many times over, can make a validator run thousands of
+// signature checks for one answer (KeyTrap, CVE-2023-50387); validators since cap that
+// work and fail the answer past the cap. Without a budget nothing is capped, as for a
+// report that wants every check made
+export interface CheckBudget {
+  // signature verifications left for the whole judgement
+  remaining: number;
+  // the most keys tried for one signature, where several share its tag and algorithm
+  keysPerSignature: number;
+  // the most signatures checked for one RRset
+  signaturesPerRrset: number;
+}
+
+export interface CheckLimits {
+  // signature verifications for the whole judgement
+  verifications: number;
+  keysPerSignature: number;
+  signaturesPerRrset: number;
+}
+
+export const CHECK_LIMITS: Readonly<CheckLimits> = {
+  verifications: 128,
+  keysPerSignature: 4,
+  signaturesPerRrset: 8,
+};
+
+// a fresh budget, at the default limits unless told otherwise
+export function checkBudget(limits: Partial<CheckLimits> = {}): CheckBudget {
+  return {
+    remaining: limits.verifications ?? CHECK_LIMITS.verifications,
+    keysPerSignature: limits.keysPerSignature ?? CHECK_LIMITS.keysPerSignature,
+    signaturesPerRrset: limits.signaturesPerRrset ?? CHECK_LIMITS.signaturesPerRrset,
+  };
+}
+
+// take one verification from the budget: false when none is left
+function spend(budget: CheckBudget | undefined): boolean {
+  if (!budget) return true;
+  if (budget.remaining <= 0) return false;
+  budget.remaining--;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // keys
 // ---------------------------------------------------------------------------
 
@@ -132,7 +180,8 @@ export async function checkAnchors(
   keys: readonly DnssecKey[],
   anchors: readonly TrustAnchor[],
   now: Date,
-  signed?: { rrset: Rrset; rrsigs: readonly WireRecord[] }
+  signed?: { rrset: Rrset; rrsigs: readonly WireRecord[] },
+  budget?: CheckBudget
 ): Promise<AnchorCheck> {
   const current = anchors.filter(
     anchor =>
@@ -151,7 +200,7 @@ export async function checkAnchors(
       check.revokedKeyTags.push(key.keyTag);
       if (signed) {
         const anchor = current.find(candidate => digestMatches(zone, unrevoked(key), candidate));
-        if (anchor && (await selfSigned(key, signed.rrset, signed.rrsigs, now))) {
+        if (anchor && (await selfSigned(key, signed.rrset, signed.rrsigs, now, budget))) {
           check.revokedAnchors.push(anchor);
         }
       }
@@ -176,7 +225,8 @@ async function selfSigned(
   key: DnssecKey,
   rrset: Rrset,
   rrsigs: readonly WireRecord[],
-  now: Date
+  now: Date,
+  budget?: CheckBudget
 ): Promise<boolean> {
   for (const record of rrsigs) {
     const sig = readRrsig(record);
@@ -185,6 +235,7 @@ async function selfSigned(
     if (!withinValidity(sig, now)) continue;
     const signedData = buildSignedData(sig, rrset);
     if (!signedData) continue;
+    if (!spend(budget)) return false;
     const outcome = await verifySignature(
       key.algorithm,
       key.publicKey,
@@ -361,6 +412,8 @@ export const SIGNATURE_CODES = {
   UNSUPPORTED_ALGORITHM: 'unsupported-algorithm',
   // made by another zone's key, and left for that zone to judge
   FOREIGN: 'foreign',
+  // not checked: the judgement had used up the signature checks it may make
+  LIMIT_EXCEEDED: 'limit-exceeded',
 } as const;
 
 export type SignatureCode = (typeof SIGNATURE_CODES)[keyof typeof SIGNATURE_CODES];
@@ -392,7 +445,8 @@ export async function checkSignature(
   rrset: Rrset,
   zone: string,
   keys: readonly DnssecKey[],
-  now: Date
+  now: Date,
+  budget?: CheckBudget
 ): Promise<SignatureCheck> {
   const rrsig = readRrsig(record);
   if (!rrsig) {
@@ -440,7 +494,9 @@ export async function checkSignature(
   check.signatureLength = rrsig.signature.length;
 
   let first: SignatureCheck | undefined;
-  for (const key of usable) {
+  const tries = budget ? usable.slice(0, budget.keysPerSignature) : usable;
+  for (const key of tries) {
+    if (!spend(budget)) return first ?? fail(SIGNATURE_CODES.LIMIT_EXCEEDED);
     const outcome = await verifySignature(
       key.algorithm,
       key.publicKey,
@@ -519,6 +575,8 @@ export interface RrsetCheckOptions {
   requireEveryAlgorithm?: boolean;
   // stop at the first signature that verifies
   stopAtFirst?: boolean;
+  // the signature checks the judgement may still make
+  budget?: CheckBudget;
 }
 
 // the RRSIGs among `rrsigs` that cover `rrset`
@@ -561,6 +619,7 @@ export async function checkRrset(
   if (covering.length === 0) return check;
 
   let inZone = false;
+  let checked = 0;
   const verifiedAlgorithms = new Set<number>();
   const stop = options.stopAtFirst && !options.requireEveryAlgorithm;
   for (const record of covering) {
@@ -571,7 +630,24 @@ export async function checkRrset(
     }
     inZone = true;
     if (stop && verifiedAlgorithms.size > 0) continue;
-    const signature = await checkSignature(record, rrset, zone.zone, zone.keys, options.now);
+    if (options.budget && checked >= options.budget.signaturesPerRrset) {
+      check.signatures.push({
+        record,
+        rrsig,
+        code: SIGNATURE_CODES.LIMIT_EXCEEDED,
+        result: UNCHECKED,
+      });
+      continue;
+    }
+    checked++;
+    const signature = await checkSignature(
+      record,
+      rrset,
+      zone.zone,
+      zone.keys,
+      options.now,
+      options.budget
+    );
     check.signatures.push(signature);
     if (signature.result === VERIFIED) verifiedAlgorithms.add(rrsig.algorithm);
   }
@@ -636,7 +712,7 @@ export async function checkKeySet(
   entryKeys: readonly DnssecKey[],
   entryAlgorithms: readonly number[],
   now: Date,
-  options: { stopAtFirst?: boolean } = {}
+  options: { stopAtFirst?: boolean; budget?: CheckBudget } = {}
 ): Promise<KeySetCheck> {
   if (!dnskey) return { code: KEY_SET_CODES.NO_RESPONSE, signatures: [] };
   const owner = canonicalName(zone);
@@ -656,16 +732,27 @@ export async function checkKeySet(
   // signatures by a vouched-for key that could not be checked: this runtime has no way to
   // verify their algorithm
   let vouchedUnchecked = 0;
-  for (const record of rrsigs) {
+  const { budget } = options;
+  for (const [index, record] of rrsigs.entries()) {
     if (options.stopAtFirst && check.keyTag !== undefined) break;
-    const signature = await checkSignature(record, rrset, zone, keys, now);
+    if (budget && index >= budget.signaturesPerRrset) {
+      const rrsig = readRrsig(record)!;
+      check.signatures.push({
+        record,
+        rrsig,
+        code: SIGNATURE_CODES.LIMIT_EXCEEDED,
+        result: UNCHECKED,
+      });
+      continue;
+    }
+    const signature = await checkSignature(record, rrset, zone, keys, now, budget);
     check.signatures.push(signature);
     const rrsig = signature.rrsig;
     const byEntryKey = entryKeys.some(
       key => key.keyTag === rrsig.keyTag && key.algorithm === rrsig.algorithm
     );
     if (byEntryKey && signature.result === UNCHECKED) vouchedUnchecked++;
-    if (check.keyTag === undefined && (await vouched(signature, rrset, entryKeys, now))) {
+    if (check.keyTag === undefined && (await vouched(signature, rrset, entryKeys, now, budget))) {
       check.keyTag = rrsig.keyTag;
     }
   }
@@ -709,7 +796,8 @@ async function vouched(
   signature: SignatureCheck,
   rrset: Rrset,
   entryKeys: readonly DnssecKey[],
-  now: Date
+  now: Date,
+  budget?: CheckBudget
 ): Promise<boolean> {
   const { rrsig } = signature;
   const candidates = entryKeys.filter(
@@ -726,6 +814,7 @@ async function vouched(
   if (!signedData) return false;
   for (const key of candidates) {
     if (signature.key && bytesEqual(key.record.rdata, signature.key.record.rdata)) continue;
+    if (!spend(budget)) return false;
     const outcome = await verifySignature(
       key.algorithm,
       key.publicKey,

@@ -525,3 +525,257 @@ describe('validate: the key cache', () => {
     expect(fetches(network, ' secure.example DNSKEY')).toBe(2);
   });
 });
+
+describe('validate: empty answers at names that exist only below or by a wildcard', () => {
+  it.each([
+    ['NSEC', undefined],
+    ['NSEC3', { iterations: 0 }],
+  ])(
+    'proves a wildcard holds no records of a type with %s (RFC 4035 §3.1.3.4, RFC 5155 §8.7)',
+    async (_kind, nsec3) => {
+      const answers = await both(
+        [root, tld, { ...secure('wild.example', [['*.wild.example', 'A', '192.0.2.5']]), nsec3 }],
+        'anything.wild.example',
+        'TXT'
+      );
+      expectStatus(answers, 'secure', 'verified');
+      for (const answer of answers) {
+        expect(answer.rcodeName).toBe('NOERROR');
+        expect(answer.records).toEqual([]);
+        expect(answer.security?.chain.at(-1)).toMatchObject({
+          kind: 'denial',
+          name: 'anything.wild.example',
+          type: 'TXT',
+        });
+      }
+    }
+  );
+
+  it.each([
+    ['NSEC', undefined],
+    ['NSEC3', { iterations: 0 }],
+  ])('is bogus when the wildcard holds the type it denies, with %s', async (_kind, nsec3) => {
+    const signed = signedNetwork([
+      root,
+      tld,
+      {
+        ...secure('wild.example', [
+          ['*.wild.example', 'TXT', 'here'],
+          ['*.wild.example', 'MX', '10 mail.wild.example'],
+        ]),
+        nsec3,
+      },
+    ]);
+    const honest = signed.servers['10.53.0.3'];
+    // the server answers the TXT question with the empty answer for AAAA, which the
+    // wildcard does not hold, and its proof
+    signed.servers['10.53.0.3'] = async query => {
+      const [question] = query.questions;
+      if (question.type !== 16) return honest(query);
+      const reply = await honest({ ...query, questions: [{ ...question, type: 28 }] });
+      if (!(reply instanceof Uint8Array)) return reply;
+      return encodeMessage({ ...decodeMessage(reply), questions: query.questions });
+    };
+    const network = simulateNetwork(signed.servers);
+    const resolver = new AuthoritativeResolver({
+      transports: network.transports,
+      rootServers: signed.rootServers,
+      trustAnchors: signed.trustAnchors,
+      validate: true,
+    });
+    const answer = await resolver.query('anything.wild.example', 'TXT');
+    expect(answer.records).toEqual([]);
+    expect(answer.security?.status).toBe('bogus');
+    expect(answer.security?.reason.code).toBe('denial-invalid');
+  });
+
+  it.each([
+    ['NSEC', undefined],
+    ['NSEC3', { iterations: 0 }],
+  ])('proves an empty non-terminal holds nothing with %s', async (_kind, nsec3) => {
+    const answers = await both(
+      [
+        root,
+        tld,
+        { ...secure('secure.example', [['a.b.secure.example', 'A', '192.0.2.1']]), nsec3 },
+      ],
+      'b.secure.example',
+      'A'
+    );
+    expectStatus(answers, 'secure', 'verified');
+    for (const answer of answers) expect(answer.rcodeName).toBe('NOERROR');
+  });
+
+  it('answers a question for the wildcard itself without asking for a wildcard proof', async () => {
+    const answers = await both(
+      [root, tld, secure('wild.example', [['*.wild.example', 'A', '192.0.2.5']])],
+      '*.wild.example',
+      'A'
+    );
+    expectStatus(answers, 'secure', 'verified');
+    for (const answer of answers) {
+      expect(answer.security?.chain.some(link => link.kind === 'denial')).toBe(false);
+    }
+  });
+
+  it('judges a wildcard proof from one zone beside a denial from another', async () => {
+    // a wildcard CNAME in one zone pointing at a name missing from another: the recursive
+    // answer carries both zones' proofs
+    const signed = signedNetwork([
+      root,
+      tld,
+      { ...secure('a.example', [['*.a.example', 'CNAME', 'gone.b.example']]), nsec3: {} },
+      secure('b.example', [['www.b.example', 'A', '192.0.2.7']]),
+    ]);
+    const network = simulateNetwork(signed.servers);
+    const resolver = new Resolver({
+      transports: network.transports,
+      servers: [signed.recursive],
+      trustAnchors: signed.trustAnchors,
+      validate: true,
+    });
+    const answer = await resolver.query('x.a.example', 'A');
+    expect(answer.rcodeName).toBe('NXDOMAIN');
+    expect(answer.security?.status, JSON.stringify(answer.security?.reason)).toBe('secure');
+    expect(
+      answer.security?.chain.filter(link => link.kind === 'denial').map(link => link.zone)
+    ).toEqual(['a.example', 'b.example']);
+  });
+});
+
+describe('validate: DS questions', () => {
+  const plain: SignedZone = {
+    zone: 'plain.example',
+    unsigned: true,
+    records: [['www.plain.example', 'A', '192.0.2.3']],
+  };
+
+  it('is secure when the parent proves an unsigned delegation has no DS', async () => {
+    const answers = await both([root, tld, plain], 'plain.example', 'DS');
+    expectStatus(answers, 'secure', 'verified');
+    for (const answer of answers) {
+      expect(answer.records).toEqual([]);
+      expect(answer.security?.chain.at(-1)).toMatchObject({ kind: 'denial', zone: 'example' });
+    }
+  });
+
+  it('is insecure when an opt-out range covers the delegation (RFC 5155 §8.6)', async () => {
+    const answers = await both(
+      [root, { zone: 'example', nsec3: { iterations: 0, optOut: true } }, plain],
+      'plain.example',
+      'DS'
+    );
+    expectStatus(answers, 'insecure', 'opt-out');
+  });
+
+  it('is secure for a signed delegation', async () => {
+    const answers = await both(
+      [root, tld, secure('secure.example', [['www.secure.example', 'A', '192.0.2.1']])],
+      'secure.example',
+      'DS'
+    );
+    expectStatus(answers, 'secure', 'verified');
+  });
+});
+
+describe('validate: opt-out', () => {
+  const zone = (optOut: (name: string) => boolean): SignedZone => ({
+    ...secure('secure.example', [['www.secure.example', 'A', '192.0.2.1']]),
+    nsec3: { iterations: 0, optOut },
+  });
+
+  // the chain holds two names, the apex and www: for the missing name below, the apex's
+  // NSEC3 matches the closest encloser and www's covers the next closer name
+  it('is secure when only the closest encloser NSEC3 sets opt-out (RFC 5155 §8.4)', async () => {
+    const answers = await both(
+      [root, tld, zone(name => name === 'secure.example')],
+      'nothing.secure.example',
+      'A'
+    );
+    expectStatus(answers, 'secure', 'verified');
+    for (const answer of answers) expect(answer.rcodeName).toBe('NXDOMAIN');
+  });
+
+  it('is insecure when the NSEC3 covering the next closer name sets opt-out', async () => {
+    const answers = await both(
+      [root, tld, zone(name => name !== 'secure.example')],
+      'nothing.secure.example',
+      'A'
+    );
+    expectStatus(answers, 'insecure', 'opt-out');
+  });
+
+  it('is insecure for a wildcard answer whose next closer name is in an opt-out range', async () => {
+    const answers = await both(
+      [
+        root,
+        tld,
+        {
+          ...secure('wild.example', [['*.wild.example', 'A', '192.0.2.5']]),
+          nsec3: { iterations: 0, optOut: true },
+        },
+      ],
+      'anything.wild.example',
+      'A'
+    );
+    expectStatus(answers, 'insecure', 'opt-out');
+  });
+});
+
+describe('validate: limits on the work one answer may cause', () => {
+  it('gives up on an RRset signed more times over than it will check (KeyTrap)', async () => {
+    // ten keys sign everything; the first nine signatures over the A RRset are broken
+    const keys = [ecdsaKey(257), ...Array.from({ length: 9 }, () => ecdsaKey(256))];
+    const signed = signedNetwork([
+      root,
+      tld,
+      { ...secure('many.example', [['www.many.example', 'A', '192.0.2.1']]), keys },
+    ]);
+    const honest = signed.servers['10.53.0.3'];
+    signed.servers['10.53.0.3'] = async query => {
+      const reply = await honest(query);
+      if (!(reply instanceof Uint8Array) || query.questions[0].type !== 1) return reply;
+      const message = decodeMessage(reply);
+      for (const record of message.answers.filter(rr => rr.type === 46).slice(0, 9)) {
+        record.rdata = Uint8Array.from(record.rdata);
+        record.rdata[record.rdata.length - 1] ^= 0xff;
+      }
+      return encodeMessage(message);
+    };
+    const network = simulateNetwork(signed.servers);
+    const resolver = new AuthoritativeResolver({
+      transports: network.transports,
+      rootServers: signed.rootServers,
+      trustAnchors: signed.trustAnchors,
+      validate: true,
+    });
+    const answer = await resolver.query('www.many.example', 'A');
+    expect(answer.security?.status).toBe('bogus');
+    expect(answer.security?.reason).toMatchObject({ code: 'validation-limit', type: 'A', ede: 6 });
+  });
+});
+
+describe('validate: how long what was learned is kept', () => {
+  it('keeps a key set no longer than its signature is valid (RFC 4035 §5.3.3)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const { network, authoritative } = setUp([
+      root,
+      tld,
+      {
+        ...secure('secure.example', [['www.secure.example', 'A', '192.0.2.1']]),
+        keyTtl: 3600,
+        expiration: new Date(Date.now() + 120_000),
+      },
+    ]);
+    const dnskeys = () => network.log().filter(line => line.endsWith(' secure.example DNSKEY'));
+    expect((await authoritative.query('www.secure.example', 'A')).security?.status).toBe('secure');
+    expect(dnskeys()).toHaveLength(1);
+
+    // the TTL says an hour; the signatures run out in two minutes
+    vi.setSystemTime(Date.now() + 121_000);
+    const later = await authoritative.query('www.secure.example', 'A');
+    expect(dnskeys()).toHaveLength(2);
+    expect(later.security?.status).toBe('bogus');
+    expect(later.security?.reason.code).toBe('signature-expired');
+  });
+});

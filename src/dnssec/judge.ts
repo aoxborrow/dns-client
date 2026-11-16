@@ -14,16 +14,21 @@ import { groupRrsets, wildcardOwner } from './canonical';
 import type { Rrset, WireRecord } from './canonical';
 import {
   checkAnchors,
+  checkBudget,
   checkDsSet,
+  coveringSignatures,
   checkKeySet,
   checkRrset,
   KEY_SET_CODES,
   readKeys,
+  readRrsig,
   RRSET_CODES,
   SIGNATURE_CODES,
 } from './checks';
 import type {
   AnchorCheck,
+  CheckBudget,
+  CheckLimits,
   DnssecKey,
   DsSetCheck,
   KeySetCheck,
@@ -35,8 +40,10 @@ import {
   PROOF_STATUSES,
   VERIFICATION_RESULTS,
 } from './constants';
+import { decodeNsec3 } from '../records/decode';
 import {
   denialTypesAt,
+  nextCloserOptOut,
   verifyNodataProof,
   verifyNoDsProof,
   verifyNxdomainProof,
@@ -117,6 +124,9 @@ export interface JudgeOptions {
   // require each RRset to be signed by every algorithm in its zone's key set (RFC 4035
   // §2.2). Validators accept any one (RFC 6840 §5.11), so off by default
   requireEveryAlgorithm?: boolean;
+  // how much signature checking the judgement may do before it gives up on the answer as
+  // bogus. Default: 128 verifications, 4 keys tried per signature, 8 signatures per RRset
+  limits?: Partial<CheckLimits>;
 }
 
 export type LinkKind = 'keys' | 'rrset' | 'denial';
@@ -162,10 +172,12 @@ export async function judgeChain(
   const anchors = options.trustAnchors ?? ROOT_TRUST_ANCHORS;
   const mode = options.mode ?? 'first';
   const stopAtFirst = mode === 'first';
-  const rrsetOptions = {
+  const budget = checkBudget(options.limits);
+  const rrsetOptions: RrsetOptions = {
     now,
     stopAtFirst,
     requireEveryAlgorithm: options.requireEveryAlgorithm ?? false,
+    budget,
   };
 
   const links: ChainLink[] = [];
@@ -198,7 +210,14 @@ export async function judgeChain(
   // the zone the trust anchors are for
   const anchorZone = canonicalName(anchors[0]?.zone ?? '.');
   if (!zones.has(anchorZone)) {
-    const state = await judgeKeys(anchorZone, input.anchored, { anchors }, now, stopAtFirst);
+    const state = await judgeKeys(
+      anchorZone,
+      input.anchored,
+      { anchors },
+      now,
+      stopAtFirst,
+      budget
+    );
     zones.set(anchorZone, state.zone);
     links.push(keysLink(state.zone));
     if (state.fact) facts.push(state.fact);
@@ -303,7 +322,8 @@ export async function judgeKeys(
   dnskey: DnssecResponse | undefined,
   entry: KeysEntry,
   now: Date,
-  stopAtFirst = false
+  stopAtFirst = false,
+  budget?: CheckBudget
 ): Promise<ZoneKeysJudgement> {
   const state = (status: SecurityStatus, code: ReasonCode, about = {}): ZoneState => ({
     zone,
@@ -330,7 +350,7 @@ export async function judgeKeys(
   if ('anchors' in entry) {
     const rrset = groupRrsets(keys.map(key => key.record))[0];
     const rrsigs = dnskey.answers.filter(record => record.type === RRSIG);
-    anchors = await checkAnchors(zone, keys, entry.anchors, now, { rrset, rrsigs });
+    anchors = await checkAnchors(zone, keys, entry.anchors, now, { rrset, rrsigs }, budget);
     entryKeys = anchors.keys;
     entryAlgorithms = entryKeys.map(key => key.algorithm);
     if (entryKeys.length === 0) decided = state(BOGUS, R.NO_TRUST_ANCHOR);
@@ -352,6 +372,7 @@ export async function judgeKeys(
 
   const keySet = await checkKeySet(zone, dnskey, keys, entryKeys, entryAlgorithms, now, {
     stopAtFirst,
+    budget,
   });
   const judged = { keys, anchors, dsSet, keySet };
   if (decided) return { zone: decided, ...judged };
@@ -363,9 +384,8 @@ export async function judgeKeys(
       );
       const lifetimes = [keySet.rrset!.ttl];
       if ('ds' in entry && entry.dsTtl !== undefined) lifetimes.push(entry.dsTtl);
-      if (verifying) {
-        lifetimes.push(Math.floor((verifying.rrsig.expiration * 1000 - now.getTime()) / 1000));
-      }
+      // no longer than the signature's original TTL, nor past its expiry (RFC 4035 §5.3.3)
+      if (verifying) lifetimes.push(signatureLifetime(verifying, now));
       const secure: ZoneState = {
         zone,
         status: SECURE,
@@ -397,12 +417,16 @@ export async function judgeKeys(
       return { zone: state(BOGUS, code, { keyTag: failed?.ds.keyTag }), ...judged };
     }
     default: {
-      const byEntry = keySet.signatures.find(signature =>
-        entryKeys.some(
-          key =>
-            key.keyTag === signature.rrsig.keyTag && key.algorithm === signature.rrsig.algorithm
-        )
-      );
+      // signatures left unchecked for want of budget may have held a good one: the limit is
+      // why the key set failed
+      const byEntry =
+        keySet.signatures.find(signature => signature.code === SIGNATURE_CODES.LIMIT_EXCEEDED) ??
+        keySet.signatures.find(signature =>
+          entryKeys.some(
+            key =>
+              key.keyTag === signature.rrsig.keyTag && key.algorithm === signature.rrsig.algorithm
+          )
+        );
       const code = byEntry ? signatureReason(byEntry) : R.KEYSET_NOT_SIGNED;
       return {
         zone: state(BOGUS, code, {
@@ -434,6 +458,8 @@ function signatureReason(signature: SignatureCheck): ReasonCode {
       return R.SIGNATURE_MISMATCH;
     case SIGNATURE_CODES.UNSUPPORTED_ALGORITHM:
       return R.UNVERIFIABLE;
+    case SIGNATURE_CODES.LIMIT_EXCEEDED:
+      return R.VALIDATION_LIMIT;
     default:
       return R.SIGNATURE_INVALID;
   }
@@ -473,8 +499,12 @@ function rrsetVerdict(
           }),
         };
       }
+      // signatures left unchecked for want of budget may have held a good one: the limit is
+      // why the RRset failed
       const failed =
-        own.find(signature => signature.code !== SIGNATURE_CODES.UNSUPPORTED_ALGORITHM) ?? own[0];
+        own.find(signature => signature.code === SIGNATURE_CODES.LIMIT_EXCEEDED) ??
+        own.find(signature => signature.code !== SIGNATURE_CODES.UNSUPPORTED_ALGORITHM) ??
+        own[0];
       return {
         status: BOGUS,
         reason: securityReason(failed ? signatureReason(failed) : R.SIGNATURE_INVALID, zone, {
@@ -498,23 +528,100 @@ interface NameJudgement {
   fact?: ZoneFact;
 }
 
-type RrsetOptions = { now: Date; stopAtFirst: boolean; requireEveryAlgorithm: boolean };
+type RrsetOptions = {
+  now: Date;
+  stopAtFirst: boolean;
+  requireEveryAlgorithm: boolean;
+  budget?: CheckBudget;
+};
 
-// the NSEC and NSEC3 RRsets of a response's authority section, each checked in `zone`.
-// Undefined when there are none
+interface DenialRecords {
+  // each NSEC or NSEC3 RRset of the zone, checked in it
+  checks: RrsetCheck[];
+  // their records, which are all a proof is worked out from
+  records: WireRecord[];
+}
+
+// the NSEC and NSEC3 RRsets of a response's authority section that belong to `zone`, each
+// checked in it. Undefined when there are none.
+//
+// a response can carry another zone's proof beside this one's (a wildcard answer in one
+// zone whose alias ends at a name missing from another), so an RRset whose signatures all
+// name another signer is left to that zone, not counted against this one. Leaving records
+// out only takes evidence away, so it cannot make a proof pass. Of the NSEC3 records, only
+// those with the parameters of the first count: a zone uses one set (RFC 5155 §7.1), and
+// hashing a name again for every set a response makes up is work for nothing
+// (CVE-2023-50868)
 async function checkDenialRecords(
   zone: ZoneState,
   authorities: WireRecord[],
   rrsigs: WireRecord[],
   options: RrsetOptions
-): Promise<RrsetCheck[] | undefined> {
-  const rrsets = groupRrsets(
-    authorities.filter(record => record.type === NSEC || record.type === NSEC3)
-  );
+): Promise<DenialRecords | undefined> {
+  const apex = canonicalName(zone.zone);
+  let params: string | undefined;
+  const ours = authorities.filter(record => {
+    if (record.type === NSEC) return isSubdomain(record.name, apex);
+    if (record.type !== NSEC3) return false;
+    if (parentName(canonicalName(record.name)) !== apex) return false;
+    const key = nsec3Params(record);
+    if (key === undefined) return false;
+    params ??= key;
+    return key === params;
+  });
+  const rrsets = groupRrsets(ours).filter(rrset => {
+    const signers = coveringSignatures(rrset, rrsigs).map(record => readRrsig(record)?.signerName);
+    return (
+      signers.length === 0 ||
+      signers.some(signer => signer !== undefined && canonicalName(signer) === apex)
+    );
+  });
   if (rrsets.length === 0) return undefined;
   const checks: RrsetCheck[] = [];
   for (const rrset of rrsets) checks.push(await checkRrset(zone, rrset, rrsigs, options));
-  return checks;
+  return { checks, records: rrsets.flatMap(rrset => rrset.records) };
+}
+
+// an NSEC3 record's hash parameters, as one string to compare
+function nsec3Params(record: WireRecord): string | undefined {
+  try {
+    const { hashAlgorithm, iterations, salt } = decodeNsec3(record.rdata);
+    return `${hashAlgorithm}/${iterations}/${salt.join(',')}`;
+  } catch {
+    return undefined;
+  }
+}
+
+// the most NSEC3 iterations among records
+function nsec3Iterations(records: WireRecord[]): number {
+  let most = 0;
+  for (const record of records) {
+    if (record.type !== NSEC3) continue;
+    try {
+      most = Math.max(most, decodeNsec3(record.rdata).iterations);
+    } catch {
+      // a record that does not decode proves nothing
+    }
+  }
+  return most;
+}
+
+// an NSEC or NSEC3 record is never synthesized from a wildcard: one whose signature says
+// it was is not the zone's (RFC 4035 §5.3.4)
+function expandedFromWildcard(check: RrsetCheck): boolean {
+  return check.signatures.some(signature => signature.result === VERIFIED && signature.wildcard);
+}
+
+// how long a verified RRset may be trusted, in seconds: its TTL, capped at the original
+// TTL and the expiry of the signature that verified it (RFC 4035 §5.3.3)
+function rrsetLifetime(check: RrsetCheck, now: Date): number {
+  const verifying = check.signatures.find(signature => signature.result === VERIFIED);
+  return Math.min(check.rrset.ttl, verifying ? signatureLifetime(verifying, now) : Infinity);
+}
+
+function signatureLifetime(signature: SignatureCheck, now: Date): number {
+  const expires = Math.floor((signature.rrsig.expiration * 1000 - now.getTime()) / 1000);
+  return Math.max(0, Math.min(signature.rrsig.originalTtl, expires));
 }
 
 const signaturesIn = (response: DnssecResponse) =>
@@ -557,16 +664,18 @@ async function judgeName(
         verdict.reason.code === R.RRSIGS_MISSING ? R.DS_UNAUTHENTICATED : verdict.reason.code;
       return cut(verdict.status, code, { name, type: 'DS' });
     }
+    const dsTtl = rrsetLifetime(signed, now);
     const judged = await judgeKeys(
       name,
       entry.dnskey,
-      { ds: dsRrset.records, dsTtl: dsRrset.ttl },
+      { ds: dsRrset.records, dsTtl },
       now,
-      options.stopAtFirst
+      options.stopAtFirst,
+      options.budget
     );
     const fact =
       judged.fact ??
-      (judged.zone.status === INSECURE ? factOf(judged.zone, true, dsRrset.ttl) : undefined);
+      (judged.zone.status === INSECURE ? factOf(judged.zone, true, dsTtl) : undefined);
     return { cut: judged.zone, ...(fact && { fact }) };
   }
 
@@ -582,7 +691,7 @@ async function judgeName(
   if (dname) {
     const signed = await checkRrset(parent, dname, rrsigs, options);
     if (signed.code === RRSET_CODES.VERIFIED) {
-      return { inside: true, fact: factOf(parent, false, dname.ttl, name) };
+      return { inside: true, fact: factOf(parent, false, rrsetLifetime(signed, now), name) };
     }
     const verdict = rrsetVerdict(signed, parent.zone);
     return cut(verdict.status, verdict.reason.code, { name: dname.name, type: 'DNAME' });
@@ -595,7 +704,7 @@ async function judgeName(
   if (alias) {
     const signed = await checkRrset(parent, alias, rrsigs, options);
     if (signed.code === RRSET_CODES.VERIFIED) {
-      return { inside: true, fact: factOf(parent, false, alias.ttl, name) };
+      return { inside: true, fact: factOf(parent, false, rrsetLifetime(signed, now), name) };
     }
     const verdict = rrsetVerdict(signed, parent.zone);
     return cut(verdict.status, verdict.reason.code, { name, type: 'CNAME' });
@@ -604,7 +713,7 @@ async function judgeName(
   // no DS: the parent has to prove it, with NSEC or NSEC3 records it signed
   const denial = await checkDenialRecords(parent, response.authorities, rrsigs, options);
   if (!denial) return cut(BOGUS, R.NO_DS_PROOF, { name, type: 'DS' });
-  const unsigned = denial.find(check => check.code !== RRSET_CODES.VERIFIED);
+  const unsigned = denial.checks.find(check => check.code !== RRSET_CODES.VERIFIED);
   if (unsigned) {
     const verdict = rrsetVerdict(unsigned, parent.zone);
     return cut(
@@ -616,14 +725,24 @@ async function judgeName(
       }
     );
   }
-  const ttl = Math.min(...denial.map(check => check.rrset.ttl));
+  const expanded = denial.checks.find(expandedFromWildcard);
+  if (expanded) {
+    return cut(BOGUS, R.DENIAL_INVALID, {
+      name: expanded.rrset.name,
+      type: expanded.rrset.typeName,
+    });
+  }
+  const ttl = Math.min(...denial.checks.map(check => rrsetLifetime(check, now)));
 
-  const proof = verifyNoDsProof(name, response.authorities);
-  if (tooManyIterations(proof)) return insecureCut(name, R.NSEC3_ITERATIONS, ttl);
+  // past the iterations validators hash, nothing is hashed at all (RFC 9276 §3.2)
+  if (nsec3Iterations(denial.records) > NSEC3_ITERATIONS_INSECURE_THRESHOLD) {
+    return insecureCut(name, R.NSEC3_ITERATIONS, ttl);
+  }
+  const proof = verifyNoDsProof(name, denial.records);
   if (proof.status === PROOF_STATUSES.OPT_OUT) return insecureCut(name, R.OPT_OUT, ttl);
   if (proof.result !== VERIFIED) return cut(BOGUS, R.NO_DS_PROOF, { name, type: 'DS' });
 
-  const at = denialTypesAt(name, response.authorities);
+  const at = denialTypesAt(name, denial.records);
   if (at.types?.includes(NS) && !at.types.includes(SOA)) {
     // a delegation with no DS: the zone below is unsigned
     return insecureCut(name, R.NO_DS, ttl);
@@ -646,10 +765,6 @@ function factOf(zone: ZoneState, cut: boolean, ttl: number, name = zone.zone): Z
   return cut
     ? { name, cut, status: zone.status, reason: zone.reason, keys: zone.keys, ttl }
     : { name, cut, status: zone.status, reason: zone.reason, keys: [], ttl };
-}
-
-function tooManyIterations(proof: DenialProof): boolean {
-  return (proof.nsec3Params?.iterations ?? 0) > NSEC3_ITERATIONS_INSECURE_THRESHOLD;
 }
 
 // ---------------------------------------------------------------------------
@@ -773,14 +888,13 @@ async function judgeResponse(
       signature => signature.result === VERIFIED && signature.wildcard
     );
     if (wildcard) {
+      const owner = wildcardOwner(rrset.name, wildcard.rrsig.labels);
       links.push(
-        await judgeDenial(zone, response, rrsigs, options, rrset.name, 'wildcard', () =>
-          verifyWildcardProof(
-            rrset.name,
-            response.authorities,
-            wildcardOwner(rrset.name, wildcard.rrsig.labels)
-          )
-        )
+        await judgeDenial(zone, response, rrsigs, options, rrset.name, 'wildcard', records => ({
+          proof: verifyWildcardProof(rrset.name, records, owner),
+          // the wildcard's parent is the closest encloser
+          optOut: nextCloserOptOut(rrset.name, records, parentName(canonicalName(owner))),
+        }))
       );
     }
   }
@@ -824,8 +938,10 @@ async function judgeResponse(
     return links;
   }
 
-  // a name with nothing of the type, or no name at all: the zone has to prove it
-  const zone = enclosing(target);
+  // a name with nothing of the type, or no name at all: the zone has to prove it. Whether
+  // a name has a DS is its parent's to say
+  const ds = response.type === DS;
+  const zone = enclosing(target, ds);
   if (!zone || zone.status !== SECURE) {
     links.push(inherit(zone, 'denial', target, typeName(response.type)));
     return links;
@@ -839,10 +955,22 @@ async function judgeResponse(
       options,
       target,
       nxdomain ? 'nxdomain' : 'nodata',
-      () =>
-        nxdomain
-          ? verifyNxdomainProof(target, response.authorities)
-          : verifyNodataProof(target, response.type, response.authorities)
+      records => {
+        if (nxdomain) {
+          return {
+            proof: verifyNxdomainProof(target, records),
+            optOut: nextCloserOptOut(target, records),
+          };
+        }
+        // a DS proof allows an opt-out range over the name (RFC 5155 §8.6)
+        const proof = ds
+          ? verifyNoDsProof(target, records)
+          : verifyNodataProof(target, response.type, records);
+        // a name with an NSEC or NSEC3 of its own is in no opt-out range; one without was
+        // proven through a wildcard, whose next closer name may be
+        const exact = denialTypesAt(target, records).types !== undefined;
+        return { proof, optOut: !exact && nextCloserOptOut(target, records) };
+      }
     )
   );
   return links;
@@ -855,7 +983,8 @@ async function judgeDenial(
   options: RrsetOptions,
   name: string,
   purpose: 'wildcard' | 'nxdomain' | 'nodata',
-  prove: () => DenialProof
+  // the proof, and whether the NSEC3 covering the next closer name sets opt-out
+  prove: (records: WireRecord[]) => { proof: DenialProof; optOut: boolean }
 ): Promise<ChainLink> {
   const type = purpose === 'nodata' ? typeName(response.type) : undefined;
   const link = (
@@ -873,7 +1002,7 @@ async function judgeDenial(
 
   const denial = await checkDenialRecords(zone, response.authorities, rrsigs, options);
   if (!denial) return link(BOGUS, R.DENIAL_MISSING);
-  const unsigned = denial.find(check => check.code !== RRSET_CODES.VERIFIED);
+  const unsigned = denial.checks.find(check => check.code !== RRSET_CODES.VERIFIED);
   if (unsigned) {
     const verdict = rrsetVerdict(unsigned, zone.zone);
     return link(verdict.status, verdict.reason.code, {
@@ -881,12 +1010,23 @@ async function judgeDenial(
       type: unsigned.rrset.typeName,
     });
   }
+  const expanded = denial.checks.find(expandedFromWildcard);
+  if (expanded) {
+    return link(BOGUS, R.DENIAL_INVALID, {
+      name: expanded.rrset.name,
+      type: expanded.rrset.typeName,
+    });
+  }
 
-  const proof = prove();
-  if (tooManyIterations(proof)) return link(INSECURE, R.NSEC3_ITERATIONS);
+  // past the iterations validators hash, nothing is hashed at all (RFC 9276 §3.2)
+  if (nsec3Iterations(denial.records) > NSEC3_ITERATIONS_INSECURE_THRESHOLD) {
+    return link(INSECURE, R.NSEC3_ITERATIONS);
+  }
+  const { proof, optOut } = prove(denial.records);
   if (proof.result === VERIFIED) {
-    // an opt-out range over the name: it may sit below an unsigned delegation
-    if (purpose === 'nxdomain' && proof.optOut) return link(INSECURE, R.OPT_OUT);
+    // the NSEC3 covering the next closer name sets opt-out: an unsigned delegation may
+    // sit in its range, so the proof does not authenticate the answer (RFC 5155 §9.2)
+    if (optOut) return link(INSECURE, R.OPT_OUT);
     return link(SECURE, R.VERIFIED);
   }
   if (proof.status === PROOF_STATUSES.OPT_OUT) return link(INSECURE, R.OPT_OUT);

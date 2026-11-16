@@ -1,18 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
   checkAnchors,
+  checkDsSet,
+  computeDsDigest,
   EXTENDED_DNS_ERRORS,
   judgeChain,
   readKeys,
   REASON_CODES,
   REASON_EDE,
 } from '../../src/dnssec/index';
-import type { DnssecResponse } from '../../src/dnssec/index';
+import type { DnssecResponse, WireRecord } from '../../src/dnssec/index';
 import { dnssecResponse } from '../../src/dnssec/validate';
 import { Resolver } from '../../src/index';
 import { simulateNetwork } from '../support/simulated-network';
 import { anchorFor, ecdsaKey, revokedKey, signedNetwork } from '../support/signed-zones';
-import type { SignedZone } from '../support/signed-zones';
+import type { SignedZone, TestKey } from '../support/signed-zones';
 
 // the judging core on its own: the records are fetched here, by hand, and handed over
 
@@ -177,5 +179,64 @@ describe('checkAnchors', () => {
     const check = await checkAnchors('.', keys, [retired], new Date());
     expect(check.result).toBe('failed');
     expect(check.keys).toEqual([]);
+  });
+});
+
+describe('judgeChain: limits', () => {
+  it('gives up as bogus once the signature checks it may make are spent', async () => {
+    const { trustAnchors, chain } = await input();
+    const judgement = await judgeChain(chain, { trustAnchors, limits: { verifications: 1 } });
+    expect(judgement.status).toBe('bogus');
+    expect(judgement.reason).toMatchObject({ code: 'validation-limit', ede: 6 });
+    // the root's key set took the one check; the DS for example found none left
+    expect(judgement.failure).toMatchObject({ kind: 'keys', zone: 'example' });
+  });
+});
+
+describe('checkDsSet', () => {
+  // a DS record for a key, with the digest type asked for and, if `broken`, a wrong digest
+  function dsFor(owner: string, key: TestKey, digestType: number, broken = false): WireRecord {
+    const digest = computeDsDigest(owner, key.rdata, digestType)!;
+    if (broken) digest[0] ^= 0xff;
+    const head = new Uint8Array(4);
+    head[0] = key.keyTag >> 8;
+    head[1] = key.keyTag & 0xff;
+    head[2] = key.algorithm;
+    head[3] = digestType;
+    const rdata = new Uint8Array([...head, ...digest]);
+    return { name: owner, type: 43, typeName: 'DS', class: 1, ttl: 3600, rdata, section: 'answer' };
+  }
+  const key = ecdsaKey();
+  const keys = readKeys([
+    {
+      name: 'zone',
+      type: 48,
+      typeName: 'DNSKEY',
+      class: 1,
+      ttl: 3600,
+      rdata: key.rdata,
+      section: 'answer',
+    },
+  ]);
+
+  it('lets the SHA-256 digest decide, and ignores SHA-1 beside it (RFC 4509 §3)', () => {
+    const good = checkDsSet('zone', [dsFor('zone', key, 1, true), dsFor('zone', key, 2)], keys);
+    expect(good.selectedDigestType).toBe(2);
+    expect(good.keys).toHaveLength(1);
+    expect(good.checks.map(check => check.code)).toEqual(['ignored-weaker-digest', 'verified']);
+
+    // a good SHA-1 digest cannot rescue a broken SHA-256 one
+    const bad = checkDsSet('zone', [dsFor('zone', key, 1), dsFor('zone', key, 2, true)], keys);
+    expect(bad.keys).toEqual([]);
+    expect(bad.checks.map(check => check.code)).toEqual([
+      'ignored-weaker-digest',
+      'digest-mismatch',
+    ]);
+  });
+
+  it('uses SHA-1 when it is all there is', () => {
+    const only = checkDsSet('zone', [dsFor('zone', key, 1)], keys);
+    expect(only.selectedDigestType).toBe(1);
+    expect(only.keys).toHaveLength(1);
   });
 });

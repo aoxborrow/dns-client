@@ -253,7 +253,14 @@ down and then each RRset and denial proof of the data, each with its own status 
 `failure` is the first bogus or indeterminate one. CNAME and DNAME chains are judged link by
 link (a CNAME synthesized from a signed DNAME needs no signature of its own), answers from a
 wildcard need the proof that the name itself does not exist, and NXDOMAIN and NODATA need
-their NSEC or NSEC3 proofs.
+their NSEC or NSEC3 proofs, a NODATA from a wildcard or at an empty non-terminal included.
+An opt-out range makes an answer insecure only where the NSEC3 covering the next closer name
+sets it (RFC 5155 §9.2).
+
+One answer may cost at most 128 signature verifications, 4 keys tried per signature and 8
+signatures per RRset; past that it is `bogus` with the code `validation-limit`, as
+validators have done since KeyTrap (CVE-2023-50387). `judgeChain` takes other `limits`.
+NSEC3 names are hashed once per parameter set, and not at all past 100 iterations.
 
 What each zone's key set came to is kept for as long as the TTLs and signatures it rests on
 allow (with `cache: false`, not at all), and `clearCache()` forgets it. Validation starts

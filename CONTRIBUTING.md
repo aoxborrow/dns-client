@@ -5,6 +5,7 @@
 ```bash
 yarn install
 yarn test            # unit tests, no network
+yarn test:live       # the live suite, over the real network
 yarn lint            # typecheck, eslint, prettier
 yarn build           # ES modules and type declarations into dist/
 yarn check:browser   # the browser-safe entries bundle with no Node built-ins
@@ -106,6 +107,13 @@ yarn capture 'cloudflare.com'   # ask again only the questions whose label conta
 A label reads `<transport> <server> <name> <type> +<flag>...`. Every response is kept,
 whatever its response code, and a truncated UDP response is kept as it came. Capturing
 needs the network, TCP and UDP on port 53; the tests never do.
+
+The live suite, `test/live`, is the exception, and is never part of `yarn test`. It asks
+1.1.1.1, 8.8.8.8 and 9.9.9.9 over every transport, walks from the root, and validates a
+table of names whose DNSSEC verdict is known (signed, unsigned, broken on purpose, missing,
+wildcards, aliases), checking each verdict against what 1.1.1.1 and 8.8.8.8 say. A query
+that fails on the network is retried once; a wrong verdict fails the run. It prints the
+table of verdicts at the end. CI runs it weekly.
 
 ## Cloudflare Workers
 

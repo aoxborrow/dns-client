@@ -327,8 +327,12 @@ export function buildSignedData(
   if (rrsig.labels > ownerLabels) return null;
 
   // RFC 4035 §5.3.2: fewer labels in the RRSIG than in the owner name means the answer was
-  // synthesised from a wildcard, and the name that was actually signed is *.<closest encloser>
-  const wildcard = rrsig.labels < ownerLabels;
+  // synthesised from a wildcard, and the name that was actually signed is *.<closest encloser>.
+  // The labels field never counts a leading `*` (RFC 4034 §3.1.3), so the wildcard's own
+  // RRset, asked for by its name, is signed one label short and is no expansion
+  const literal =
+    splitName(canonicalName(rrset.name))[0] === '*' && rrsig.labels === ownerLabels - 1;
+  const wildcard = rrsig.labels < ownerLabels && !literal;
   const signedOwner = wildcard ? wildcardOwner(rrset.name, rrsig.labels) : rrset.name;
 
   const encodedOwner = canonicalWireName(signedOwner);

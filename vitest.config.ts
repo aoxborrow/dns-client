@@ -7,6 +7,7 @@ export default defineConfig({
     environment: 'node',
     globals: true,
     include: ['test/**/*.test.ts', 'src/**/*.test.ts'],
-    exclude: ['**/node_modules/**', '**/*.itest.ts'],
+    // the live suite (test/live) has its own config, vitest.live.config.ts
+    exclude: ['**/node_modules/**', '**/*.itest.ts', 'test/live/**'],
   },
 });

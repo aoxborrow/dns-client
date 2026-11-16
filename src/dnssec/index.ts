@@ -39,6 +39,7 @@ export {
 export type { Rrset, WireMessage, WireRecord } from './canonical';
 export {
   checkAnchors,
+  checkBudget,
   checkDsSet,
   checkKeySet,
   checkRrset,
@@ -49,6 +50,7 @@ export {
   keyAlgorithms,
   readKeys,
   readRrsig,
+  CHECK_LIMITS,
   DS_CODES,
   KEY_SET_CODES,
   RRSET_CODES,
@@ -56,6 +58,8 @@ export {
 } from './checks';
 export type {
   AnchorCheck,
+  CheckBudget,
+  CheckLimits,
   DnssecKey,
   DsCheck,
   DsCode,
@@ -91,7 +95,7 @@ export {
   securityReason,
 } from './reasons';
 export type { ReasonCode, SecurityReason, SecurityStatus } from './reasons';
-export { denialTypesAt } from './nsec';
+export { denialTypesAt, nextCloserOptOut } from './nsec';
 export { presentRecord } from './present';
 export { sha1, sha256, sha384 } from './hash';
 export * from './constants';
