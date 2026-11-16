@@ -421,6 +421,97 @@ describe('validate: proofs of non-existence', () => {
     expect(answer.security?.failure).toMatchObject({ kind: 'denial', name: 'ent.secure.example' });
   });
 
+  // the rcode is not signed: a positive answer relabelled NXDOMAIN keeps its signed RRset
+  const relabelled =
+    (server: SimulatedServer): SimulatedServer =>
+    async query => {
+      const reply = await server(query);
+      if (!(reply instanceof Uint8Array) || query.questions[0].type !== 1) return reply;
+      const message = decodeMessage(reply);
+      if (!message.answers.length) return reply;
+      message.rcode = 3;
+      return encodeMessage(message);
+    };
+
+  it('is bogus when a signed positive answer comes back as NXDOMAIN', async () => {
+    const signed = signedNetwork(zones());
+    // secure.example is the third zone
+    signed.servers['10.53.0.3'] = relabelled(signed.servers['10.53.0.3']);
+    signed.servers[signed.recursive] = relabelled(signed.servers[signed.recursive]);
+    const network = simulateNetwork(signed.servers);
+    const options = { transports: network.transports, trustAnchors: signed.trustAnchors };
+    const answers = await Promise.all([
+      new AuthoritativeResolver({
+        ...options,
+        rootServers: signed.rootServers,
+        validate: true,
+      }).query('www.secure.example', 'A'),
+      new Resolver({ ...options, servers: [signed.recursive], validate: true }).query(
+        'www.secure.example',
+        'A'
+      ),
+    ]);
+    for (const answer of answers) {
+      expect(answer.rcodeName).toBe('NXDOMAIN');
+      expect(answer.records).toMatchObject([{ type: 'A', address: '192.0.2.1' }]);
+      expect(answer.security?.status, answer.server).toBe('bogus');
+      expect(answer.security?.failure).toMatchObject({
+        kind: 'denial',
+        name: 'www.secure.example',
+      });
+    }
+  });
+
+  it('proves the end of an alias chain that ends in NXDOMAIN does not exist', async () => {
+    const signed = signedNetwork([
+      root,
+      tld,
+      secure('a.example', [['www.a.example', 'CNAME', 'gone.b.example']]),
+      secure('b.example', [['host.b.example', 'A', '192.0.2.7']]),
+    ]);
+    const network = simulateNetwork(signed.servers);
+    const resolver = new Resolver({
+      transports: network.transports,
+      servers: [signed.recursive],
+      trustAnchors: signed.trustAnchors,
+      validate: true,
+    });
+    const answer = await resolver.query('www.a.example', 'A');
+    expect(answer.rcodeName).toBe('NXDOMAIN');
+    expect(answer.security?.status).toBe('secure');
+    expect(answer.security?.chain.at(-1)).toMatchObject({
+      kind: 'denial',
+      name: 'gone.b.example',
+      status: 'secure',
+    });
+  });
+
+  it('is bogus when an alias chain ending in NXDOMAIN comes without the denial', async () => {
+    const signed = signedNetwork([
+      root,
+      tld,
+      secure('a.example', [['www.a.example', 'CNAME', 'gone.b.example']]),
+      secure('b.example', [['host.b.example', 'A', '192.0.2.7']]),
+    ]);
+    const honest = signed.servers[signed.recursive];
+    signed.servers[signed.recursive] = async query => {
+      const reply = await honest(query);
+      if (!(reply instanceof Uint8Array) || query.questions[0].type !== 1) return reply;
+      return encodeMessage({ ...decodeMessage(reply), authorities: [] });
+    };
+    const network = simulateNetwork(signed.servers);
+    const resolver = new Resolver({
+      transports: network.transports,
+      servers: [signed.recursive],
+      trustAnchors: signed.trustAnchors,
+      validate: true,
+    });
+    const answer = await resolver.query('www.a.example', 'A');
+    expect(answer.rcodeName).toBe('NXDOMAIN');
+    expect(answer.security?.status).toBe('bogus');
+    expect(answer.security?.failure).toMatchObject({ kind: 'denial', name: 'gone.b.example' });
+  });
+
   it('is insecure past the NSEC3 iteration count validators hash (RFC 9276)', async () => {
     const answers = await both(zones({ iterations: 150 }), 'nothing.secure.example', 'A');
     expectStatus(answers, 'insecure', 'nsec3-iterations');

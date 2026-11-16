@@ -918,7 +918,12 @@ async function judgeResponse(
       canonicalName(rrset.name) === target &&
       (rrset.type === response.type || response.type === RECORD_TYPES.ANY)
   );
-  if (answered || (response.type === CNAME && rrsets.some(rrset => rrset.type === CNAME)))
+  // the rcode is not signed: an answer stands for itself only under NOERROR. An NXDOMAIN
+  // keeps the alias RRsets on the way, and the name at the end still takes a denial proof
+  if (
+    response.rcode === RCODES.NOERROR &&
+    (answered || (response.type === CNAME && rrsets.some(rrset => rrset.type === CNAME)))
+  )
     return links;
   const aliased = target !== canonicalName(response.name);
   if (aliased && response.rcode === RCODES.NOERROR && !asked.has(target)) {
