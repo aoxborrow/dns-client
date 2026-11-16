@@ -1,5 +1,6 @@
 import { rcodeName } from './protocol/header';
 import type { ExtendedErrorOption } from './records/edns';
+import type { RecordProblem } from './records/problems';
 import type { TraceHop } from './resolvers/answer';
 import type { TransportName } from './transports/types';
 
@@ -86,11 +87,15 @@ export class InvalidQueryError extends DnsError {
 }
 
 // record text that is not valid for its type. The message is written to be shown to the
-// person who typed the record
+// person who typed the record. `problems` says the same as data: one entry for each thing
+// found wrong, each with a code and the values behind it
 export class RecordSyntaxError extends DnsError {
-  constructor(message: string, options?: DnsErrorOptions) {
+  readonly problems: RecordProblem[];
+
+  constructor(message: string, options: DnsErrorOptions & { problems: RecordProblem[] }) {
     super(message, options);
     this.name = 'RecordSyntaxError';
+    this.problems = options.problems;
   }
 }
 

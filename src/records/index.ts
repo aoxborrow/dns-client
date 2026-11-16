@@ -14,7 +14,7 @@ export { parseIpv4, parseIpv6, reverseIp } from './addresses';
 export { formatRecord, formatRecordData, formatSignatureTime } from './format';
 export type { FormatOptions } from './format';
 export { deduplicateRecords, flattenRecord, flattenRecords, sortRecords } from './helpers';
-export type { FlatRecord } from './helpers';
+export type { FlatRecord, FlatRecordInput } from './helpers';
 export { hasRecordParser, parseRecordData } from './parse';
 export type { ParseOptions, RecordData } from './parse';
 export {
@@ -23,16 +23,15 @@ export {
   findCnameConflicts,
   findRepeatedRecords,
   parseRecord,
-  qualify,
-  relativize,
 } from './validate';
+export type { DiffOptions, RecordDiff, ValidateOptions } from './validate';
+export { qualify, relativize } from './names';
 export type {
-  DiffOptions,
-  QualifyOptions,
   RecordClash,
-  RecordDiff,
-  ValidateOptions,
-} from './validate';
+  RecordProblem,
+  RecordProblemCode,
+  RecordProblemValues,
+} from './problems';
 export {
   clientSubnetOption,
   cookieOption,

@@ -272,6 +272,7 @@ describe('record lists', () => {
     ).toEqual({
       name: 'example.com',
       type: 'MX',
+      class: 'IN',
       ttl: 300,
       data: '10 mail.example.net.',
     });
