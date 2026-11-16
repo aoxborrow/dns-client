@@ -944,12 +944,21 @@ describe('validate: how long what was learned is kept', () => {
   });
 });
 
+// what both resolvers take, to ask either in one loop
+interface Asking {
+  query(
+    name: string,
+    type: string,
+    options?: { transport?: 'tcp'; port?: number; signal?: AbortSignal }
+  ): Promise<Answer>;
+}
+
 describe('validate: the chain is asked the way the data was', () => {
   const zones = [root, tld, secure('secure.example', [['www.secure.example', 'A', '192.0.2.1']])];
 
   it('sends every chain query with the per-query transport and port', async () => {
     const { network, authoritative, recursive } = setUp(zones);
-    for (const resolver of [authoritative, recursive]) {
+    for (const resolver of [authoritative, recursive] as Asking[]) {
       network.queries.length = 0;
       const answer = await resolver.query('www.secure.example', 'A', {
         transport: 'tcp',
@@ -978,7 +987,7 @@ describe('validate: the chain is asked the way the data was', () => {
         };
       }
       const network = simulateNetwork(signed.servers);
-      const resolver =
+      const resolver: Asking =
         kind === 'recursive'
           ? new Resolver({
               transports: network.transports,
