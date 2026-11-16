@@ -8,16 +8,19 @@ import { entries } from '../tsup.config';
 // (dist), and the build entries. A new entry point added to only one of them would work
 // here and break on publish, or the reverse.
 
-interface ConditionalTarget {
+interface Target {
   types: string;
   default: string;
 }
 
 interface Manifest {
+  type: string;
+  engines: { node: string };
   exports: Record<string, string>;
   dependencies?: Record<string, string>;
   publishConfig: {
-    exports: Record<string, { import: ConditionalTarget; require: ConditionalTarget }>;
+    main?: string;
+    exports: Record<string, Target>;
   };
 }
 
@@ -51,11 +54,20 @@ describe('package manifest', () => {
     expect([...entries].sort()).toEqual(exported.sort());
   });
 
-  it('maps each published entry to the build output for that entry', () => {
+  it('maps each published entry to the ESM build output for that entry', () => {
     for (const [subpath, target] of Object.entries(manifest.publishConfig.exports)) {
       const base = `./dist/${distBase(subpath)}`;
-      expect(target.import).toEqual({ types: `${base}.d.ts`, default: `${base}.js` });
-      expect(target.require).toEqual({ types: `${base}.d.cts`, default: `${base}.cjs` });
+      expect(target).toEqual({ types: `${base}.d.ts`, default: `${base}.js` });
     }
+  });
+
+  it('is ESM only, for Node 22 and up', () => {
+    expect(manifest.type).toBe('module');
+    expect(manifest.engines.node).toBe('>=22');
+    expect(manifest.publishConfig.main).toBeUndefined();
+    const published = JSON.stringify(manifest.publishConfig);
+    expect(published).not.toContain('require');
+    expect(published).not.toContain('.cjs');
+    expect(published).not.toContain('.d.cts');
   });
 });

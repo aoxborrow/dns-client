@@ -6,13 +6,13 @@
 yarn install
 yarn test            # unit tests, no network
 yarn lint            # typecheck, eslint, prettier
-yarn build           # ES modules, CommonJS and type declarations into dist/
+yarn build           # ES modules and type declarations into dist/
 yarn check:browser   # the browser-safe entries bundle with no Node built-ins
-yarn check:pack      # the packed tarball installs and imports as ES modules and CommonJS
+yarn check:pack      # the packed tarball installs and imports, with one set of error classes
 yarn bench           # a local benchmark against node:dns, no network
 ```
 
-Node 20 or later.
+Node 22 or later.
 
 ## How the code is laid out
 
