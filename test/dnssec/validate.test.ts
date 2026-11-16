@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AuthoritativeResolver, Resolver } from '../../src/index';
 import type { Answer } from '../../src/index';
 import { simulateNetwork } from '../support/simulated-network';
+import type { SimulatedServer } from '../support/simulated-network';
 import { ecdsaKey, revokedKey, signedNetwork, unverifiableKey } from '../support/signed-zones';
 import type { SignedZone } from '../support/signed-zones';
 import { computeDsDigest } from '../../src/dnssec/canonical';
@@ -215,6 +216,141 @@ describe('validate: aliases', () => {
   });
 });
 
+// a server that answers questions for `type` as `server` does, with the records of the type
+// (and their signatures) and the authority section taken out, as an attacker on the path
+// could
+function stripping(server: SimulatedServer, type: number): SimulatedServer {
+  return async query => {
+    const reply = await server(query);
+    if (!(reply instanceof Uint8Array) || query.questions[0].type !== type) return reply;
+    const message = decodeMessage(reply);
+    message.answers = message.answers.filter(
+      record =>
+        record.type !== type &&
+        !(record.type === 46 && ((record.rdata[0] << 8) | record.rdata[1]) === type)
+    );
+    message.authorities = [];
+    return encodeMessage(message);
+  };
+}
+
+describe('validate: an alias without its target', () => {
+  const zones = [
+    root,
+    tld,
+    secure('a.example', [
+      ['www.a.example', 'CNAME', 'host.b.example'],
+      ['inner.a.example', 'CNAME', 'host.a.example'],
+      ['host.a.example', 'A', '192.0.2.6'],
+    ]),
+    secure('b.example', [['host.b.example', 'A', '192.0.2.7']]),
+  ];
+
+  it('is bogus from a recursive resolver that hands over the signed CNAME alone', async () => {
+    const signed = signedNetwork(zones);
+    signed.servers[signed.recursive] = stripping(signed.servers[signed.recursive], 1);
+    const network = simulateNetwork(signed.servers);
+    const resolver = new Resolver({
+      transports: network.transports,
+      servers: [signed.recursive],
+      trustAnchors: signed.trustAnchors,
+      validate: true,
+    });
+    const answer = await resolver.query('www.a.example', 'A');
+    expect(answer.rcodeName).toBe('NOERROR');
+    expect(answer.records).toEqual([]);
+    expect(answer.security?.status).toBe('bogus');
+    expect(answer.security?.reason).toMatchObject({ code: 'denial-missing', ede: 12 });
+    expect(answer.security?.failure).toMatchObject({ kind: 'denial', name: 'host.b.example' });
+  });
+
+  it('is secure from a recursive resolver that proves the target has no records', async () => {
+    const signed = signedNetwork([
+      root,
+      tld,
+      secure('a.example', [['www.a.example', 'CNAME', 'host.b.example']]),
+      secure('b.example', [['host.b.example', 'TXT', 'only text']]),
+    ]);
+    const network = simulateNetwork(signed.servers);
+    const resolver = new Resolver({
+      transports: network.transports,
+      servers: [signed.recursive],
+      trustAnchors: signed.trustAnchors,
+      validate: true,
+    });
+    const answer = await resolver.query('www.a.example', 'A');
+    expect(answer.records).toEqual([]);
+    expect(answer.security?.status).toBe('secure');
+    expect(answer.security?.chain.at(-1)).toMatchObject({
+      kind: 'denial',
+      name: 'host.b.example',
+      status: 'secure',
+    });
+  });
+
+  it('is bogus from a zone server that leaves out the data of an alias inside its zone', async () => {
+    const signed = signedNetwork(zones);
+    // a.example is the third zone
+    const server = '10.53.0.3';
+    signed.servers[server] = stripping(signed.servers[server], 1);
+    const network = simulateNetwork(signed.servers);
+    const resolver = new AuthoritativeResolver({
+      transports: network.transports,
+      rootServers: signed.rootServers,
+      trustAnchors: signed.trustAnchors,
+      validate: true,
+    });
+    const answer = await resolver.query('inner.a.example', 'A');
+    expect(answer.records).toEqual([]);
+    expect(answer.security?.status).toBe('bogus');
+    expect(answer.security?.failure).toMatchObject({ kind: 'denial', name: 'host.a.example' });
+  });
+
+  it.each([
+    ['has no records of the type', 'TXT', 'NOERROR'],
+    ['does not exist', 'A', 'NXDOMAIN'],
+  ])(
+    'is secure from a zone server that proves an alias inside its zone %s',
+    async (_case, type, rcode) => {
+      const signed = signedNetwork([
+        root,
+        tld,
+        secure('a.example', [
+          ['inner.a.example', 'CNAME', 'host.a.example'],
+          ['missing.a.example', 'CNAME', 'nothing.a.example'],
+          ['host.a.example', 'A', '192.0.2.6'],
+        ]),
+      ]);
+      const network = simulateNetwork(signed.servers);
+      const resolver = new AuthoritativeResolver({
+        transports: network.transports,
+        rootServers: signed.rootServers,
+        trustAnchors: signed.trustAnchors,
+        validate: true,
+      });
+      const name = rcode === 'NXDOMAIN' ? 'missing.a.example' : 'inner.a.example';
+      const answer = await resolver.query(name, type);
+      expect(answer.rcodeName).toBe(rcode);
+      expect(answer.records).toEqual([]);
+      expect(answer.security?.status).toBe('secure');
+      expect(answer.security?.chain.at(-1)).toMatchObject({ kind: 'denial', status: 'secure' });
+    }
+  );
+
+  it('is secure from a zone server whose alias leads out of its zone', async () => {
+    const signed = signedNetwork(zones);
+    const network = simulateNetwork(signed.servers);
+    const resolver = new AuthoritativeResolver({
+      transports: network.transports,
+      rootServers: signed.rootServers,
+      trustAnchors: signed.trustAnchors,
+      validate: true,
+    });
+    const answer = await resolver.query('www.a.example', 'A');
+    expect(answer.security?.status).toBe('secure');
+  });
+});
+
 describe('validate: proofs of non-existence', () => {
   const zones = (nsec3?: SignedZone['nsec3']): SignedZone[] => [
     root,
@@ -255,6 +391,34 @@ describe('validate: proofs of non-existence', () => {
     // the DS question for the name finds no proof first: either way, NSEC Missing
     expectStatus(answers, 'bogus');
     for (const answer of answers) expect(answer.security?.reason.ede).toBe(12);
+  });
+
+  it('is bogus when the NODATA for an empty non-terminal comes back as NXDOMAIN', async () => {
+    const signed = signedNetwork([
+      root,
+      tld,
+      secure('secure.example', [['x.ent.secure.example', 'A', '192.0.2.4']]),
+    ]);
+    // secure.example is the third zone; the rcode is not signed
+    const honest = signed.servers['10.53.0.3'];
+    signed.servers['10.53.0.3'] = async query => {
+      const reply = await honest(query);
+      if (!(reply instanceof Uint8Array) || query.questions[0].type !== 1) return reply;
+      const message = decodeMessage(reply);
+      message.rcode = 3;
+      return encodeMessage(message);
+    };
+    const network = simulateNetwork(signed.servers);
+    const resolver = new AuthoritativeResolver({
+      transports: network.transports,
+      rootServers: signed.rootServers,
+      trustAnchors: signed.trustAnchors,
+      validate: true,
+    });
+    const answer = await resolver.query('ent.secure.example', 'A');
+    expect(answer.rcodeName).toBe('NXDOMAIN');
+    expect(answer.security?.status).toBe('bogus');
+    expect(answer.security?.failure).toMatchObject({ kind: 'denial', name: 'ent.secure.example' });
   });
 
   it('is insecure past the NSEC3 iteration count validators hash (RFC 9276)', async () => {

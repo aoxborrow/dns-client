@@ -346,6 +346,34 @@ describe('verifyNxdomainProof', () => {
     expect(proof.steps[1].detail).toContain('*.b.example.com');
   });
 
+  it('rejects an NSEC whose next name lies below the name: the name is an empty non-terminal', () => {
+    // a.example.com -> x.b.example.com proves b.example.com exists, with nothing of its own;
+    // a NODATA for it turned into NXDOMAIN must not pass
+    const proof = verifyNxdomainProof('b.example.com', [
+      nsecRecord('a.example.com', 'x.b.example.com', [TYPE_A]),
+      nsecRecord('example.com', 'a.example.com', [TYPE_SOA, TYPE_NS]),
+    ]);
+    expect(proof.result).toBe(FAILED);
+    expect(proof.steps[0].result).toBe(FAILED);
+  });
+
+  it('rejects an NSEC3 proof when an NSEC3 matches the name itself', () => {
+    // an empty non-terminal has an NSEC3 of its own: it exists, so NXDOMAIN is wrong
+    const salt = Buffer.alloc(0);
+    const apex = nsec3Hash('example', salt, 0)!;
+    const self = nsec3Hash('ent.example', salt, 0)!;
+    const wildcard = nsec3Hash('*.example', salt, 0)!;
+    const proof = verifyNxdomainProof('ent.example', [
+      nsec3Record(apex, 'example', incrementHash(apex), [TYPE_SOA]),
+      nsec3Record(self, 'example', incrementHash(self), []),
+      // a range over the next closer name (the name itself) and the wildcard, from a chain
+      // that no longer matches the zone
+      nsec3Record(decrementHash(self), 'example', incrementHash(self), []),
+      nsec3Record(decrementHash(wildcard), 'example', incrementHash(wildcard), []),
+    ]);
+    expect(proof.result).toBe(FAILED);
+  });
+
   it('accepts the proof once *.example is shown absent', () => {
     const proof = verifyNxdomainProof('x.b.example', [
       nsecRecord('example', 'a\\.b.example', [TYPE_SOA, TYPE_NS]),

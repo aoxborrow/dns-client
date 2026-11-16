@@ -144,8 +144,10 @@ export class Resolver {
     // instead of answering SERVFAIL
     const dnssec = { dnssecOk: true, checkingDisabled: true };
     const answer = await this.lookup(name, type, { ...options, ...dnssec });
+    // a server asked to recurse owes the whole answer, the target of every alias included
+    const recursive = (options.recursionDesired ?? this.options.recursionDesired) !== false;
     answer.security = await this.validator.validate(
-      [dnssecResponse(answer.message, answer.query.name, typeCode(type))],
+      [{ ...dnssecResponse(answer.message, answer.query.name, typeCode(type)), recursive }],
       async (chainName, chainType) =>
         (
           await this.lookup(chainName, chainType, {
