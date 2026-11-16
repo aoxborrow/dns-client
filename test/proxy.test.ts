@@ -1,6 +1,6 @@
 import net from 'node:net';
 import { ConnectionError, DnsError, NoServerError, ProxyError, TimeoutError } from '../src/errors';
-import { exchange } from '../src/exchange';
+import { exchange, toDig } from '../src/exchange';
 import type { ExchangeOptions, ExchangeResult } from '../src/exchange';
 import { createNodeConnect, createTransports } from '../src/transports/index';
 import type { Transports } from '../src/transports/index';
@@ -414,7 +414,7 @@ describe('proxies', () => {
       const result = await ask('udp', { proxy: proxyUrl('http', proxy) });
       expect(result.transport).toBe('tcp');
       expect(dns.received.map(({ transport }) => transport)).toEqual(['tcp']);
-      expect(result.toDig()).toContain('+tcp');
+      expect(toDig(result)).toContain('+tcp');
     });
 
     describe('through a proxy that never answers the handshake', () => {

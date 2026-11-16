@@ -1,4 +1,5 @@
 import { DnsError, InvalidQueryError, NoServerError } from '../errors';
+import type { ServerFailure } from '../errors';
 import { exchange, hasTransportOptions } from '../exchange';
 import type { ExchangeResult } from '../exchange';
 import { classCode, RECORD_CLASSES } from '../protocol/classes';
@@ -19,8 +20,8 @@ import { buildAnswer } from './answer';
 import type { Answer, QuerySettings } from './answer';
 import { resolveCache } from './cache';
 import type { Cache, CacheOption } from './cache';
-import { createLimiter } from './limiter';
-import type { Limiter } from './limiter';
+import { createKeyedLimiter, createLimiter } from './limiter';
+import type { KeyedLimiter, Limiter } from './limiter';
 
 // the ordinary resolver: it asks recursive resolvers, the way `dig` and `node:dns` do.
 // On top of a single query it adds what a program that resolves names all day wants:
@@ -36,8 +37,11 @@ export interface ResolverOptions extends TransportOptions, QuerySettings {
   cache?: CacheOption<CachedResponse>;
   // the longest an answer is kept, in seconds, whatever its TTL says. Default one day
   maxTtl?: number;
-  // how many queries may be in flight at once. Default: no limit
+  // how many queries may be in flight at once, to all servers together. Default: no limit
   concurrency?: number;
+  // how many queries may be in flight to one server at once. Default 16; Infinity for no
+  // limit
+  serverConcurrency?: number;
   // malformed record data is an error. By default such a record comes back in the
   // generic form
   strict?: boolean;
@@ -58,11 +62,12 @@ export interface ResolverQueryOptions extends QuerySettings {
 export interface CachedResponse {
   result: ExchangeResult;
   attempts: number;
-  // milliseconds since the epoch
-  receivedAt: number;
+  receivedAt: Date;
 }
 
 const DEFAULT_MAX_TTL = 86_400;
+// queries in flight to one server at once
+const DEFAULT_SERVER_CONCURRENCY = 16;
 // a response that says the server could not or would not do the work: another may
 const TRY_NEXT = new Set<number>([RCODES.SERVFAIL, RCODES.NOTIMP, RCODES.REFUSED]);
 
@@ -88,6 +93,7 @@ export class Resolver {
   private readonly options: ResolverOptions;
   private readonly cache: Cache<CachedResponse> | undefined;
   private readonly limit: Limiter;
+  private readonly limitServer: KeyedLimiter;
   private readonly transports: Transports;
   private readonly ownsTransports: boolean;
   private readonly inFlight = new Map<string, Promise<CachedResponse>>();
@@ -97,6 +103,7 @@ export class Resolver {
     this.options = options;
     this.cache = resolveCache(options.cache);
     this.limit = createLimiter(options.concurrency ?? Infinity);
+    this.limitServer = createKeyedLimiter(options.serverConcurrency ?? DEFAULT_SERVER_CONCURRENCY);
     this.ownsTransports = !options.transports && hasTransportOptions(options);
     this.transports =
       options.transports ?? (this.ownsTransports ? createTransports(options) : defaultTransports());
@@ -135,7 +142,7 @@ export class Resolver {
       return buildAnswer(cached.result, {
         strict,
         cached: true,
-        age: Math.floor((Date.now() - cached.receivedAt) / 1000),
+        age: Math.floor((Date.now() - cached.receivedAt.getTime()) / 1000),
         elapsed: 0,
         attempts: 0,
         timestamp: new Date(cached.receivedAt),
@@ -244,32 +251,35 @@ export class Resolver {
     let attempts = 0;
     let lastResult: ExchangeResult | undefined;
     let lastError: DnsError | undefined;
+    const failures: ServerFailure[] = [];
 
     for (const [index, server] of servers.entries()) {
       const isLast = index === servers.length - 1;
       try {
         const result = await this.limit(() =>
-          exchange({ name, type }, server, {
-            transport: merged.transport,
-            port: merged.port,
-            recursionDesired: merged.recursionDesired,
-            checkingDisabled: merged.checkingDisabled,
-            authenticData: merged.authenticData,
-            dnssecOk: merged.dnssecOk,
-            udpPayloadSize: merged.udpPayloadSize,
-            ednsOptions: merged.ednsOptions,
-            edns: merged.edns,
-            timeout: merged.timeout,
-            tcpFallback: merged.tcpFallback,
-            ...(retries !== undefined && { retries }),
-            transports: this.transports,
-            onEvent: this.options.onEvent,
-            signal,
-          })
+          this.limitServer(serverKey(server), () =>
+            exchange({ name, type }, server, {
+              transport: merged.transport,
+              port: merged.port,
+              recursionDesired: merged.recursionDesired,
+              checkingDisabled: merged.checkingDisabled,
+              authenticData: merged.authenticData,
+              dnssecOk: merged.dnssecOk,
+              udpPayloadSize: merged.udpPayloadSize,
+              ednsOptions: merged.ednsOptions,
+              edns: merged.edns,
+              timeout: merged.timeout,
+              tcpFallback: merged.tcpFallback,
+              ...(retries !== undefined && { retries }),
+              transports: this.transports,
+              onEvent: this.options.onEvent,
+              signal,
+            })
+          )
         );
         attempts += result.attempts;
         if (!TRY_NEXT.has(result.message.rcode) || isLast) {
-          return { result, attempts, receivedAt: Date.now() };
+          return { result, attempts, receivedAt: new Date() };
         }
         lastResult = result;
       } catch (error) {
@@ -278,11 +288,24 @@ export class Resolver {
         if (signal?.aborted || !(error instanceof DnsError) || error instanceof InvalidQueryError) {
           throw error;
         }
+        failures.push({ server: error.server ?? serverKey(server), error });
         lastError = error;
       }
     }
     // every server failed: the last response says more than the last error does
-    if (lastResult) return { result: lastResult, attempts, receivedAt: Date.now() };
-    throw lastError ?? new NoServerError('No DNS servers to ask');
+    if (lastResult) return { result: lastResult, attempts, receivedAt: new Date() };
+    if (lastError) {
+      lastError.failures ??= failures;
+      throw lastError;
+    }
+    throw new NoServerError('No DNS servers to ask');
   }
+}
+
+// a server as the key its queries are counted under
+function serverKey(server: string | Server): string {
+  if (typeof server === 'string') return server;
+  return (
+    server.url ?? (server.port === undefined ? server.address : `${server.address}#${server.port}`)
+  );
 }

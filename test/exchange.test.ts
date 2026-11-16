@@ -6,7 +6,7 @@ import {
   TimeoutError,
   TruncatedError,
 } from '../src/errors';
-import { digCommand, exchange } from '../src/exchange';
+import { digCommand, exchange, toDig } from '../src/exchange';
 import type { ExchangeOptions } from '../src/exchange';
 import { createTransports } from '../src/transports/index';
 import type { Transports } from '../src/transports/index';
@@ -60,8 +60,8 @@ describe('exchange', () => {
       expect(sent.questions).toEqual([{ name: 'example.com', type: 1, class: 1 }]);
       // nothing asked for: an ordinary recursive query, EDNS with the default payload size
       expect(sent.flags).toMatchObject({ rd: true, cd: false, ad: false });
-      expect(result.query.flags).toEqual(['RD']);
-      expect(result.toDig()).toBe(`dig -p ${server.port} @127.0.0.1 example.com A`);
+      expect(result.query.flags).toEqual({ rd: true, cd: false, ad: false });
+      expect(toDig(result)).toBe(`dig -p ${server.port} @127.0.0.1 example.com A`);
       expect(sent.edns).toMatchObject({ udpPayloadSize: 1232, dnssecOk: false });
     });
 
@@ -77,8 +77,15 @@ describe('exchange', () => {
       const sent = decodeMessage(server.received[0].query);
       expect(sent.flags).toMatchObject({ rd: true, cd: true, ad: true });
       expect(sent.edns).toMatchObject({ udpPayloadSize: 4096, dnssecOk: true });
-      expect(result.query.flags).toEqual(['RD', 'CD', 'AD']);
+      expect(result.query.flags).toEqual({ rd: true, cd: true, ad: true });
       expect(result.query.edns).toEqual({ udpPayloadSize: 4096, dnssecOk: true });
+    });
+
+    it('gives the name it sent with no trailing dot, in the case it was written', async () => {
+      const options = await serve(({ query }) => ({ response: answerTo(query) }));
+      const result = await exchange({ name: 'Example.COM.', type: 'A' }, server.address, options);
+      expect(result.query.name).toBe('Example.COM');
+      expect(result.url).toBeUndefined();
     });
 
     it('can send a query with no EDNS at all', async () => {
@@ -309,7 +316,7 @@ describe('exchange', () => {
       expect(server.received.map(({ transport }) => transport)).toEqual(['udp', 'tcp']);
       expect(events.map(({ event }) => event)).toEqual(['query', 'tcp-fallback', 'query']);
       expect(events[1]).toMatchObject({ reason: 'truncated', query: 'example.com', type: 'A' });
-      expect(result.toDig()).toContain('+tcp');
+      expect(toDig(result)).toContain('+tcp');
     });
 
     it('returns the truncated answer when told not to fall back', async () => {
@@ -651,7 +658,7 @@ describe('exchange', () => {
         checkingDisabled: true,
         dnssecOk: true,
       });
-      expect(result.toDig()).toBe(
+      expect(toDig(result)).toBe(
         `dig +dnssec +cd +norecurse +tcp -p ${server.port} @127.0.0.1 example.com DNSKEY`
       );
     });

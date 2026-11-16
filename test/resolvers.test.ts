@@ -7,12 +7,16 @@ import {
   ParseError,
   TimeoutError,
 } from '../src/errors';
-import { AuthoritativeResolver, createLruCache, Resolver } from '../src/resolvers/index';
+import { AuthoritativeResolver, createLruCache, Resolver, toDig } from '../src/resolvers/index';
 import type {
   AuthoritativeResolverOptions,
+  CachedResponse,
   ResolverOptions,
+  ServerOrder,
   TraceHop,
 } from '../src/resolvers/index';
+import { parseIpv4, parseIpv6 } from '../src/records/addresses';
+import { compareNames } from '../src/wire/names';
 import { aliasTarget } from '../src/resolvers/answer';
 import { cacheLifetime } from '../src/resolvers/resolver';
 import { toEndpoint } from '../src/transports/endpoint';
@@ -24,6 +28,22 @@ import type { SimulatedNetwork, SimulatedServer } from './support/simulated-netw
 
 // UDP where there is UDP, which is Node; TCP elsewhere
 const DEFAULT_TRANSPORT = isNode() ? 'udp' : 'tcp';
+
+// the order the authoritative resolver once used by default, the same on every run: the
+// root servers as given, nameservers by name, addresses by value
+const sameOrder: ServerOrder = (items, kind) => {
+  if (kind === 'roots') return items;
+  if (kind === 'nameservers') return [...items].sort(compareNames);
+  const value = (address: string) => parseIpv4(address) ?? parseIpv6(address) ?? new Uint8Array();
+  return [...items].sort((a, b) => {
+    const x = value(a);
+    const y = value(b);
+    if (x.length !== y.length) return x.length - y.length;
+    for (let index = 0; index < x.length; index++)
+      if (x[index] !== y[index]) return x[index] - y[index];
+    return 0;
+  });
+};
 
 // the two resolvers, against a network that exists only in memory. What is being tested
 // is which server gets asked what, and what is made of the answers
@@ -88,7 +108,7 @@ describe('Resolver', () => {
     // and the raw response is there too
     expect(decodeMessage(answer.bytes).answers).toHaveLength(1);
     expect(answer.message.answers[0].rdata).toBeInstanceOf(Uint8Array);
-    expect(answer.toDig()).toBe(
+    expect(toDig(answer)).toBe(
       DEFAULT_TRANSPORT === 'udp'
         ? 'dig @10.0.0.1 example.com MX'
         : 'dig +tcp @10.0.0.1 example.com MX'
@@ -453,6 +473,97 @@ describe('Resolver', () => {
     controller.abort(reason);
     await expect(pending).rejects.toBe(reason);
   });
+
+  it('hands back the name with no trailing dot, in the case it was written', async () => {
+    const answer = await resolver().query('Example.COM.', 'A');
+    expect(answer.name).toBe('Example.COM');
+    expect(answer.query.name).toBe('Example.COM');
+    expect(answer.records).toHaveLength(2);
+  });
+
+  it('returns plain data, which toDig reads', async () => {
+    const answer = await resolver().query('example.com', 'A', {
+      dnssecOk: true,
+      checkingDisabled: true,
+    });
+    expect(answer.query).toEqual({
+      name: 'example.com',
+      type: 'A',
+      class: 'IN',
+      flags: { rd: true, cd: true, ad: false },
+      edns: { udpPayloadSize: 1232, dnssecOk: true },
+    });
+    // nothing in it is a function: it survives a structured clone whole
+    const copy = structuredClone(answer);
+    expect(copy).toEqual(answer);
+    expect(toDig(copy)).toBe(toDig(answer));
+    expect(toDig(answer)).toContain('+dnssec +cd @10.0.0.1 example.com A');
+  });
+
+  it('keeps when a cached response arrived as a Date', async () => {
+    const stored: CachedResponse[] = [];
+    const spying = resolver(undefined, {
+      cache: {
+        get: () => undefined,
+        set: (_key, value) => stored.push(value),
+        delete: () => undefined,
+        clear: () => undefined,
+      },
+    });
+    await spying.query('example.com', 'A');
+    expect(stored[0].receivedAt).toBeInstanceOf(Date);
+  });
+
+  it('holds back queries to one server past serverConcurrency', async () => {
+    let inFlight = 0;
+    let most = 0;
+    const answer = recursiveServer(RECORDS);
+    const counted: SimulatedServer = async query => {
+      inFlight++;
+      most = Math.max(most, inFlight);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      inFlight--;
+      return answer(query);
+    };
+    const limited = resolver({ '10.0.0.1': counted }, { cache: false, serverConcurrency: 2 });
+    const names = Array.from({ length: 6 }, (_, index) => `n${index}.example.com`);
+    await Promise.all(names.map(name => limited.query(name, 'A')));
+    expect(most).toBe(2);
+
+    most = 0;
+    const open = resolver({ '10.0.0.1': counted }, { cache: false, serverConcurrency: Infinity });
+    await Promise.all(names.map(name => open.query(name, 'A')));
+    expect(most).toBe(6);
+  });
+
+  it('limits queries to 16 at once to one server by default', async () => {
+    let inFlight = 0;
+    let most = 0;
+    const answer = recursiveServer(RECORDS);
+    const counted: SimulatedServer = async query => {
+      inFlight++;
+      most = Math.max(most, inFlight);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      inFlight--;
+      return answer(query);
+    };
+    const names = Array.from({ length: 20 }, (_, index) => `n${index}.example.com`);
+    const stub = resolver({ '10.0.0.1': counted }, { cache: false });
+    await Promise.all(names.map(name => stub.query(name, 'A')));
+    expect(most).toBe(16);
+  });
+
+  it('lists what went wrong at every server on the error it throws', async () => {
+    const error = await resolver({ '10.0.0.8': () => undefined, '10.0.0.9': () => undefined })
+      .query('example.com', 'A')
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(TimeoutError);
+    const { failures } = error as TimeoutError;
+    expect(failures?.map(failure => failure.server)).toEqual(['10.0.0.8', '10.0.0.9']);
+    expect(failures?.every(failure => failure.error instanceof TimeoutError)).toBe(true);
+    // the error thrown is the last server's, and is among them
+    expect(failures?.at(-1)?.error).toBe(error);
+  });
 });
 
 describe('aliasTarget', () => {
@@ -594,6 +705,10 @@ describe('AuthoritativeResolver', () => {
       transports: network.transports,
       timeout: 100,
       retries: 0,
+      // the same servers in the same order on every run, and IPv4 only, which most of
+      // these cases are written against. The defaults have cases of their own
+      serverOrder: sameOrder,
+      addressFamily: 'ipv4',
       ...options,
     });
   }
@@ -640,7 +755,7 @@ describe('AuthoritativeResolver', () => {
     // the answering hop is in the trace, and is not a referral
     expect(answer.trace?.[2]).not.toHaveProperty('referral');
     expect(answer.trace?.[2].bytes).toBe(answer.bytes.length);
-    expect(answer.toDig()).toBe(
+    expect(toDig(answer)).toBe(
       DEFAULT_TRANSPORT === 'udp'
         ? 'dig +norecurse @10.1.0.1 example.com A'
         : 'dig +norecurse +tcp @10.1.0.1 example.com A'
@@ -787,10 +902,10 @@ describe('AuthoritativeResolver', () => {
 
   it('tries nameservers in the order it is given', async () => {
     // reverse order: ns2 before ns1
-    const answer = await resolver({ nameserverOrder: (a, b) => b.localeCompare(a) }).query(
-      'example.com',
-      'A'
-    );
+    const answer = await resolver({
+      serverOrder: (items, kind) =>
+        kind === 'nameservers' ? [...items].sort((a, b) => b.localeCompare(a)) : items,
+    }).query('example.com', 'A');
     expect(answer.server).toBe('10.1.0.2');
     expect(answer.serverName).toBe('ns2.example.com');
   });
@@ -829,9 +944,8 @@ describe('AuthoritativeResolver', () => {
     expect(answer.trace?.at(-1)?.serverName).toBe('NS1.Cased.COM');
   });
 
-  it('tries the addresses of one nameserver in the same order on every run', async () => {
-    // glue arrives in whatever order the parent sends it: lowest address first, or the
-    // order the caller gives
+  it('tries the addresses of one nameserver in the order it is given', async () => {
+    // glue arrives in whatever order the parent sends it: the order the caller gives wins
     const parent = (addresses: string[]) =>
       zoneServer({ zone: 'com', delegations: { 'glued.com': { 'ns1.glued.com': addresses } } });
     const zone = zoneServer({ zone: 'glued.com', records: [['glued.com', 'A', '192.0.2.6']] });
@@ -848,15 +962,19 @@ describe('AuthoritativeResolver', () => {
       expect(answer.server).toBe('10.6.0.9');
     }
 
+    const byText =
+      (direction: number): ServerOrder =>
+      (items, kind) =>
+        kind === 'addresses' ? [...items].sort((a, b) => direction * a.localeCompare(b)) : items;
     const answer = await resolver(
-      { addressOrder: (a, b) => b.localeCompare(a) },
+      { serverOrder: byText(-1) },
       { '10.0.1.1': parent(['10.6.0.100', '10.6.0.9', '10.6.0.20']), ...servers }
     ).query('glued.com', 'A');
     expect(answer.server).toBe('10.6.0.9');
     expect(
       (
         await resolver(
-          { addressOrder: (a, b) => a.localeCompare(b) },
+          { serverOrder: byText(1) },
           { '10.0.1.1': parent(['10.6.0.100', '10.6.0.9', '10.6.0.20']), ...servers }
         ).query('glued.com', 'A')
       ).server
@@ -1534,5 +1652,170 @@ describe('AuthoritativeResolver', () => {
   it('rejects a question that cannot be asked', async () => {
     await expect(resolver().query('example.com', 'NOPE')).rejects.toBeInstanceOf(InvalidQueryError);
     expect(network.queries).toHaveLength(0);
+  });
+  describe('defaults', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('tries servers in a random order', async () => {
+      // with the draw always at the bottom, the shuffle reverses two servers; at the top it
+      // leaves them as they are
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      await resolver({ serverOrder: undefined }).query('example.com', 'A');
+      expect(network.log()).toEqual([
+        '10.0.0.2 example.com A',
+        '10.0.1.2 example.com A',
+        '10.1.0.2 example.com A',
+      ]);
+
+      vi.spyOn(Math, 'random').mockReturnValue(0.999);
+      await resolver({ serverOrder: undefined }).query('example.com', 'A');
+      expect(network.log()).toEqual([
+        '10.0.0.1 example.com A',
+        '10.0.1.1 example.com A',
+        '10.1.0.1 example.com A',
+      ]);
+    });
+
+    it('asks the order hook about the roots, the nameservers and the addresses', async () => {
+      const asked: string[] = [];
+      await resolver({
+        addressFamily: 'both',
+        serverOrder: (items, kind) => {
+          asked.push(`${kind}: ${items.join(' ')}`);
+          return items;
+        },
+      }).query('example.com', 'A');
+      expect(asked).toEqual([
+        'roots: a.root.test b.root.test',
+        'nameservers: a.gtld.test b.gtld.test',
+        'nameservers: ns1.example.com ns2.example.com',
+        'addresses: 10.1.0.1 2001:db8::1',
+      ]);
+    });
+
+    it('puts IPv4 first whatever order the hook gives', async () => {
+      const answer = await resolver(
+        {
+          addressFamily: 'both',
+          serverOrder: (items, kind) => (kind === 'addresses' ? [...items].reverse() : items),
+        },
+        { '10.1.0.1': undefined, '10.1.0.2': undefined }
+      ).query('example.com', 'A');
+      // ns1 at its IPv4 address, ns2, and only then ns1 at its IPv6 address
+      expect(network.log().slice(2)).toEqual([
+        '10.1.0.1 example.com A',
+        '10.1.0.2 example.com A',
+        '2001:db8::1 example.com A',
+      ]);
+      expect(answer.server).toBe('2001:db8::1');
+    });
+
+    it('uses both address families, IPv4 first', async () => {
+      const answer = await resolver(
+        { addressFamily: undefined },
+        { '10.1.0.1': undefined, '10.1.0.2': undefined }
+      ).query('example.com', 'A');
+      expect(answer.server).toBe('2001:db8::1');
+      expect(network.log().slice(2)).toEqual([
+        '10.1.0.1 example.com A',
+        '10.1.0.2 example.com A',
+        '2001:db8::1 example.com A',
+      ]);
+    });
+
+    it('lists what went wrong at every server on the error a failed walk throws', async () => {
+      const error = await resolver(
+        {},
+        { '10.1.0.1': undefined, '10.1.0.2': () => new ConnectionError('reset') }
+      )
+        .query('example.com', 'A')
+        .catch((caught: unknown) => caught);
+      // the first failure is thrown, as its own class
+      expect(error).toBeInstanceOf(ConnectionError);
+      const { failures } = error as ConnectionError;
+      expect(failures?.map(failure => [failure.server, failure.error.name])).toEqual([
+        ['10.1.0.1', 'ConnectionError'],
+        ['10.1.0.2', 'ConnectionError'],
+      ]);
+      expect(failures?.[0].error).toBe(error);
+    });
+
+    it('lists a server that refused among the failures', async () => {
+      const refusing = () => encodeMessage({ id: 0, flags: { qr: true }, rcode: 5 });
+      const reset = () => new ConnectionError('reset');
+      const error = await resolver(
+        {},
+        { '10.0.0.1': refusing, '10.0.1.1': reset, '10.0.1.2': reset }
+      )
+        .query('example.com', 'A')
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ConnectionError);
+      const { failures } = error as ConnectionError;
+      expect(failures?.map(failure => [failure.server, failure.error.name])).toEqual([
+        ['10.0.0.1', 'InvalidResponseError'],
+        ['10.0.1.1', 'ConnectionError'],
+        ['10.0.1.2', 'ConnectionError'],
+      ]);
+      expect(failures?.[0].error).toMatchObject({ rcode: 5, rcodeName: 'REFUSED' });
+    });
+
+    it('hands back names with no trailing dot, in the case the server sent', async () => {
+      const parent = zoneServer({
+        zone: 'com',
+        delegations: { 'Cased.COM': { 'ns1.cased.com': ['10.7.0.1'] } },
+      });
+      const zone = zoneServer({ zone: 'cased.com', records: [['cased.com', 'A', '192.0.2.7']] });
+      const answer = await resolver({}, { '10.0.1.1': parent, '10.7.0.1': zone }).query(
+        'Cased.Com.',
+        'A'
+      );
+      expect(answer.name).toBe('Cased.Com');
+      expect(answer.trace?.map(hop => [hop.zone, hop.referral])).toEqual([
+        ['.', 'com'],
+        ['com', 'Cased.COM'],
+        ['Cased.COM', undefined],
+      ]);
+    });
+
+    it('limits queries to 8 at once to one server address', async () => {
+      let inFlight = 0;
+      let most = 0;
+      const counted: SimulatedServer = async query => {
+        inFlight++;
+        most = Math.max(most, inFlight);
+        await new Promise(resolve => setTimeout(resolve, 5));
+        inFlight--;
+        return root(query);
+      };
+      const shared = resolver({ cache: false }, { '10.0.0.1': counted });
+      const names = Array.from({ length: 12 }, (_, index) => `n${index}.example.com`);
+      await Promise.all(names.map(name => shared.query(name, 'A')));
+      expect(most).toBe(8);
+
+      most = 0;
+      const open = resolver({ cache: false, serverConcurrency: 0 }, { '10.0.0.1': counted });
+      await Promise.all(names.map(name => open.query(name, 'A')));
+      expect(most).toBe(12);
+    });
+
+    it('forgets the names it learned on clearCache, and keeps no more than its bound', async () => {
+      const iterative = resolver();
+      await iterative.query('example.com', 'A');
+      const names = (iterative as unknown as { names: Map<string, string> }).names;
+      expect(names.get('10.1.0.1')).toBe('ns1.example.com');
+      iterative.clearCache();
+      expect(names.size).toBe(0);
+
+      const learn = (
+        iterative as unknown as { learnName(address: string, name: string): void }
+      ).learnName.bind(iterative);
+      for (let index = 0; index < 10_005; index++) learn(`10.${index}`, `ns${index}.test`);
+      expect(names.size).toBe(10_000);
+      // the oldest went first
+      expect(names.has('10.0')).toBe(false);
+      expect(names.get('10.10004')).toBe('ns10004.test');
+    });
   });
 });

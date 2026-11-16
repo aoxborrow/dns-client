@@ -25,7 +25,13 @@ import type {
 import { encodeQuery } from './wire/encode';
 import { decodeMessage } from './wire/message';
 import type { EdnsOption, Message } from './wire/message';
-import { canonicalName, comparableName, toAsciiName } from './wire/names';
+import {
+  canonicalName,
+  comparableName,
+  labelsToName,
+  nameToLabels,
+  toAsciiName,
+} from './wire/names';
 
 // one question, put to one server, answered by one validated response.
 //
@@ -45,7 +51,21 @@ export interface DnsQuestion {
 
 // the header flags a query was sent with: recursion desired, checking disabled,
 // authentic data
-export type QueryFlag = 'RD' | 'CD' | 'AD';
+export interface QueryFlags {
+  rd: boolean;
+  cd: boolean;
+  ad: boolean;
+}
+
+// what was sent: the question as it went on the wire, its flags and its EDNS settings
+export interface SentQuery {
+  // with no trailing dot, as it was written
+  name: string;
+  type: string;
+  class: string;
+  flags: QueryFlags;
+  edns: false | { udpPayloadSize: number; dnssecOk: boolean };
+}
 
 export interface ExchangeOptions extends TransportOptions {
   // default: DoH for a server given as a URL, otherwise UDP, or TCP where there is no UDP
@@ -91,29 +111,28 @@ export interface ExchangeResult {
   // the response exactly as it arrived
   bytes: Uint8Array;
   // what was asked, as it was sent
-  query: {
-    id: number;
-    name: string;
-    type: string;
-    class: string;
-    flags: QueryFlag[];
-    edns: false | { udpPayloadSize: number; dnssecOk: boolean };
-    bytes: Uint8Array;
-  };
+  query: SentQuery & { id: number; bytes: Uint8Array };
   server: string;
   port: number;
+  // DoH: the URL the query went to
+  url?: string;
   // the transport that carried the answer, which is not always the one asked for
   transport: TransportName;
   // milliseconds, all attempts included
   elapsed: number;
   // how many times the query was sent
   attempts: number;
-  // the `dig` command that asks the same question the same way
-  toDig(): string;
 }
 
 const DEFAULT_TIMEOUT = 5000;
 const DEFAULT_RETRIES = 2;
+
+// a name as the library hands it back: with no trailing dot, in the case it was written,
+// spelled as a decoded message spells it, and the root as '.'. Throws for a name that
+// cannot be written
+export function presentName(name: string): string {
+  return labelsToName(nameToLabels(name));
+}
 
 // ---- message IDs
 
@@ -144,7 +163,38 @@ export interface DigOptions {
   edns?: boolean;
 }
 
-// the `dig` command for a question: the fastest way to check an answer by hand
+// what `toDig` needs: an answer from either resolver, or an exchange's result
+export interface DigSource {
+  query: SentQuery;
+  server: string;
+  port: number;
+  url?: string;
+  transport: TransportName;
+}
+
+// the `dig` command that asks the server that answered the same question the same way:
+// the fastest way to check an answer by hand
+export function toDig(answer: DigSource): string {
+  const { query } = answer;
+  return digCommand(
+    { name: query.name, type: query.type, class: query.class },
+    { address: answer.server, ...(answer.url && { url: answer.url }) },
+    {
+      transport: answer.transport,
+      port: answer.port,
+      recursionDesired: query.flags.rd,
+      checkingDisabled: query.flags.cd,
+      authenticData: query.flags.ad,
+      edns: query.edns !== false,
+      ...(query.edns && {
+        dnssecOk: query.edns.dnssecOk,
+        udpPayloadSize: query.edns.udpPayloadSize,
+      }),
+    }
+  );
+}
+
+// the `dig` command for a question
 export function digCommand(
   question: DnsQuestion,
   server: string | Server,
@@ -258,10 +308,7 @@ export async function exchange(
   const recursionDesired = options.recursionDesired ?? true;
   const checkingDisabled = options.checkingDisabled ?? false;
   const authenticData = options.authenticData ?? false;
-  const flags: QueryFlag[] = [];
-  if (recursionDesired) flags.push('RD');
-  if (checkingDisabled) flags.push('CD');
-  if (authenticData) flags.push('AD');
+  const flags: QueryFlags = { rd: recursionDesired, cd: checkingDisabled, ad: authenticData };
 
   // ---- the question, checked before anything touches the network
   let name: string;
@@ -460,36 +507,24 @@ export async function exchange(
         }
       }
 
-      const finalTransport = response.transport;
-      const finalEndpoint = endpoint;
-      const sent = queryBytes;
       return {
         message,
         bytes: response.bytes,
         query: {
           id,
-          name,
+          name: presentName(name),
           type: typeText,
           class: className(cls),
-          flags,
-          edns,
-          bytes: sent,
+          flags: { ...flags },
+          edns: edns && { ...edns },
+          bytes: queryBytes,
         },
-        server: finalEndpoint.host,
-        port: finalEndpoint.port,
-        transport: finalTransport,
+        server: endpoint.host,
+        port: endpoint.port,
+        ...(response.transport === 'doh' && endpoint.url && { url: endpoint.url }),
+        transport: response.transport,
         elapsed: now() - started,
         attempts: attempt,
-        toDig: () =>
-          digCommand({ name, type, class: cls }, server, {
-            transport: finalTransport,
-            port: finalEndpoint.port,
-            recursionDesired,
-            checkingDisabled,
-            authenticData,
-            edns: edns !== false,
-            ...(edns && { dnssecOk: edns.dnssecOk, udpPayloadSize: edns.udpPayloadSize }),
-          }),
       };
     }
   } finally {

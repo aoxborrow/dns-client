@@ -1,5 +1,6 @@
-// two ways a resolver holds itself back: a cap on how many queries are in flight at once,
-// and a minimum gap between queries to any one server
+// three ways a resolver holds itself back: a cap on how many queries are in flight at
+// once, a cap on how many are in flight to any one server, and a minimum gap between
+// queries to any one server
 
 export type Limiter = <T>(task: () => Promise<T>) => Promise<T>;
 
@@ -31,5 +32,30 @@ export function createPacer(gap: number): (server: string) => Promise<void> {
     const at = Math.max(now, next.get(server) ?? 0);
     next.set(server, at + gap);
     if (at > now) await new Promise<void>(resolve => setTimeout(resolve, at - now));
+  };
+}
+
+export type KeyedLimiter = <T>(key: string, task: () => Promise<T>) => Promise<T>;
+
+// run at most `max` tasks at a time under each key, a server's address. A key is
+// forgotten once nothing is running or waiting under it, so the map holds only the
+// servers being asked right now
+export function createKeyedLimiter(max: number): KeyedLimiter {
+  if (!Number.isFinite(max) || max <= 0) return (_key, task) => task();
+  const queues = new Map<string, { running: number; waiting: (() => void)[] }>();
+
+  return async (key, task) => {
+    let queue = queues.get(key);
+    if (!queue) queues.set(key, (queue = { running: 0, waiting: [] }));
+    if (queue.running >= max) await new Promise<void>(resolve => queue.waiting.push(resolve));
+    queue.running++;
+    try {
+      return await task();
+    } finally {
+      queue.running--;
+      const next = queue.waiting.shift();
+      if (next) next();
+      else if (queue.running === 0) queues.delete(key);
+    }
   };
 }
