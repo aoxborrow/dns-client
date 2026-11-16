@@ -12,6 +12,15 @@ import {
   type DnsRecord,
   type ResourceRecord,
 } from '../../src/index';
+import {
+  decodeDnskey,
+  decodeDs,
+  decodeNsec,
+  decodeNsec3,
+  decodeNsec3Param,
+  decodeRrsig,
+  decodeTypeBitmap,
+} from '../../src/records/index';
 import { toBase32Hex } from '../../src/wire/bytes';
 import { CAPTURED, CORPUS, seededRandom } from '../support/corpus';
 
@@ -749,5 +758,116 @@ describe('decodeRecord: unknown and malformed', () => {
         }
       }
     }
+  });
+});
+
+describe('the DNSSEC field decoders', () => {
+  // an RRSIG over A by Example.COM, with a 4-byte signature
+  const rrsig = [
+    0,
+    1,
+    13,
+    2,
+    0,
+    0,
+    1,
+    44,
+    0x77,
+    0x35,
+    0x94,
+    0x00,
+    0x3b,
+    0x9a,
+    0xca,
+    0x00,
+    0x04,
+    0xd2,
+    ...name('Example.COM'),
+    0xde,
+    0xad,
+    0xbe,
+    0xef,
+  ];
+
+  it('reads an RRSIG as numbers and bytes, with the signer as it was sent', () => {
+    expect(decodeRrsig(Uint8Array.from(rrsig))).toEqual({
+      typeCovered: 1,
+      algorithm: 13,
+      labels: 2,
+      originalTtl: 300,
+      expiration: 0x77359400,
+      inception: 0x3b9aca00,
+      keyTag: 1234,
+      signerName: 'Example.COM',
+      signature: Uint8Array.from([0xde, 0xad, 0xbe, 0xef]),
+    });
+  });
+
+  it('is the same decoder decodeRecord presents', () => {
+    expect(fields(decodeRecord(record('RRSIG', rrsig)))).toMatchObject({
+      typeCovered: 'A',
+      signatureExpiration: 0x77359400,
+      signerName: 'Example.COM',
+      signature: '3q2+7w==',
+    });
+    const nsec3 = [1, 1, 0, 10, 2, 0xab, 0xcd, 2, 0x01, 0x02, 0, 1, 0x40];
+    expect(decodeNsec3(Uint8Array.from(nsec3))).toEqual({
+      hashAlgorithm: 1,
+      flags: 1,
+      iterations: 10,
+      salt: Uint8Array.from([0xab, 0xcd]),
+      nextHashed: Uint8Array.from([1, 2]),
+      types: [1],
+    });
+    expect(fields(decodeRecord(record('NSEC3', nsec3)))).toEqual({
+      algorithm: 1,
+      flags: 1,
+      iterations: 10,
+      salt: 'abcd',
+      nextDomain: toBase32Hex(Uint8Array.from([1, 2])),
+      types: ['A'],
+    });
+  });
+
+  it('reads DS, DNSKEY, NSEC and NSEC3PARAM', () => {
+    expect(decodeDs(Uint8Array.from([0x04, 0xd2, 8, 2, 0xaa]))).toEqual({
+      keyTag: 1234,
+      algorithm: 8,
+      digestType: 2,
+      digest: Uint8Array.from([0xaa]),
+    });
+    expect(decodeDnskey(Uint8Array.from([1, 1, 3, 13, 0xbb]))).toEqual({
+      flags: 257,
+      protocol: 3,
+      algorithm: 13,
+      publicKey: Uint8Array.from([0xbb]),
+    });
+    expect(decodeNsec(Uint8Array.from([...name('B.example'), 0, 1, 0x62]))).toEqual({
+      nextDomain: 'B.example',
+      types: [1, 2, 6],
+    });
+    expect(decodeNsec3Param(Uint8Array.from([1, 0, 0, 0, 0]))).toEqual({
+      hashAlgorithm: 1,
+      flags: 0,
+      iterations: 0,
+      salt: new Uint8Array(0),
+    });
+    expect(decodeTypeBitmap(Uint8Array.from([0, 1, 0x40, 1, 1, 0x80]))).toEqual([1, 256]);
+  });
+
+  const malformed: [string, (rdata: Uint8Array) => unknown, number[], RegExp][] = [
+    ['an RRSIG cut short', decodeRrsig, rrsig.slice(0, 17), /too short/],
+    ['an RRSIG with a broken signer', decodeRrsig, [...rrsig.slice(0, 18), 5, 0x61], /Label/],
+    ['a DS with no digest type', decodeDs, [0, 1, 8], /too short/],
+    ['a DNSKEY cut short', decodeDnskey, [1, 1, 3], /too short/],
+    ['an NSEC with an empty bitmap window', decodeNsec, [0, 0, 0], /type bitmap/],
+    ['an NSEC3 whose salt runs off the end', decodeNsec3, [1, 0, 0, 0, 9, 1], /too short/],
+    ['an NSEC3PARAM with bytes left over', decodeNsec3Param, [1, 0, 0, 0, 0, 7], /left over/],
+    ['a bitmap window cut short', decodeTypeBitmap, [0, 2, 0x40], /too short/],
+  ];
+
+  it.each(malformed)('throws ParseError, never null, for %s', (_, decode, rdata, message) => {
+    expect(() => decode(Uint8Array.from(rdata))).toThrow(ParseError);
+    expect(() => decode(Uint8Array.from(rdata))).toThrow(message);
   });
 });

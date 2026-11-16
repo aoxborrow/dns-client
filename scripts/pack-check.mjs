@@ -1,9 +1,14 @@
 // pack-and-import check: builds the package, packs it the way a publish would, installs
-// the tarball into an empty project and imports every entry point as ESM and as CommonJS.
+// the tarball into an empty project and imports every entry point.
 //
 // inside the monorepo the `exports` map points at TypeScript source, so nothing here ever
 // exercises the published shape. This does, on every CI run, so a broken `publishConfig`,
 // a missing build entry or a stray workspace-only import is caught long before a release.
+//
+// the package is ESM only. It also checks that the error classes are one set across the
+// entries: the build splits shared code into chunks, and an error thrown by code reached
+// through `/wire` or `/records` must be `instanceof` the class the root exports. A class
+// copied into two entry bundles would break that, and only the built package can show it
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -33,15 +38,17 @@ try {
   const manifest = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8'));
   const subpaths = Object.keys(manifest.exports ?? {});
   if (subpaths.length === 0) fail('the packed manifest has no exports');
+  if (manifest.type !== 'module') fail('the packed manifest is not "type": "module"');
+  if (manifest.main) fail(`the packed manifest still has a CommonJS main (${manifest.main})`);
 
   // the packed manifest must describe the build output, never the monorepo's source
   for (const [subpath, target] of Object.entries(manifest.exports)) {
     if (typeof target === 'string') fail(`${subpath} still points at source (${target})`);
-    for (const condition of ['import', 'require']) {
-      for (const file of [target[condition]?.types, target[condition]?.default]) {
-        if (!file) fail(`${subpath} has no ${condition} target`);
-        if (!existsSync(join(installed, file))) fail(`${subpath}: ${file} is not in the tarball`);
-      }
+    if ('require' in target) fail(`${subpath} still has a require condition`);
+    for (const file of [target.types, target.default]) {
+      if (!file) fail(`${subpath} has no types or default target`);
+      if (!/\.(d\.ts|js)$/.test(file)) fail(`${subpath}: ${file} is not an ESM build file`);
+      if (!existsSync(join(installed, file))) fail(`${subpath}: ${file} is not in the tarball`);
     }
   }
   if (Object.keys(manifest.dependencies ?? {}).length > 0) {
@@ -56,15 +63,39 @@ try {
     join(work, 'esm.mjs'),
     specifiers.map(s => `await import(${JSON.stringify(s)});`).join('\n')
   );
-  writeFileSync(
-    join(work, 'cjs.cjs'),
-    specifiers.map(s => `require(${JSON.stringify(s)});`).join('\n')
-  );
   run(process.execPath, ['esm.mjs'], work);
-  run(process.execPath, ['cjs.cjs'], work);
+
+  // one set of errors: what `/wire` and `/records` throw is the root's ParseError
+  const name = JSON.stringify(manifest.name);
+  writeFileSync(
+    join(work, 'errors.mjs'),
+    `import { DnsError, ParseError } from ${name};
+import { decodeMessage } from ${JSON.stringify(`${manifest.name}/wire`)};
+import { decodeRrsig } from ${JSON.stringify(`${manifest.name}/records`)};
+
+const thrown = attempt => {
+  try {
+    attempt();
+  } catch (error) {
+    return error;
+  }
+  throw new Error('nothing was thrown');
+};
+for (const [entry, error] of [
+  ['/wire', thrown(() => decodeMessage(new Uint8Array(3)))],
+  ['/records', thrown(() => decodeRrsig(new Uint8Array(3)))],
+]) {
+  if (!(error instanceof ParseError) || !(error instanceof DnsError)) {
+    throw new Error(\`\${entry} threw \${error?.name}, not the root's ParseError\`);
+  }
+}
+`
+  );
+  run(process.execPath, ['errors.mjs'], work);
 
   console.log(
-    `✓ dns pack check: ${specifiers.length} entry points import as ESM and CommonJS from the tarball.`
+    `✓ dns pack check: ${specifiers.length} entry points import as ESM from the tarball, ` +
+      'and share one set of error classes.'
   );
 } finally {
   rmSync(work, { recursive: true, force: true });

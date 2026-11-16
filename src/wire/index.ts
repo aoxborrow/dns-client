@@ -26,3 +26,16 @@ export {
   toAsciiName,
 } from './names';
 export type { NameRead } from './names';
+export {
+  compareBytes,
+  concatBytes,
+  fromBase64,
+  fromHex,
+  readU16,
+  readU32,
+  toBase32Hex,
+  toBase64,
+  toHex,
+  writeU16,
+  writeU32,
+} from './bytes';

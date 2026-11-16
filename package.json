@@ -33,7 +33,7 @@
   "type": "module",
   "sideEffects": false,
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "exports": {
     ".": "./src/index.ts",
@@ -53,89 +53,39 @@
   ],
   "publishConfig": {
     "access": "public",
-    "main": "./dist/index.cjs",
-    "module": "./dist/index.js",
     "types": "./dist/index.d.ts",
     "exports": {
       ".": {
-        "import": {
-          "types": "./dist/index.d.ts",
-          "default": "./dist/index.js"
-        },
-        "require": {
-          "types": "./dist/index.d.cts",
-          "default": "./dist/index.cjs"
-        }
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
       },
       "./records": {
-        "import": {
-          "types": "./dist/records/index.d.ts",
-          "default": "./dist/records/index.js"
-        },
-        "require": {
-          "types": "./dist/records/index.d.cts",
-          "default": "./dist/records/index.cjs"
-        }
+        "types": "./dist/records/index.d.ts",
+        "default": "./dist/records/index.js"
       },
       "./wire": {
-        "import": {
-          "types": "./dist/wire/index.d.ts",
-          "default": "./dist/wire/index.js"
-        },
-        "require": {
-          "types": "./dist/wire/index.d.cts",
-          "default": "./dist/wire/index.cjs"
-        }
+        "types": "./dist/wire/index.d.ts",
+        "default": "./dist/wire/index.js"
       },
       "./transports/udp": {
-        "import": {
-          "types": "./dist/transports/udp.d.ts",
-          "default": "./dist/transports/udp.js"
-        },
-        "require": {
-          "types": "./dist/transports/udp.d.cts",
-          "default": "./dist/transports/udp.cjs"
-        }
+        "types": "./dist/transports/udp.d.ts",
+        "default": "./dist/transports/udp.js"
       },
       "./transports/tcp": {
-        "import": {
-          "types": "./dist/transports/tcp.d.ts",
-          "default": "./dist/transports/tcp.js"
-        },
-        "require": {
-          "types": "./dist/transports/tcp.d.cts",
-          "default": "./dist/transports/tcp.cjs"
-        }
+        "types": "./dist/transports/tcp.d.ts",
+        "default": "./dist/transports/tcp.js"
       },
       "./transports/tls": {
-        "import": {
-          "types": "./dist/transports/tls.d.ts",
-          "default": "./dist/transports/tls.js"
-        },
-        "require": {
-          "types": "./dist/transports/tls.d.cts",
-          "default": "./dist/transports/tls.cjs"
-        }
+        "types": "./dist/transports/tls.d.ts",
+        "default": "./dist/transports/tls.js"
       },
       "./transports/doh": {
-        "import": {
-          "types": "./dist/transports/doh.d.ts",
-          "default": "./dist/transports/doh.js"
-        },
-        "require": {
-          "types": "./dist/transports/doh.d.cts",
-          "default": "./dist/transports/doh.cjs"
-        }
+        "types": "./dist/transports/doh.d.ts",
+        "default": "./dist/transports/doh.js"
       },
       "./dnssec": {
-        "import": {
-          "types": "./dist/dnssec/index.d.ts",
-          "default": "./dist/dnssec/index.js"
-        },
-        "require": {
-          "types": "./dist/dnssec/index.d.cts",
-          "default": "./dist/dnssec/index.cjs"
-        }
+        "types": "./dist/dnssec/index.d.ts",
+        "default": "./dist/dnssec/index.js"
       }
     }
   },

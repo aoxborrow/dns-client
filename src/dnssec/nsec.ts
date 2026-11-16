@@ -1,24 +1,18 @@
+import { ParseError } from '../errors';
+import { RECORD_TYPES, typeName } from '../protocol/types';
+import { decodeNsec, decodeNsec3 } from '../records/decode';
 import { toHex } from '../wire/bytes';
-import { compareNames, splitName } from '../wire/names';
 import {
-  WireRecord,
-  decodeNsec,
-  decodeNsec3,
-  nsec3Hash,
-  toNsec3Label,
   canonicalName,
+  compareNames,
   countLabels,
+  isSubdomain,
   parentName,
-  presentRecord,
-  isInZone,
-  TYPE_NSEC,
-  TYPE_NSEC3,
-  TYPE_DS,
-  TYPE_SOA,
-  TYPE_NS,
-  TYPE_CNAME,
-  recordTypeName,
-} from './wire';
+  splitName,
+} from '../wire/names';
+import { nsec3Hash, toNsec3Label } from './canonical';
+import type { WireRecord } from './canonical';
+import { presentRecord } from './present';
 import { DenialProof, ProofStep, Nsec3Params, ProofPurpose } from './types';
 import {
   PROOF_STATUSES,
@@ -143,13 +137,28 @@ interface Nsec3Entry {
   optOut: boolean;
 }
 
+// a record whose data does not decode proves nothing, and is left out
+function orSkip<T>(decode: () => T): T | undefined {
+  try {
+    return decode();
+  } catch (error) {
+    if (error instanceof ParseError) return undefined;
+    throw error;
+  }
+}
+
 function collectNsec(records: WireRecord[]): NsecEntry[] {
   const out: NsecEntry[] = [];
   for (const rr of records) {
-    if (rr.type !== TYPE_NSEC) continue;
-    const decoded = decodeNsec(rr.rdata);
+    if (rr.type !== RECORD_TYPES.NSEC) continue;
+    const decoded = orSkip(() => decodeNsec(rr.rdata));
     if (!decoded) continue;
-    out.push({ record: rr, owner: rr.name, next: decoded.nextDomain, types: decoded.types });
+    out.push({
+      record: rr,
+      owner: rr.name,
+      next: canonicalName(decoded.nextDomain),
+      types: decoded.types,
+    });
   }
   return out;
 }
@@ -157,8 +166,8 @@ function collectNsec(records: WireRecord[]): NsecEntry[] {
 function collectNsec3(records: WireRecord[]): Nsec3Entry[] {
   const out: Nsec3Entry[] = [];
   for (const rr of records) {
-    if (rr.type !== TYPE_NSEC3) continue;
-    const decoded = decodeNsec3(rr.rdata);
+    if (rr.type !== RECORD_TYPES.NSEC3) continue;
+    const decoded = orSkip(() => decodeNsec3(rr.rdata));
     if (!decoded) continue;
     const [ownerHash, ...zone] = splitName(rr.name);
     if (zone.length === 0) continue;
@@ -247,9 +256,9 @@ function verifyNoDsNsec(qname: string, entries: NsecEntry[]): DenialProof {
   // the delegation point itself has an NSEC whose bitmap carries NS but not DS
   const match = entries.find(e => e.owner === name);
   if (match) {
-    const hasDs = match.types.includes(TYPE_DS);
-    const hasSoa = match.types.includes(TYPE_SOA);
-    const hasNs = match.types.includes(TYPE_NS);
+    const hasDs = match.types.includes(RECORD_TYPES.DS);
+    const hasSoa = match.types.includes(RECORD_TYPES.SOA);
+    const hasNs = match.types.includes(RECORD_TYPES.NS);
 
     steps.push(
       step('Matching NSEC', `Owner ${match.owner} matches the delegation name exactly.`, VERIFIED)
@@ -257,7 +266,7 @@ function verifyNoDsNsec(qname: string, entries: NsecEntry[]): DenialProof {
     steps.push(
       step(
         'Type bitmap',
-        `Types present: ${match.types.map(recordTypeName).join(' ') || '(none)'}.`,
+        `Types present: ${match.types.map(typeName).join(' ') || '(none)'}.`,
         hasDs ? FAILED : VERIFIED
       )
     );
@@ -392,11 +401,11 @@ function verifyNoDsNsec3(qname: string, entries: Nsec3Entry[]): DenialProof {
         VERIFIED
       )
     );
-    const hasDs = match.types.includes(TYPE_DS);
+    const hasDs = match.types.includes(RECORD_TYPES.DS);
     steps.push(
       step(
         'Type bitmap',
-        `Types present: ${match.types.map(recordTypeName).join(' ') || '(none)'}.`,
+        `Types present: ${match.types.map(typeName).join(' ') || '(none)'}.`,
         hasDs ? FAILED : VERIFIED
       )
     );
@@ -526,7 +535,7 @@ function findClosestEncloser(
   for (;;) {
     const match = matchNsec3(entries, candidate);
     if (match) return { name: candidate, entry: match };
-    if (candidate === '.' || candidate === zone || !isInZone(candidate, zone)) return undefined;
+    if (candidate === '.' || candidate === zone || !isSubdomain(candidate, zone)) return undefined;
     const next = parentName(candidate);
     if (next === candidate) return undefined;
     candidate = next;
@@ -551,7 +560,7 @@ function bitmapStep(qtype: number, present: boolean, aliased: boolean) {
   if (present) {
     return step(
       'Type bitmap',
-      `${recordTypeName(qtype)} is listed in the bitmap, contradicting the empty answer.`,
+      `${typeName(qtype)} is listed in the bitmap, contradicting the empty answer.`,
       FAILED
     );
   }
@@ -562,7 +571,7 @@ function bitmapStep(qtype: number, present: boolean, aliased: boolean) {
       FAILED
     );
   }
-  return step('Type bitmap', `${recordTypeName(qtype)} is absent from the bitmap.`, VERIFIED);
+  return step('Type bitmap', `${typeName(qtype)} is absent from the bitmap.`, VERIFIED);
 }
 
 // the zone answered with an empty answer section for a type it does not hold
@@ -585,7 +594,7 @@ export function verifyNodataProof(
     const present = match?.types.includes(qtype) ?? false;
     // neither the type asked for nor CNAME may be in the bitmap (RFC 5155 §8.5): a CNAME
     // means the name is an alias, so a bare NODATA is wrong
-    const aliased = match?.types.includes(TYPE_CNAME) ?? false;
+    const aliased = match?.types.includes(RECORD_TYPES.CNAME) ?? false;
     const ok = Boolean(match) && !present && !aliased;
     return {
       type: PROOF_TYPES.NSEC3,
@@ -623,7 +632,7 @@ export function verifyNodataProof(
   const match = nsec.find(e => e.owner === name);
   const present = match?.types.includes(qtype) ?? false;
   // a CNAME in the bitmap means the name exists as an alias, so a bare NODATA is wrong
-  const aliased = match?.types.includes(TYPE_CNAME) ?? false;
+  const aliased = match?.types.includes(RECORD_TYPES.CNAME) ?? false;
   const ok = Boolean(match) && !present && !aliased;
 
   return {
@@ -780,7 +789,7 @@ export function verifyWildcardProof(
   const signed = canonicalName(wildcard);
   const source = parentName(signed);
   // the wildcard must sit above the queried name, and be a wildcard at all
-  const above = splitName(signed)[0] === '*' && name !== source && isInZone(name, source);
+  const above = splitName(signed)[0] === '*' && name !== source && isSubdomain(name, source);
   const nsec3 = collectNsec3(records);
 
   if (nsec3.length > 0) {

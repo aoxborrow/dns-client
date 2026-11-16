@@ -1,6 +1,7 @@
 // DNSSEC primitives: signature verification, DS digests and key tags, NSEC and NSEC3
 // denial proofs, the root trust anchors, and the canonical form signatures are computed
-// over
+// over. The record data these work on is decoded by `/records` (decodeRrsig, decodeDnskey,
+// decodeDs, decodeNsec, decodeNsec3, decodeNsec3Param) and names by `/wire`
 
 export {
   ROOT_TRUST_ANCHORS,
@@ -29,20 +30,13 @@ export {
   canonicalRdata,
   computeDsDigest,
   computeKeyTag,
-  decodeDnskey,
-  decodeDs,
-  decodeNsec,
-  decodeNsec3,
-  decodeNsec3Param,
-  decodeRrsig,
-  decodeTypeBitmap,
   groupRrsets,
   nsec3Hash,
-  presentRecord,
   toWireMessage,
   wildcardOwner,
-} from './wire';
-export type { Rrset, WireMessage, WireRecord } from './wire';
+} from './canonical';
+export type { Rrset, WireMessage, WireRecord } from './canonical';
+export { presentRecord } from './present';
 export { sha1, sha256, sha384 } from './hash';
 export * from './constants';
 export type * from './types';

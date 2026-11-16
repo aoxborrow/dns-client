@@ -209,12 +209,11 @@ import { Resolver } from '@aoxborrow/dns';
 import {
   buildSignedData,
   computeKeyTag,
-  decodeDnskey,
-  decodeRrsig,
   groupRrsets,
   toWireMessage,
   verifySignature,
 } from '@aoxborrow/dns/dnssec';
+import { decodeDnskey, decodeRrsig } from '@aoxborrow/dns/records';
 
 // a zone's keys and the signatures over them, from a resolver asked not to validate
 const resolver = new Resolver({ servers: ['1.1.1.1'] });
@@ -226,12 +225,12 @@ const { answers } = toWireMessage(answer.message);
 const [keys] = groupRrsets(answers);
 
 for (const record of answers.filter(rr => rr.typeName === 'RRSIG')) {
-  const rrsig = decodeRrsig(record.rdata);
-  const key = keys.records.find(rr => computeKeyTag(rr.rdata) === rrsig?.keyTag);
-  const signed = rrsig && buildSignedData(rrsig, keys);
-  if (!rrsig || !key || !signed) continue;
+  const rrsig = decodeRrsig(record.rdata); // throws ParseError for malformed data
+  const key = keys.records.find(rr => computeKeyTag(rr.rdata) === rrsig.keyTag);
+  const signed = buildSignedData(rrsig, keys);
+  if (!key || !signed) continue;
 
-  const { publicKey } = decodeDnskey(key.rdata)!;
+  const { publicKey } = decodeDnskey(key.rdata);
   const outcome = await verifySignature(rrsig.algorithm, publicKey, signed.data, rrsig.signature);
   outcome.verified; // true, false, or undefined when this runtime cannot check the algorithm
 }

@@ -1,5 +1,5 @@
 import { ParseError } from '../errors';
-import { concatBytes, latin1Decode } from './bytes';
+import { compareBytes, concatBytes, latin1Decode } from './bytes';
 
 // domain names: reading them off the wire, writing them back, and the presentation form
 // in between. A name in this library is a string of labels joined by dots, with no
@@ -205,14 +205,6 @@ function foldLabel(label: Uint8Array): Uint8Array {
     if (out[i] >= 0x41 && out[i] <= 0x5a) out[i] += 0x20;
   }
   return out;
-}
-
-function compareBytes(a: Uint8Array, b: Uint8Array): number {
-  const length = Math.min(a.length, b.length);
-  for (let i = 0; i < length; i++) {
-    if (a[i] !== b[i]) return a[i] - b[i];
-  }
-  return a.length - b.length;
 }
 
 // canonical DNS name order (RFC 4034 §6.1): compare labels from the right, as lowercase
