@@ -1,4 +1,4 @@
-import { latin1Decode } from '../wire/bytes';
+import { fromHex, latin1Decode } from '../wire/bytes';
 import { serviceParamName } from './decode';
 import type { DnsRecord, ServiceParams } from './types';
 
@@ -55,12 +55,6 @@ const metres = (value: number) => `${Number.isInteger(value) ? value : value.toF
 
 // a list value inside a service parameter: commas and backslashes in an item are escaped
 const listItem = (item: string) => item.replace(/\\/g, '\\\\').replace(/,/g, '\\,');
-
-const fromHex = (hex: string) => {
-  const out = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  return out;
-};
 
 // service parameters in ascending key order, as RFC 9460 §2.1 writes them
 function serviceParams(params: ServiceParams): string[] {

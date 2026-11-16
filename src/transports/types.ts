@@ -94,9 +94,6 @@ export interface TransportOptions {
   // how TCP connections are opened. Wins over `proxy` for TCP and DoT
   connect?: Connect;
   tls?: TlsOptions;
-  // deprecated and ignored: UDP once shared this many sockets between queries, and now
-  // opens a fresh one, on a new source port, for every query (RFC 5452)
-  udpSockets?: number;
   // with `pipeline`: how long an unused TCP or DoT connection is kept open, in
   // milliseconds. 0 closes each connection as soon as its queries are answered.
   // Default 5000

@@ -37,11 +37,7 @@ import type {
 // through a SOCKS5 proxy the same thing runs over one UDP association; through a proxy
 // that cannot carry UDP the query goes over TCP instead, and the response says so
 
-export interface UdpTransportOptions extends Pick<
-  TransportOptions,
-  // `udpSockets` is accepted and ignored: there is no shared pool to size any more
-  'proxy' | 'tls' | 'udpSockets'
-> {
+export interface UdpTransportOptions extends Pick<TransportOptions, 'proxy' | 'tls'> {
   // the transport a query is handed to when the proxy cannot carry UDP. One is made on
   // demand if this is left out
   tcp?: () => Transport;

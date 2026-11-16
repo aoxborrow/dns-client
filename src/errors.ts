@@ -69,6 +69,32 @@ export class DnsError extends Error {
     if (options.extendedErrors?.length) this.extendedErrors = options.extendedErrors;
   }
 
+  // plain data for JSON. `failures` holds this error too, so each failure is written as
+  // its server, name and message, and the result has no cycle
+  toJSON(): ErrorData &
+    Pick<DnsErrorOptions, 'server' | 'query' | 'type' | 'transport'> & {
+      failures?: { server: string; name: string; message: string; rcode?: number }[];
+    } {
+    return {
+      name: this.name,
+      message: this.message,
+      retryable: this.retryable,
+      server: this.server,
+      query: this.query,
+      type: this.type,
+      transport: this.transport,
+      rcode: this.rcode,
+      rcodeName: this.rcodeName,
+      extendedErrors: this.extendedErrors,
+      failures: this.failures?.map(({ server, error }) => ({
+        server,
+        name: error.name,
+        message: error.message,
+        rcode: error.rcode,
+      })),
+    };
+  }
+
   // fill in whatever is not already known about the exchange the error came from. A layer
   // deep in a transport knows the socket failed; only the caller knows what was being asked
   addContext(context: Pick<DnsErrorOptions, 'server' | 'query' | 'type' | 'transport'>): this {
