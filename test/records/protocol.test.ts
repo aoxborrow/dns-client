@@ -7,7 +7,7 @@ import {
   RECORD_TYPES,
   typeCode,
   typeName,
-} from '../src/index';
+} from '../../src/index';
 
 describe('record types', () => {
   it('maps mnemonics to codes in any case', () => {

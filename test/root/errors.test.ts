@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DnsError, TimeoutError } from '../src/errors';
+import { DnsError, TimeoutError } from '../../src/errors';
 
 describe('DnsError', () => {
   it('writes failures as plain data, though the error is one of them', () => {

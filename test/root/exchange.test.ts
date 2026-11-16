@@ -5,16 +5,16 @@ import {
   InvalidResponseError,
   TimeoutError,
   TruncatedError,
-} from '../src/errors';
-import { digCommand, exchange, toDig } from '../src/exchange';
-import type { ExchangeOptions } from '../src/exchange';
-import { createTransports } from '../src/transports/index';
-import type { Transports } from '../src/transports/index';
-import type { DnsEvent } from '../src/transports/types';
-import { decodeMessage, encodeQuery } from '../src/wire/index';
-import { answerTo, askedName, queryId } from './support/answers';
-import { startFixtureServer, truncated, withOtherId } from './support/fixture-server';
-import type { FixtureServer, Responder } from './support/fixture-server';
+} from '../../src/errors';
+import { digCommand, exchange, toDig } from '../../src/exchange';
+import type { ExchangeOptions } from '../../src/exchange';
+import { createTransports } from '../../src/transports/index';
+import type { Transports } from '../../src/transports/index';
+import type { DnsEvent } from '../../src/transports/types';
+import { decodeMessage, encodeQuery } from '../../src/wire/index';
+import { answerTo, askedName, queryId } from '../support/answers';
+import { startFixtureServer, truncated, withOtherId } from '../support/fixture-server';
+import type { FixtureServer, Responder } from '../support/fixture-server';
 
 // `exchange` against a server that can be told to misbehave. Nothing here leaves the
 // machine

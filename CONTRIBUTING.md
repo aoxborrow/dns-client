@@ -41,6 +41,21 @@ Each layer uses only the ones above it in this list.
 
 ## Tests
 
+The tests follow the entry points, one directory each:
+
+| Directory | What it tests |
+| --- | --- |
+| `test/root` | the root entry: `Resolver`, `AuthoritativeResolver`, the exchange underneath them, the errors |
+| `test/wire` | `/wire`: names, messages, the byte helpers |
+| `test/records` | `/records`: the tables, decoding, formatting, parsing, validation, EDNS options |
+| `test/dnssec` | `/dnssec` |
+| `test/transports` | `/transports/*`: UDP, TCP, TLS, HTTPS, the proxies, the connectors |
+| `test/promises` | `/promises` |
+| `test/support` | the servers, mocks and fixture loaders the others share, and their own tests |
+| `test/fixtures` | recorded messages and the IANA root files |
+
+`test/package.test.ts` checks the manifest and the entry points themselves.
+
 Unit tests use no network. Three things make that possible, all under `test/support`:
 
 - a DNS server on UDP and TCP that answers from a function or from recorded exchanges, and
@@ -72,11 +87,10 @@ export default defineConfig({
     name: 'dns-workers',
     globals: true,
     include: [
-      'test/protocol.test.ts',
       'test/records/**/*.test.ts',
       'test/wire/**/*.test.ts',
       'test/dnssec/**/*.test.ts',
-      'test/resolvers.test.ts',
+      'test/root/resolvers.test.ts',
     ],
   },
 });

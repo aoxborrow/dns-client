@@ -1,14 +1,14 @@
-import { ConnectionError, DnsError, TimeoutError } from '../src/errors';
-import { exchange } from '../src/exchange';
-import { createTransports } from '../src/transports/index';
-import type { Transports } from '../src/transports/index';
-import type { DnsEvent, FetchLike, TransportOptions } from '../src/transports/types';
-import { encodeQuery } from '../src/wire/index';
-import { answerTo } from './support/answers';
-import { startHttpConnectMock, startSocks5Mock } from './support/proxy-mocks';
-import type { ProxyMock } from './support/proxy-mocks';
-import { startDoh2Server, startDohServer, testCertificate } from './support/secure-servers';
-import type { Doh2Server, DohServer } from './support/secure-servers';
+import { ConnectionError, DnsError, TimeoutError } from '../../src/errors';
+import { exchange } from '../../src/exchange';
+import { createTransports } from '../../src/transports/index';
+import type { Transports } from '../../src/transports/index';
+import type { DnsEvent, FetchLike, TransportOptions } from '../../src/transports/types';
+import { encodeQuery } from '../../src/wire/index';
+import { answerTo } from '../support/answers';
+import { startHttpConnectMock, startSocks5Mock } from '../support/proxy-mocks';
+import type { ProxyMock } from '../support/proxy-mocks';
+import { startDoh2Server, startDohServer, testCertificate } from '../support/secure-servers';
+import type { Doh2Server, DohServer } from '../support/secure-servers';
 
 // DoH over HTTP/2 with `node:http2`, which is what Node uses when it is not given a
 // `fetch`: sessions shared and multiplexed, GOAWAY and dead sessions, timeouts, aborts,

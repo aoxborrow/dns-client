@@ -6,25 +6,25 @@ import {
   NoServerError,
   ParseError,
   TimeoutError,
-} from '../src/errors';
-import { AuthoritativeResolver, createLruCache, Resolver, toDig } from '../src/resolvers/index';
+} from '../../src/errors';
+import { AuthoritativeResolver, createLruCache, Resolver, toDig } from '../../src/resolvers/index';
 import type {
   AuthoritativeResolverOptions,
   CachedResponse,
   ResolverOptions,
   ServerOrder,
   TraceHop,
-} from '../src/resolvers/index';
-import { parseIpv4, parseIpv6 } from '../src/records/addresses';
-import { compareNames } from '../src/wire/names';
-import { aliasTarget } from '../src/resolvers/answer';
-import { cacheLifetime } from '../src/resolvers/resolver';
-import { toEndpoint } from '../src/transports/endpoint';
-import { isNode } from '../src/transports/runtime';
-import type { DnsEvent } from '../src/transports/types';
-import { decodeMessage, encodeMessage, encodeName } from '../src/wire/index';
-import { late, recursiveServer, simulateNetwork, zoneServer } from './support/simulated-network';
-import type { SimulatedNetwork, SimulatedServer } from './support/simulated-network';
+} from '../../src/resolvers/index';
+import { parseIpv4, parseIpv6 } from '../../src/records/addresses';
+import { compareNames } from '../../src/wire/names';
+import { aliasTarget } from '../../src/resolvers/answer';
+import { cacheLifetime } from '../../src/resolvers/resolver';
+import { toEndpoint } from '../../src/transports/endpoint';
+import { isNode } from '../../src/transports/runtime';
+import type { DnsEvent } from '../../src/transports/types';
+import { decodeMessage, encodeMessage, encodeName } from '../../src/wire/index';
+import { late, recursiveServer, simulateNetwork, zoneServer } from '../support/simulated-network';
+import type { SimulatedNetwork, SimulatedServer } from '../support/simulated-network';
 
 // UDP where there is UDP, which is Node; TCP elsewhere
 const DEFAULT_TRANSPORT = isNode() ? 'udp' : 'tcp';

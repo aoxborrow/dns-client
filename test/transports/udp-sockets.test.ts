@@ -1,12 +1,12 @@
 import { Socket } from 'node:dgram';
-import { TimeoutError } from '../src/errors';
-import { exchange } from '../src/exchange';
-import { createUdpTransport } from '../src/transports/index';
-import type { Transport } from '../src/transports/types';
-import { encodeQuery } from '../src/wire/index';
-import { answerTo } from './support/answers';
-import { startFixtureServer } from './support/fixture-server';
-import type { FixtureServer } from './support/fixture-server';
+import { TimeoutError } from '../../src/errors';
+import { exchange } from '../../src/exchange';
+import { createUdpTransport } from '../../src/transports/index';
+import type { Transport } from '../../src/transports/types';
+import { encodeQuery } from '../../src/wire/index';
+import { answerTo } from '../support/answers';
+import { startFixtureServer } from '../support/fixture-server';
+import type { FixtureServer } from '../support/fixture-server';
 
 // a fresh source port per query, so an off-path attacker forging an answer has to guess the
 // port as well as the ID (RFC 5452), and no socket outlives the query it was opened for

@@ -7,13 +7,8 @@ import {
   withOtherId,
   type FixtureServer,
   type Responder,
-} from './support/fixture-server';
-import {
-  socketReader,
-  startHttpConnectMock,
-  startSocks5Mock,
-  type ProxyMock,
-} from './support/proxy-mocks';
+} from './fixture-server';
+import { socketReader, startHttpConnectMock, startSocks5Mock, type ProxyMock } from './proxy-mocks';
 
 // tests for the test servers themselves. The transports and the proxy tunnel are tested
 // against these, so a mock that misbehaves by accident would hide a real bug
