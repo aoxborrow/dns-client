@@ -11,6 +11,7 @@ export const entries = [
   'src/transports/tls.ts',
   'src/transports/doh.ts',
   'src/dnssec/index.ts',
+  'src/promises/index.ts',
 ];
 
 export default defineConfig({

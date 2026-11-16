@@ -43,7 +43,8 @@
     "./transports/tcp": "./src/transports/tcp.ts",
     "./transports/tls": "./src/transports/tls.ts",
     "./transports/doh": "./src/transports/doh.ts",
-    "./dnssec": "./src/dnssec/index.ts"
+    "./dnssec": "./src/dnssec/index.ts",
+    "./promises": "./src/promises/index.ts"
   },
   "files": [
     "dist",
@@ -136,6 +137,16 @@
           "types": "./dist/dnssec/index.d.cts",
           "default": "./dist/dnssec/index.cjs"
         }
+      },
+      "./promises": {
+        "import": {
+          "types": "./dist/promises/index.d.ts",
+          "default": "./dist/promises/index.js"
+        },
+        "require": {
+          "types": "./dist/promises/index.d.cts",
+          "default": "./dist/promises/index.cjs"
+        }
       }
     }
   },
@@ -158,6 +169,7 @@
     "@types/dns-packet": "^5.6.5",
     "dns-packet": "^5.6.1",
     "esbuild": "0.28.2",
-    "tsup": "^8.5.1"
+    "tsup": "^8.5.1",
+    "undici": "^8.12.4"
   }
 }
