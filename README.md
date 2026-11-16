@@ -1,34 +1,58 @@
-# dns-client
+# @aoxborrow/dns
 
 A DNS client for TypeScript with nothing underneath it: its own wire codec, typed records,
-resolvers that ask a recursive resolver or walk from the root, record validation, and DNSSEC
-validation with the primitives it is built from. No runtime dependencies.
+a resolver that asks recursive resolvers, a resolver that walks from the root, record
+validation, and DNSSEC validation with the primitives it is built from. It speaks UDP, TCP,
+DNS over TLS and DNS over HTTPS, directly or through a SOCKS5 or HTTP CONNECT proxy. No
+runtime dependencies.
+
+**Status:** 1.0 is in pre-release. It replaces `@aoxborrow/dns-client` 0.x and is not
+compatible with it; see [UPGRADING.md](UPGRADING.md).
+
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Scope](#scope)
+- [Entry points](#entry-points)
+- [The root entry: resolvers](#the-root-entry-resolvers)
+- [`/records`](#records)
+- [`/wire`](#wire)
+- [`/dnssec`](#dnssec)
+- [`/transports/*`](#transports)
+- [`/promises`](#promises)
+- [Where it runs](#where-it-runs)
+- [Benchmarks](#benchmarks)
+- [Conventions](#conventions)
+
+## Install
 
 ```bash
 npm install @aoxborrow/dns
 ```
 
-**Status:** 1.0 is a rewrite and is in pre-release. It is not compatible with 0.x; see
-[UPGRADING.md](UPGRADING.md) for what changed and what replaces what.
+ES modules only, with type declarations. Node 22 or later. The `/records`, `/wire` and
+`/dnssec` entries run anywhere, browsers and Cloudflare Workers included; see
+[Where it runs](#where-it-runs).
 
-## Asking a question
+## Quick start
 
 ```ts
-import { Resolver } from '@aoxborrow/dns';
+import { Resolver, toDig } from '@aoxborrow/dns';
 
-// an ordinary recursive query, like dig or node:dns, to the resolvers this machine uses
+// the resolvers this machine is set up to use, as `dig` and `node:dns` would
 const resolver = new Resolver();
 const answer = await resolver.query('example.com', 'MX');
 
 answer.rcodeName; // 'NOERROR'
-answer.records; // MxRecord[]: [{ name, type: 'MX', class: 'IN', ttl: 300, preference: 0, exchange: '.' }]
+answer.records; // MxRecord[]: [{ name: 'example.com', type: 'MX', class: 'IN', ttl: 300, preference: 0, exchange: '.' }]
 answer.server; // '192.0.2.53', whichever resolver answered
-answer.toDig(); // 'dig @192.0.2.53 example.com MX'
+toDig(answer); // 'dig @192.0.2.53 example.com MX'
 ```
 
-Name the resolvers to use, or ask one particular server for one query:
+Ask particular resolvers, or one server for one query:
 
 ```ts
+import { Resolver } from '@aoxborrow/dns';
+
 const resolver = new Resolver({ servers: ['1.1.1.1', '8.8.8.8'] });
 
 // this server and no other, over TCP, outside the cache
@@ -36,22 +60,7 @@ const txt = await resolver.query('example.com', 'TXT', { server: '9.9.9.9', tran
 txt.records.map(record => record.strings); // [['v=spf1 -all'], …]
 ```
 
-A server is an address, a name, `host:port`, or an `https://` URL, which is asked over DNS
-over HTTPS (`https://cloudflare-dns.com/dns-query`). For DNS over TLS, name the server and
-set `transport: 'tls'`.
-
-On Node, DNS over HTTPS goes over HTTP/2 with `node:http2`, one session per server shared
-by every query to it (RFC 8484 recommends HTTP/2 at least, and some servers refuse
-HTTP/1.1). A session idle for `idleTimeout` milliseconds (5000 by default) is closed, and
-`tls` (`ca`, `rejectUnauthorized`) applies to it as to DNS over TLS. A server that does not
-offer HTTP/2, an `http://` URL, and every other runtime go through `fetch`; pass your own
-`fetch` to use it everywhere.
-
-`Resolver` caches by TTL, shares one query between callers asking the same thing at the
-same moment, and moves to the next server when one fails or answers SERVFAIL, NOTIMP or
-REFUSED.
-
-### From the root
+Or skip the resolvers and ask each zone's own servers, starting at the root:
 
 ```ts
 import { AuthoritativeResolver } from '@aoxborrow/dns';
@@ -66,29 +75,142 @@ answer.trace; // every server asked on the way
 //   { zone: 'example.com', serverName: 'elliott.ns.cloudflare.com', rcodeName: 'NOERROR' } ]
 ```
 
-It asks no resolver. It starts at the root servers and follows referrals to the zone's own
-nameservers, remembers delegations for as long as their TTLs allow, looks up nameservers
-that come without an address, and moves on from a server that refuses, fails or stays
-silent. It stops at an alias into another zone unless `followCnames` is set.
+## Scope
+
+This is a DNS client. It asks questions and reads answers.
+
+- It is not a replacement for `node:dns`, apart from the [`/promises`](#promises) facade,
+  which copies the `node:dns/promises` API.
+- It is not a server: it answers nobody's queries.
+- No zone transfers (AXFR, IXFR), no dynamic UPDATE, no TSIG signing.
+- No zone-file parsing yet. Records are read and written one at a time, in presentation
+  format.
+
+## Entry points
+
+| Entry | What it holds | Runs on |
+| --- | --- | --- |
+| `@aoxborrow/dns` | the resolvers, answers, errors, `toDig`, caching, events, and everything in `/records` and `/wire` | Node; Cloudflare Workers, without UDP |
+| `@aoxborrow/dns/records` | typed records, protocol tables, record decoding, formatting, parsing and validation | anywhere |
+| `@aoxborrow/dns/wire` | encoding queries, decoding messages, names, byte helpers | anywhere |
+| `@aoxborrow/dns/dnssec` | the judging core, signature verification, DS digests, NSEC/NSEC3 proofs, trust anchors | anywhere |
+| `@aoxborrow/dns/transports/udp` | DNS over UDP, a fresh socket per query | Node |
+| `@aoxborrow/dns/transports/tcp` | DNS over TCP, optionally pipelined | Node, Cloudflare Workers |
+| `@aoxborrow/dns/transports/tls` | DNS over TLS | Node, Cloudflare Workers |
+| `@aoxborrow/dns/transports/doh` | DNS over HTTPS: HTTP/2 on Node, `fetch` elsewhere | anywhere with `fetch` |
+| `@aoxborrow/dns/promises` | a `node:dns/promises`-compatible facade, with `connectLookup` | Node |
+
+Error classes are one set across every entry: a `ParseError` thrown by `/wire` is
+`instanceof` the root's `ParseError`.
+
+## The root entry: resolvers
+
+Questions are asked through one of two resolvers. Both have one method,
+`query(name, type, options?)`, and return the same `Answer`.
+
+### `Resolver`
+
+Asks recursive resolvers, the way `dig` and `node:dns` do. Without `servers` it uses the
+ones this machine is set up to use (on Node). A server is an address, a name,
+`host:port`, or an `https://` URL, which is asked over DNS over HTTPS
+(`https://cloudflare-dns.com/dns-query`). For DNS over TLS, name the server and set
+`transport: 'tls'`.
+
+It tries `servers` in the order given, and moves to the next when one fails or answers
+SERVFAIL, NOTIMP or REFUSED. If every server answers that way, the last response is the
+answer. It caches by TTL, and callers asking the same question at the same moment share
+one query on the wire.
+
+### `AuthoritativeResolver`
+
+Asks no resolver. It starts at the root servers and follows referrals to the zone's own
+nameservers, and the answer carries `trace`, every server asked on the way. It remembers
+delegations for as long as their TTLs allow, looks up nameservers that come without an
+address, and moves on from a server that refuses, fails or stays silent. Two of a zone's
+servers refusing the same way is the zone's answer. It stops at an alias into another
+zone unless `followCnames` is set.
+
+Root servers, nameservers and addresses are tried in a random order, drawn afresh each
+time, so the load falls on all of a zone's servers. `serverOrder` fixes the order: it is
+called with a list of names or addresses and a kind (`'roots'`, `'nameservers'` or
+`'addresses'`), and returns them in the order to try. With `addressFamily: 'both'` (the
+default) IPv4 addresses still come first.
+
+```ts
+import { AuthoritativeResolver } from '@aoxborrow/dns';
+
+// always the same order: alphabetical
+const resolver = new AuthoritativeResolver({
+  serverOrder: items => [...items].sort(),
+});
+```
 
 ### The answer
 
-Both resolvers have one method, `query(name, type, options?)`, and return the same thing:
+An `Answer` is plain data: no methods, so it can be copied, cached, logged or sent as it
+is. Functions that read it stand alone, such as `toDig(answer)`.
 
 | Field | |
 | --- | --- |
-| `rcode`, `rcodeName`, `flags` | what the server said about the question |
-| `records` | the records that answer it, typed by the type you asked for |
+| `name`, `type`, `class` | the question, with the name as you wrote it, minus a trailing dot |
+| `rcode`, `rcodeName`, `flags` | what the server said: `0`, `'NOERROR'`, `{ aa: true, rd: true, … }` |
+| `records` | the records that answer the question, typed by the type asked for, at the name or at the end of its alias chain |
 | `answers`, `authorities`, `additionals` | every record in each section, typed |
-| `extendedErrors` | extended DNS errors (RFC 8914), when the server sent any |
+| `extendedErrors` | extended DNS errors (RFC 8914): `{ infoCode, purpose, extraText }[]` |
 | `message`, `bytes` | the response decoded from the wire, and exactly as it arrived |
-| `server`, `serverName`, `port`, `transport` | who answered, and how |
-| `elapsed`, `attempts`, `timestamp`, `cached` | how long it took, how many tries, when, and whether it came from the cache |
-| `trace` | `AuthoritativeResolver` only: every hop from the root |
-| `toDig()` | the `dig` command that asks the same question |
+| `query` | the query as it was sent: name, type, class, flags, EDNS |
+| `server`, `serverName`, `port`, `url`, `transport` | who answered, and how |
+| `elapsed`, `attempts`, `timestamp`, `cached` | milliseconds taken, queries sent, when it arrived, whether it came from the cache |
+| `trace` | `AuthoritativeResolver` only: every server asked, from the root |
+| `security` | with `validate: true` only: what DNSSEC validation made of it |
 
-A name that does not exist is an answer (`rcodeName: 'NXDOMAIN'`, no records), not an
-error.
+### Reading a negative answer
+
+A name that does not exist, or has no records of the type asked for, is an answer, not an
+error. Neither is thrown.
+
+- **NXDOMAIN**: the name does not exist. `rcodeName` is `'NXDOMAIN'` and `records` is
+  empty.
+- **NODATA**: the name exists, with nothing of that type. `rcodeName` is `'NOERROR'` and
+  `records` is empty.
+
+Both carry the zone's SOA record in `authorities`; how long the negative answer may be
+cached is the smaller of the SOA's TTL and its `minimum` field (RFC 2308). In a signed zone,
+asked with `dnssecOk: true`, `authorities` also holds the NSEC or NSEC3 records that prove
+the denial.
+
+An error means no usable response arrived at all.
+
+```ts
+import { DnsError, Resolver } from '@aoxborrow/dns';
+import type { SoaRecord } from '@aoxborrow/dns';
+
+const resolver = new Resolver({ servers: ['1.1.1.1'] });
+
+try {
+  const answer = await resolver.query('www.example.com', 'MX');
+  const soa = answer.authorities.find((record): record is SoaRecord => record.type === 'SOA');
+
+  if (answer.rcodeName === 'NXDOMAIN') {
+    // the name does not exist
+  } else if (answer.rcodeName === 'NOERROR' && answer.records.length === 0) {
+    // the name exists, with no MX records
+  } else if (answer.rcodeName === 'NOERROR') {
+    // records
+  } else {
+    // SERVFAIL, REFUSED and the like: every server gave up on the question
+  }
+  // how long this negative answer may be kept, in seconds
+  const negativeTtl = soa ? Math.min(soa.ttl, soa.minimum) : 0;
+} catch (error) {
+  if (error instanceof DnsError) {
+    // no usable response: a timeout, a connection refused, a malformed reply
+  }
+}
+```
+
+The [`/promises`](#promises) facade turns both into errors, as `node:dns` does:
+NXDOMAIN is `ENOTFOUND`, NODATA is `ENODATA`.
 
 ### Options
 
@@ -96,7 +218,7 @@ These can be set on a resolver for every query, or passed to one `query()`:
 
 | Option | Default | |
 | --- | --- | --- |
-| `transport` | `'udp'` | `'udp'`, `'tcp'`, `'tls'` or `'doh'`. TCP where there is no UDP; DoH for a server given as a URL |
+| `transport` | `'udp'` | `'udp'`, `'tcp'`, `'tls'` or `'doh'`. DoH for a server given as a URL, TCP where there is no UDP. `AuthoritativeResolver` takes `'udp'` or `'tcp'` |
 | `timeout` | `5000` | milliseconds of patience with one server |
 | `retries` | `2` | further attempts at a server that fails in a way worth retrying. One, when there are other servers to turn to |
 | `tcpFallback` | `true` | ask again over TCP when a UDP answer is truncated |
@@ -107,109 +229,271 @@ These can be set on a resolver for every query, or passed to one `query()`:
 | `udpPayloadSize` | `1232` | the largest UDP answer this client will accept |
 | `ednsOptions` | none | EDNS options to send: `nsidOption()`, `clientSubnetOption()`, `cookieOption()`, `paddingOption()` |
 | `edns` | on | `false` sends a plain RFC 1035 query |
-| `signal` | none | an `AbortSignal`, per query |
+| `signal` | none | an `AbortSignal`, per query. An aborted query rejects with the signal's reason |
 
-`Resolver` also takes `servers`, `cache` (false, your own, or settings for the built-in
-one), `maxTtl`, `concurrency` and `strict`. `AuthoritativeResolver` also takes
-`rootServers`, `addressFamily` (`'ipv4'` by default), `followCnames`, `hosts`,
-`nameserverOrder`, `addressOrder`, `resolveNameserver`, `cache`, `serverDelay`,
-`concurrency`, `maxHops`, and `totalTimeout`: the time one answer may take altogether (30
-seconds by default), since a zone whose servers all stay silent would otherwise cost a
-timeout for each of them. Retries and a TCP fallback count against it, and the last server
-a zone has left to ask gets the rest of it, shared among its attempts, rather than
-`timeout`. `exchange` takes a `totalTimeout` of its own, for all its attempts together,
-and has none by default.
+`Resolver` also takes:
 
-Both take `onEvent`, which is told about every query sent, every retry, every fallback to
-TCP and every proxy connection. That is where logging and metrics attach; the library
-itself prints nothing.
+| Option | Default | |
+| --- | --- | --- |
+| `servers` | this machine's | addresses, names, `host:port`, URLs, or `{ address, port, serverName, url }` |
+| `cache` | 1000 entries | `false`, `{ max }` for the built-in cache, or a cache of your own |
+| `maxTtl` | `86400` | the longest an answer is kept, in seconds, whatever its TTL says |
+| `concurrency` | no limit | queries in flight at once, to all servers together |
+| `serverConcurrency` | `16` | queries in flight to one server at once; `Infinity` for no limit |
+| `strict` | `false` | malformed record data is an error, not a record in the generic form |
+| `validate`, `trustAnchors` | off, IANA's root | DNSSEC validation; see [`/dnssec`](#dnssec) |
+
+`AuthoritativeResolver` also takes:
+
+| Option | Default | |
+| --- | --- | --- |
+| `rootServers` | the 13 root servers | where to start: `{ name, ipv4, ipv6 }[]` |
+| `addressFamily` | `'both'` | `'ipv4'`, `'ipv6'` or `'both'`. With both, a server's IPv6 address is tried only once each of the zone's servers has been tried at its first address |
+| `followCnames`, `maxAliases` | off, `8` | resolve an alias into another zone, and how long a chain may be |
+| `totalTimeout` | `10000` | milliseconds one answer may take altogether, retries and nameserver lookups included. The last server a zone has left to ask gets the rest of it |
+| `maxHops` | `40` | servers asked on the way to one answer, nameserver lookups included |
+| `serverOrder` | random | the order servers are tried in; see above |
+| `serverConcurrency` | `8` | queries in flight to one server address at once; `Infinity` for no limit |
+| `serverDelay` | `0` | the least milliseconds between two queries to the same server |
+| `concurrency` | no limit | queries in flight at once, to all servers together |
+| `hosts` | none | addresses for nameservers by name, used before asking for them |
+| `resolveNameserver` | none | find a nameserver's addresses some other way first: a local cache, another resolver |
+| `cache` | `true` | remember delegations and nameserver addresses between queries |
+| `strict`, `validate`, `trustAnchors` | | as for `Resolver` |
+
+Both take the transport options (`proxy`, `fetch`, `connect`, `tls`, `pipeline`,
+`idleTimeout`, `dohMethod`; see [`/transports/*`](#transports)), `onEvent`, and
+`transports`, a set of sockets to share with other resolvers.
+
+### Caching
+
+`Resolver` keeps each response for its TTL (the smallest in the answer section; for a
+negative answer, the SOA's, as above), capped by `maxTtl`. A cached answer comes back with
+`cached: true` and its TTLs reduced by the time it has spent in the cache. A query with a
+`server` of its own neither reads nor fills the cache.
+
+```ts
+import { createLruCache, Resolver } from '@aoxborrow/dns';
+import type { CachedResponse } from '@aoxborrow/dns';
+
+const small = new Resolver({ cache: { max: 100 } });
+const none = new Resolver({ cache: false });
+// or anything with get, set(key, value, ttlMilliseconds), delete and clear
+const shared = new Resolver({ cache: createLruCache<CachedResponse>({ max: 10_000 }) });
+
+shared.clearCache();
+shared.close(); // closes the sockets this resolver opened, and empties its cache
+```
+
+`AuthoritativeResolver` caches delegations and nameserver addresses, not answers. With
+`cache: false` every query starts again from the root. Both resolvers have `clearCache()`
+and `close()`.
+
+### Events
+
+The library prints nothing. `onEvent` is told about every query sent, every retry, every
+fallback to TCP and every proxy connection; that is where logging and metrics attach.
+
+```ts
+import { Resolver } from '@aoxborrow/dns';
+
+const resolver = new Resolver({
+  onEvent: event => {
+    if (event.event === 'query') {
+      console.log(event.server, event.query, event.type, event.rcodeName ?? event.error?.name, event.elapsed);
+    }
+  },
+});
+```
+
+| `event` | When |
+| --- | --- |
+| `'query'` | one per network exchange, with its server, transport, attempt, elapsed time, bytes, and rcode or error |
+| `'retry'` | an attempt failed and another is about to be made |
+| `'tcp-fallback'` | a UDP query goes over TCP: the answer was truncated, or the proxy cannot carry UDP |
+| `'proxy'` | a proxy was asked for a tunnel or a UDP association. Credentials never appear |
 
 ### Errors
 
-An error means no usable response arrived. Every one is a `DnsError` subclass:
+An error means no usable response arrived. Every error the library throws is a
+`DnsError`, told apart by its class (and `name`). There are no string codes.
 
 ```ts
-import { DnsError } from '@aoxborrow/dns';
+import { DnsError, Resolver, TimeoutError } from '@aoxborrow/dns';
+
+const resolver = new Resolver({ servers: ['192.0.2.1', '192.0.2.2'] });
 
 try {
   await resolver.query('example.com', 'A');
 } catch (error) {
-  if (error instanceof DnsError) {
-    error.name; // 'TimeoutError'
+  if (error instanceof TimeoutError) {
     error.retryable; // true: asking again could work
-    error.server; // '192.0.2.1'
-    error.message; // 'No answer from 192.0.2.1 within 5000 ms'
+    error.server; // '192.0.2.2'
+    error.message; // 'No answer from 192.0.2.2 within 5000 ms'
+    error.failures; // [{ server: '192.0.2.1', error: TimeoutError }, { server: '192.0.2.2', error: TimeoutError }]
+  } else if (error instanceof DnsError) {
+    error.name; // 'ConnectionError', 'InvalidResponseError', …
   }
 }
 ```
 
-| Error | Retryable | |
+| Class | `retryable` | Thrown when |
 | --- | --- | --- |
-| `TimeoutError` | yes | the server said nothing in time |
-| `ConnectionError` | yes | the server could not be reached |
-| `ProxyError` | yes | the proxy refused or failed |
-| `EmptyResponseError` | yes | a connection closed without an answer |
-| `TruncatedError` | no | a truncated answer, with `tcpFallback` off |
-| `InvalidResponseError` | no | an answer that does not match the question, or a walk that leads nowhere |
-| `ParseError`, `RecordSyntaxError` | no | bytes or text that are not valid DNS |
-| `InvalidQueryError` | no | a question that cannot be asked |
-| `NoServerError` | no | no resolver to ask |
+| `DnsError` | | the base class of all below |
+| `TimeoutError` | yes | no answer arrived in time |
+| `ConnectionError` | yes | the server could not be reached, or the connection failed; also a failure of your own `fetch` or `connect` |
+| `ProxyError` | yes | the proxy could not be reached, refused, or rejected the credentials |
+| `EmptyResponseError` | yes | the server accepted the query and closed without an answer |
+| `TruncatedError` | no | a truncated answer and no larger transport left to ask over |
+| `InvalidResponseError` | no | an answer that does not decode or does not match the question, or a walk from the root that leads nowhere |
+| `ParseError` | no | bytes or text that are not valid DNS: a message, a record, a name |
+| `RecordSyntaxError` | no | record text that is not valid for its type; `problems` lists what, with codes |
+| `InvalidQueryError` | no | a question that cannot be asked: an unknown type, a name that cannot be encoded |
+| `NoServerError` | no | no server to ask: none given and none configured, or its name does not resolve |
 
-An error from `AuthoritativeResolver` carries `trace`, the servers asked before it failed.
+Every `DnsError` carries `retryable`, and what is known of the exchange: `server`, `query`,
+`type`, `transport`. One raised from a server's response also carries `rcode`, `rcodeName`
+and `extendedErrors`. When a resolver asked more than one server, `failures` lists each
+server and what went wrong there, in the order asked, the thrown error among them; an
+error from `AuthoritativeResolver` also carries `trace`. `toJSON()` gives the same as plain
+data. An aborted query rejects with the signal's reason, not a `DnsError`.
 
-## Records
-
-Every record type has its own interface, with fields named as the RFCs name them. A value
-inside a record stays as it was on the wire: names keep their case, binary data is hex or
-base64, times are numbers.
+Classes are one set across entries, so `instanceof` holds whichever entry threw:
 
 ```ts
-import { formatRecord, flattenRecords, reverseIp, typeCode, typeName } from '@aoxborrow/dns/records';
+import { ParseError } from '@aoxborrow/dns';
+import { decodeMessage } from '@aoxborrow/dns/wire';
 
-formatRecord(answer.records[0]); // 'example.com.\t300\tIN\tMX\t0 .', a zone-file line
-flattenRecords(answer.records); // [{ name: 'example.com', type: 'MX', ttl: 300, data: '0 .' }]
+try {
+  decodeMessage(new Uint8Array([0, 1, 2]));
+} catch (error) {
+  error instanceof ParseError; // true
+}
+```
+
+## `/records`
+
+Every record type has its own interface, with fields named as the RFCs name them, in
+camelCase. A value inside a record stays as it was on the wire: names keep their case,
+binary data is hex or base64, TTLs and RRSIG times are numbers of seconds.
+
+Supported: A, AAAA, CAA, CDNSKEY, CDS, CERT, CNAME, DNAME, DNSKEY, DS, HINFO, HTTPS, KEY,
+LOC, MX, NAPTR, NS, NSEC, NSEC3, NSEC3PARAM, OPENPGPKEY, PTR, RP, RRSIG, SIG, SOA, SRV,
+SSHFP, SVCB, TLSA, TSIG, TXT and URI. A record of any other type, or one whose data is
+malformed, comes back in a generic form (`type: 'TYPE65280'`, `data` in hex); `strict: true`
+on a resolver makes malformed data an error.
+
+### Formatting and helpers
+
+```ts
+import { flattenRecords, formatRecord, parseRecord, reverseIp, typeCode, typeName } from '@aoxborrow/dns/records';
+
+const mx = parseRecord({ name: 'example.com', type: 'MX', ttl: 300, data: '0 .' });
+
+formatRecord(mx); // 'example.com.\t300\tIN\tMX\t0 .', a zone-file line
+flattenRecords([mx]); // [{ name: 'example.com', type: 'MX', class: 'IN', ttl: 300, data: '0 .' }]
 
 reverseIp('8.8.8.8'); // '8.8.8.8.in-addr.arpa'
 typeCode('HTTPS'); // 65
 typeName(65280); // 'TYPE65280': a type with no name comes back in the RFC 3597 form
 ```
 
-Supported: A, AAAA, CAA, CDNSKEY, CDS, CERT, CNAME, DNAME, DNSKEY, DS, HINFO, HTTPS, KEY,
-LOC, MX, NAPTR, NS, NSEC, NSEC3, NSEC3PARAM, OPENPGPKEY, PTR, RP, RRSIG, SIG, SOA, SRV,
-SSHFP, SVCB, TLSA, TSIG, TXT and URI. A record of any other type, or one whose data is
-malformed, comes back in a generic form with its data in hex; `strict: true` makes
-malformed data an error.
+Also here: `formatRecordData`, `deduplicateRecords`, `sortRecords`, `decodeRecord(s)`, the
+protocol tables (`RECORD_TYPES`, `RECORD_CLASSES`, `RCODES`, `OPCODES`, `EDNS_OPTIONS`,
+`EXTENDED_DNS_ERRORS`), the EDNS option builders and decoders, and the DNSSEC record-data
+decoders (`decodeRrsig`, `decodeDnskey`, `decodeDs`, `decodeNsec`, `decodeNsec3`,
+`decodeNsec3Param`, `decodeTypeBitmap`), which throw `ParseError` for malformed data.
 
-### Checking records before saving them
+### Validating records
 
-The same package checks records written by a person or held by a DNS provider. These are
-pure functions and touch no network:
+The same entry checks records written by a person or held by a DNS provider. These are
+pure functions and touch no network. A record is given as a `FlatRecord`:
+`{ name, type, class?, ttl, data }`, with the class `IN` when left out.
 
 ```ts
+import { RecordSyntaxError } from '@aoxborrow/dns';
 import { canonicalRecord, diffRecords, findCnameConflicts, parseRecord } from '@aoxborrow/dns/records';
 
-// text to a typed record, or a RecordSyntaxError saying what is wrong
+// text to a typed record
 parseRecord({ name: 'example.com', type: 'MX', ttl: 300, data: '10 mail.example.com.' });
 // { name: 'example.com', type: 'MX', class: 'IN', ttl: 300, preference: 10, exchange: 'mail.example.com' }
 
-parseRecord({ name: 'example.com', type: 'A', ttl: 300, data: '300.1.2.3' });
-// RecordSyntaxError: "300.1.2.3" is not an IPv4 address
+// or a RecordSyntaxError listing every problem, each with a code and its values
+try {
+  parseRecord({ name: 'example.com', type: 'A', ttl: 300, data: '300.1.2.3' });
+} catch (error) {
+  if (error instanceof RecordSyntaxError) {
+    error.problems;
+    // [{ code: 'invalid-address', values: { field: 'address', text: '300.1.2.3' },
+    //    detail: '"300.1.2.3" is not an IPv4 address', name: 'example.com', type: 'A' }]
+  }
+}
 
 // one spelling for records that mean the same thing
 canonicalRecord({ name: 'Example.COM.', type: 'txt', ttl: 300, data: 'v=spf1 -all' });
-// { name: 'example.com', type: 'TXT', ttl: 300, data: '"v=spf1 -all"' }
+// { name: 'example.com', type: 'TXT', class: 'IN', ttl: 300, data: '"v=spf1 -all"' }
 
-// what a zone should hold against what it does
-diffRecords(intended, actual); // { missing: […], unexpected: […] }
+// what a zone should hold against what it does, TTLs aside unless `compareTtl` is set
+diffRecords(
+  [{ name: 'example.com', type: 'A', ttl: 300, data: '192.0.2.1' }],
+  [{ name: 'example.com', type: 'A', ttl: 300, data: '192.0.2.2' }]
+);
+// { missing: [{ …, data: '192.0.2.1' }], unexpected: [{ …, data: '192.0.2.2' }] }
 
 // a name with a CNAME and anything else
-findCnameConflicts(records); // [{ name: 'www.example.com', type: 'CNAME', detail: '…' }]
+findCnameConflicts([
+  { name: 'www.example.com', type: 'CNAME', ttl: 300, data: 'example.com.' },
+  { name: 'www.example.com', type: 'A', ttl: 300, data: '192.0.2.1' },
+]);
+// [{ code: 'cname-and-other-data', values: { types: ['A'] }, name: 'www.example.com', type: 'CNAME', detail: '…' }]
 ```
 
-Names are full names. `qualify()` and `relativize()` convert to and from names written
-relative to a zone, `@` included.
+`detail` is English for showing to a person; a program acts on `code` and `values`. The
+codes are listed in the `RecordProblemValues` type, with the values each carries. The
+checks over sets of records (`findCnameConflicts`, `findRepeatedRecords`) return problems
+as data; `parseRecord`, `canonicalRecord` and `diffRecords` throw one `RecordSyntaxError`
+holding all of them. Pass `{ zone }` to reject a record whose name is outside the zone.
 
-## DNSSEC
+Names given to the validators are full names. `qualify()` expands names written relative
+to a zone, `@` included, in the record's name and in its data; `relativize()` writes them
+short again. As in a zone file (RFC 1035 §5.1), a name without a trailing dot is relative
+to the zone.
+
+```ts
+import { qualify, relativize } from '@aoxborrow/dns/records';
+
+qualify({ name: '@', type: 'MX', ttl: 300, data: '10 mail' }, 'example.com');
+// { name: 'example.com', type: 'MX', ttl: 300, data: '10 mail.example.com.' }
+
+relativize({ name: 'www.example.com', type: 'CNAME', ttl: 300, data: 'example.com' }, 'example.com');
+// { name: 'www', type: 'CNAME', ttl: 300, data: '@' }
+```
+
+## `/wire`
+
+```ts
+import { createUdpTransport } from '@aoxborrow/dns/transports/udp';
+import { decodeMessage, encodeQuery } from '@aoxborrow/dns/wire';
+
+const query = encodeQuery({ id: 1234, name: 'example.com', type: 'A', recursionDesired: true });
+
+const udp = createUdpTransport();
+const response = await udp.send({ endpoint: { host: '1.1.1.1', port: 53 }, query });
+udp.close();
+
+const message = decodeMessage(response.bytes);
+message.rcode; // 0
+message.answers; // [{ name: 'example.com', type: 1, class: 1, ttl: 300, rdata: Uint8Array, section: 'answer' }]
+```
+
+`Uint8Array` in and out, no `Buffer`. Record data stays as bytes; `decodeRecords` in
+`/records` types it. Names are accepted in Unicode or punycode and returned in ASCII.
+Also here: `encodeMessage`, the name helpers (`canonicalName`, `compareNames`,
+`isSubdomain`, `parentName`, `countLabels`, `encodeName`, `toAsciiName` and others), and
+byte helpers (`toHex`, `fromHex`, `toBase64`, `fromBase64`, `toBase32Hex`, `concatBytes`,
+`compareBytes`, `readU16`/`writeU16`, `readU32`/`writeU32`).
+
+## `/dnssec`
 
 ### Validating answers
 
@@ -258,41 +542,59 @@ their NSEC or NSEC3 proofs.
 What each zone's key set came to is kept for as long as the TTLs and signatures it rests on
 allow (with `cache: false`, not at all), and `clearCache()` forgets it. Validation starts
 from `trustAnchors`, IANA's root anchors by default (`ROOT_TRUST_ANCHORS`, with
-`ROOT_TRUST_ANCHORS_DATA_VERSION` and `ROOT_TRUST_ANCHORS_REFRESHED`). A key published with the
-RFC 5011 revoke bit anchors nothing and signs nothing.
+`ROOT_TRUST_ANCHORS_DATA_VERSION` and `ROOT_TRUST_ANCHORS_REFRESHED`). A key published with
+the RFC 5011 revoke bit anchors nothing and signs nothing.
 
 ### The judging core
 
-```ts
-import { judgeChain } from '@aoxborrow/dns/dnssec';
-
-const judgement = await judgeChain(
-  { anchored, names, responses }, // the records fetched, as DnssecResponse objects
-  { mode: 'all', now: new Date() }
-);
-judgement.links; // every link, with a status and a reason
-```
-
-The resolvers fetch, and `judgeChain` judges: given the root's DNSKEY response, each name's
+The resolvers fetch, and `judgeChain` judges. Given the root's DNSKEY response, each name's
 DS response (and DNSKEY response, where it is a zone of its own), the responses holding the
 data, the trust anchors and a time, it returns the status and reason of every link. It
 fetches nothing and keeps nothing, so the same records and time always give the same
-judgement. `mode: 'first'` (what the resolvers use) stops at the first link that settles the
-outcome; `mode: 'all'` judges every link and every signature. The checks it is made of are
-exported one by one, each returning codes: `checkAnchors`, `checkDsSet`, `checkKeySet`,
-`checkSignature`, `checkRrset`, and `judgeKeys` for a zone's key set as a whole.
+judgement.
+
+```ts
+import { Resolver, typeCode } from '@aoxborrow/dns';
+import { judgeChain, toWireMessage } from '@aoxborrow/dns/dnssec';
+import type { DnssecResponse } from '@aoxborrow/dns/dnssec';
+
+const resolver = new Resolver({ servers: ['1.1.1.1'], dnssecOk: true, checkingDisabled: true });
+
+// one response as the core reads it: the question as sent, and the records with their
+// signatures
+async function ask(name: string, type: string): Promise<DnssecResponse> {
+  const answer = await resolver.query(name, type);
+  const { answers, authorities } = toWireMessage(answer.message);
+  return { name: answer.query.name, type: typeCode(type), rcode: answer.rcode, answers, authorities };
+}
+
+const judgement = await judgeChain(
+  {
+    anchored: await ask('.', 'DNSKEY'),
+    names: [
+      { name: 'com', ds: await ask('com', 'DS'), dnskey: await ask('com', 'DNSKEY') },
+      { name: 'example.com', ds: await ask('example.com', 'DS'), dnskey: await ask('example.com', 'DNSKEY') },
+    ],
+    responses: [await ask('example.com', 'A')],
+  },
+  { mode: 'all', now: new Date() }
+);
+judgement.status; // 'secure'
+judgement.links; // every link, with a status and a reason
+```
+
+`mode: 'first'` (what the resolvers use) stops at the first link that settles the outcome;
+`mode: 'all'` judges every link and every signature. `requireEveryAlgorithm` asks for each
+RRset to be signed with every algorithm in its zone's key set (RFC 4035 §2.2), which
+validators do not require (RFC 6840 §5.11). The checks it is made of are exported one by
+one, each returning codes: `checkAnchors`, `checkDsSet`, `checkKeySet`, `checkSignature`,
+`checkRrset`, and `judgeKeys` for a zone's key set as a whole.
 
 ### The primitives
 
 ```ts
 import { Resolver } from '@aoxborrow/dns';
-import {
-  buildSignedData,
-  computeKeyTag,
-  groupRrsets,
-  toWireMessage,
-  verifySignature,
-} from '@aoxborrow/dns/dnssec';
+import { buildSignedData, computeKeyTag, groupRrsets, toWireMessage, verifySignature } from '@aoxborrow/dns/dnssec';
 import { decodeDnskey, decodeRrsig } from '@aoxborrow/dns/records';
 
 // a zone's keys and the signatures over them, from a resolver asked not to validate
@@ -320,55 +622,60 @@ These are the pieces the judging core is built from, each checking one thing.
 `verifySignature` checks RSA, ECDSA and EdDSA signatures through WebCrypto; an algorithm
 the runtime cannot verify comes back not checked, never as a pass, and
 `isAlgorithmSupported` says beforehand whether it can (a WebCrypto may lack Ed25519 or
-Ed448). `computeDsDigest` and `computeKeyTag` match a DS record to the key it names. `verifyNoDsProof`,
-`verifyNxdomainProof`, `verifyNodataProof` and `verifyWildcardProof` check NSEC and NSEC3
-denial proofs and return the reasoning step by step; `verifyWildcardProof` takes the
-wildcard an answer was synthesised from, which `wildcardOwner` rebuilds from the RRSIG's
-labels field. `isAnchorCurrent` says whether a trust anchor is valid at a given time.
-Digests and NSEC3 hashes use the library's own SHA-1, SHA-256 and SHA-384. Owner names in
-`toWireMessage`'s records keep the case the server wrote them in; record data is in the
-canonical form signatures are computed over.
+Ed448). `computeDsDigest` and `computeKeyTag` match a DS record to the key it names.
+`verifyNoDsProof`, `verifyNxdomainProof`, `verifyNodataProof` and `verifyWildcardProof`
+check NSEC and NSEC3 denial proofs and return the reasoning step by step;
+`verifyWildcardProof` takes the wildcard an answer was synthesised from, which
+`wildcardOwner` rebuilds from the RRSIG's labels field. `isAnchorCurrent` says whether a
+trust anchor is valid at a given time. Digests and NSEC3 hashes use the library's own
+SHA-1, SHA-256 and SHA-384. Owner names in `toWireMessage`'s records keep the case the
+server wrote them in; record data is in the canonical form signatures are computed over.
+The record-data decoders (`decodeRrsig`, `decodeDnskey` and the rest) are in `/records`.
 
-## The wire format
+## `/transports/*`
+
+Each transport is its own entry, so a program that only needs one carries only that one.
+The resolvers make the ones they need; use these directly to send a message you encoded
+yourself, as in the [`/wire`](#wire) example.
+
+| Entry | Function | Notes |
+| --- | --- | --- |
+| `/transports/udp` | `createUdpTransport()` | a fresh socket and source port for every query, kept for its retransmissions (RFC 5452) |
+| `/transports/tcp` | `createTcpTransport()` | a connection per query by default; `pipeline: true` keeps connections open and sends several queries down each (RFC 7766) |
+| `/transports/tls` | `createTlsTransport()` | DNS over TLS, pipelined by default |
+| `/transports/doh` | `createDohTransport()` | DNS over HTTPS, GET by default (`dohMethod: 'POST'`) |
+
+To share sockets and connections between resolvers, make one set with `createTransports`
+from the root entry and pass it to each. A resolver does not close a set it was given.
 
 ```ts
-import { decodeMessage, encodeQuery } from '@aoxborrow/dns/wire';
+import { AuthoritativeResolver, createTransports, Resolver } from '@aoxborrow/dns';
 
-const bytes = encodeQuery({ id: 1234, name: 'example.com', type: 'A', recursionDesired: true });
-const message = decodeMessage(response); // header, flags, question, three record sections, EDNS
+const transports = createTransports({ pipeline: true, idleTimeout: 10_000 });
+const recursive = new Resolver({ servers: ['1.1.1.1'], transport: 'tcp', transports });
+const iterative = new AuthoritativeResolver({ transports });
+
+// …
+transports.close();
 ```
 
-`Uint8Array` in and out, no `Buffer`. Names are accepted in Unicode or punycode and
-returned in ASCII.
+### DNS over HTTPS
 
-## Where it runs
+On Node, DNS over HTTPS to an `https://` URL goes over HTTP/2 with `node:http2`,
+one session per server shared by every query to it (RFC 8484 recommends HTTP/2 at least,
+and some servers refuse HTTP/1.1). A session idle for `idleTimeout` milliseconds (5000 by
+default) is closed, and `tls` (`ca`, `rejectUnauthorized`) applies to it as to DNS over
+TLS. A server that does not offer HTTP/2, an `http://` URL, Deno, browsers and Workers go
+through `fetch`; pass your own `fetch` to use it everywhere.
 
-| Entry | Contents | Runs on |
-| --- | --- | --- |
-| `@aoxborrow/dns` | everything below | Node |
-| `@aoxborrow/dns/records` | typed records, protocol tables, parsing, formatting, validation | anywhere |
-| `@aoxborrow/dns/wire` | encoding queries and decoding messages | anywhere |
-| `@aoxborrow/dns/transports/udp` | DNS over UDP, a fresh port per query | Node |
-| `@aoxborrow/dns/transports/tcp` | DNS over TCP | Node, Cloudflare Workers |
-| `@aoxborrow/dns/transports/tls` | DNS over TLS | Node, Cloudflare Workers |
-| `@aoxborrow/dns/transports/doh` | DNS over HTTPS: HTTP/2 on Node, `fetch` elsewhere | anywhere with `fetch` |
-| `@aoxborrow/dns/dnssec` | the judging core, signature verification, DS digests, NSEC/NSEC3 proofs, trust anchors | anywhere |
-
-Node 20 or later. The package ships ES modules and CommonJS, with type declarations for
-both. Node built-ins are imported only by the transports, and only when a query needs
-them, so the entries marked "anywhere" bundle for a browser with none.
-
-On Cloudflare Workers there is no UDP, and Ed448 signatures cannot be verified. The codec,
-the records, both resolvers and the DNSSEC primitives pass their tests inside the Workers
-runtime, and the TCP, TLS and HTTPS transports have been run on a deployed Worker. A whole
-lookup, resolver and transport together, has not yet been run on a deployed Worker.
-
-## Proxies
+### Proxies
 
 Every transport can go through a SOCKS5 or HTTP CONNECT proxy. With `proxy` set nothing
 goes around it: a query that cannot go through the proxy fails.
 
 ```ts
+import { Resolver } from '@aoxborrow/dns';
+
 const resolver = new Resolver({ servers: ['1.1.1.1'], proxy: 'socks5://user:pass@proxy.example:1080' });
 ```
 
@@ -387,6 +694,154 @@ carries plain TCP there and nothing else. For DNS over HTTPS through a proxy on 
 pass a `fetch` that does its own TLS, such as
 [`tunnelfetch`](https://github.com/latentharbor/tunnelfetch); that combination has not
 been run with this library.
+
+## `/promises`
+
+The `node:dns/promises` API over the library's `Resolver`: the same functions, a
+`Resolver` class, the same return shapes, and errors shaped like Node's. Code written for
+`node:dns/promises` changes only its import.
+
+```ts
+import net from 'node:net';
+import { connectLookup, lookup, resolveMx, Resolver } from '@aoxborrow/dns/promises';
+
+await resolveMx('gmail.com'); // [{ exchange: 'gmail-smtp-in.l.google.com', priority: 5, type: 'MX' }, …]
+await lookup('example.com'); // { address: '…', family: 4 }
+
+const resolver = new Resolver({ timeout: 2000, tries: 2 });
+resolver.setServers(['1.1.1.1', '[2606:4700:4700::1111]:53']);
+await resolver.resolve4('example.com', { ttl: true }); // [{ address: '…', ttl: 300 }]
+
+// the callback form `net.connect`, `tls.connect`, `http.Agent` and undici's `connect` take
+net.connect({ host: 'example.com', port: 80, lookup: connectLookup });
+```
+
+There: `resolve` and every `resolve*` Node has, `reverse`, `lookup`, `getServers`,
+`setServers`, `getDefaultResultOrder`, `setDefaultResultOrder`, `Resolver` with `cancel()`,
+and the error-code constants. Added: `connectLookup`, and `close()` on a `Resolver`. Not
+there: `lookupService`, `setLocalAddress`, the `maxTimeout` option.
+
+Where it differs from Node:
+
+- It caches by TTL, as the library's `Resolver` does; Node does not. Pass `cache: false`
+  for Node's behaviour. It takes every option of the library's `Resolver` besides Node's
+  `timeout` and `tries`.
+- `lookup` does not call getaddrinfo. It returns an IP address as it is, then reads the
+  hosts file, answers `localhost` and names under it with the loopback addresses
+  (RFC 6761), and otherwise asks the DNS servers for A and AAAA at once. `ADDRCONFIG` is
+  accepted and has no effect.
+- `cancel()` rejects every call in progress with `ECANCELLED`; what was already sent is
+  still answered, into the cache.
+
+Errors are plain `Error`s with `code`, `syscall` and `hostname`, as Node's are:
+
+| Code | When |
+| --- | --- |
+| `ENOTFOUND` | NXDOMAIN; from `lookup`, also a name with no addresses |
+| `ENODATA` | NOERROR with an empty answer section |
+| `ESERVFAIL`, `EREFUSED`, `EFORMERR`, `ENOTIMP` | the server answered with that rcode |
+| `EBADRESP` | any other rcode, or `InvalidResponseError`, `ParseError`, `TruncatedError` |
+| `ETIMEOUT` | `TimeoutError` |
+| `ECONNREFUSED` | `ConnectionError`, `ProxyError`, `EmptyResponseError`, `NoServerError` |
+| `EBADNAME` | `InvalidQueryError` |
+| `ECANCELLED` | `cancel()`, or an aborted query |
+| `EAI_AGAIN` | from `lookup`: no server could say whether the name exists |
+
+The library error behind a code, when there is one, is its `cause`. These codes exist only
+in this entry; the rest of the library has none.
+
+## Where it runs
+
+Node 22 or later. Node built-ins are imported only by the transports, and only when a query
+needs them, so `/records`, `/wire` and `/dnssec` bundle for a browser with none, and the
+root entry loads no Node module at import. Both are checked on every build.
+
+On Cloudflare Workers there is no UDP, and Ed448 signatures cannot be verified. TCP and
+TLS go through the runtime's `connect()`, found on its own. The codec, the records, both
+resolvers and the DNSSEC primitives pass their tests inside the Workers runtime, and the
+TCP, TLS and HTTPS transports have been run on a deployed Worker. A whole lookup, resolver
+and transport together, has not yet been run on a deployed Worker.
+
+## Benchmarks
+
+Against the other ways to resolve names from Node, on an Apple M2 Max (12 cores), macOS
+14.8.5, Node 24.14.1, on 2026-11-16. To reproduce, from this package:
+
+```bash
+yarn bench --network
+```
+
+The full output, with every scenario, the real-network runs and the method, is in
+[`bench/RESULTS.md`](bench/RESULTS.md); how it is run is in
+[`bench/README.md`](bench/README.md).
+
+**On a local fixture server**, which answers every question with one A record in the same
+process, so nothing but the client is measured. Every query asks a new name, except in the
+cache column.
+
+| Client | Transport | warm p50, µs | 1,000 sequential, ms | queries/s, 100 in flight | queries/s, 1,000 in flight | cached answers/s |
+| :-- | --: | --: | --: | --: | --: | --: |
+| `@aoxborrow/dns` `Resolver` | UDP | 131 | 141 | 6,939 | 10,179 | 209,841 |
+| `@aoxborrow/dns` `Resolver` | TCP pipelined | 49 | 57 | 35,594 | 31,671 | 207,846 |
+| `@aoxborrow/dns` `Resolver` | DoH | 115 | 129 | 11,398 | n/a | 227,129 |
+| `@aoxborrow/dns/promises` `resolve4` | UDP | 175 | 182 | 11,300 | 10,158 | 176,548 |
+| `node:dns` `Resolver` (c-ares) | UDP | 65 | 67 | 34,119 | 32,008 | no cache |
+| dns2 3.1.1 | UDP | 116 | 120 | 7,116 | 13,064 | no cache |
+| tangerine 2.1.3 | DoH | 84 | 94 | 19,517 | n/a | 1,335,076 |
+| `fetch` + dns-packet | DoH | 145 | 165 | 10,744 | n/a | no cache |
+
+DoH stops at 100 in flight: past that the local test server's accept queue drops
+connections, which measures the server.
+
+**UDP throughput is about a third of c-ares's**, and that is a choice. The library gives
+every UDP query a socket and source port of its own, so a forged answer has to guess the
+port as well as the 16-bit ID (RFC 5452); c-ares sends every query from one socket. The
+extra system calls cost throughput when many queries are in flight. Pipelined TCP, which
+reuses a connection, keeps up with c-ares.
+
+**Iterative resolution from the root**, the 100 names in `bench/top-100.ts`, one at a time
+over IPv4 UDP:
+
+| Resolver | total, s | per name p50, ms | per name p95, ms | queries per name |
+| :-- | --: | --: | --: | --: |
+| `AuthoritativeResolver`, one for the list | 14.8 | 95 | 541 | 2.8 |
+| `AuthoritativeResolver`, new for each name | 19.6 | 134 | 582 | 4.3 |
+| `dig +trace`, a process per name | 43.2 | 244 | 1,655 | 4.0 |
+
+Against public resolvers (Cloudflare, Google, Quad9) every client is mostly round-trip time
+and the differences are within the network's own variance; those tables are in
+`bench/RESULTS.md`. `Bun.dns`, `Deno.resolveDns` and `dnsperf` were not installed on the
+machine, and `dns-socket` is unmaintained since 2021, so none of them is measured.
+
+### Features
+
+|  | @aoxborrow/dns | node:dns Resolver | node:dns lookup | dns2 | tangerine | Bun.dns | Deno.resolveDns | dig |
+| :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- |
+| UDP | yes | yes | system resolver | yes | no | system resolver | yes | yes |
+| TCP | yes, pipelined on request | on truncation only | system resolver | yes | no | system resolver | on truncation only | yes (`+tcp`) |
+| DNS over TLS | yes | no | no | no | no | no | no | BIND 9.18+ (`+tls`) |
+| DNS over HTTPS | yes | no | no | yes | yes, only | no | no | BIND 9.18+ (`+https`) |
+| Iterative resolution from the root | yes (`AuthoritativeResolver`) | no | no | no | no | no | no | `+trace` |
+| DNSSEC | validation (`validate: true`), and the primitives it is built from | no | no | record types only | DO bit, reads the resolver's AD flag | no | no | DO bit (`+dnssec`), no validation |
+| Cache | yes, by TTL, shared between callers | c-ares query cache | the system's | no | yes, pluggable (Map, Redis) | yes | no | no |
+| One query on the wire for callers asking the same thing | yes | no | no | no | no | not documented | no | n/a |
+| SOCKS5 and HTTP CONNECT proxies | yes | no | no | no | through its `request` function | no | no | no |
+| Browsers and Workers | records, wire and DNSSEC entries anywhere; DoH through `fetch`; TCP on Cloudflare Workers | no | no | no | no | Bun only | Deno only | n/a |
+| Typed records | 33 types, every field typed; unknown types as raw data | 12 types in fixed shapes | addresses only | about 20 types | Node's shapes | addresses only | 12 types | text |
+| TypeScript | written in it | `@types/node` | `@types/node` | bundled types | bundled types | built in | built in | n/a |
+| Runtime dependencies | none | built in | built in | none | 15 | built in | built in | n/a |
+| A `node:dns/promises` drop-in | yes (`@aoxborrow/dns/promises`) | it is the original | it is the original | no | yes, over DoH | Bun implements `node:dns` | Deno implements `node:dns` | n/a |
+
+"System resolver" means the client asks the operating system (getaddrinfo), which picks
+the transport and the servers.
+
+## Conventions
+
+The shapes every entry hands back follow one set of rules: names without a trailing dot in
+the case they were written, header flags as an object of booleans, `rcode` with
+`rcodeName`, points in time as `Date`, durations in milliseconds, record fields as the wire
+defines them, answers as plain data, problems as codes. They are written down in
+[CONVENTIONS.md](CONVENTIONS.md).
 
 ## Development
 
