@@ -35,6 +35,13 @@ export interface ErrorData {
   extendedErrors?: ExtendedErrorOption[];
 }
 
+// one server's part in a query that failed: the address it was asked at, and why it gave
+// nothing usable
+export interface ServerFailure {
+  server: string;
+  error: DnsError;
+}
+
 export class DnsError extends Error {
   // whether repeating the operation could succeed
   readonly retryable: boolean = false;
@@ -47,6 +54,9 @@ export class DnsError extends Error {
   extendedErrors?: ExtendedErrorOption[];
   // from the authoritative resolver: the servers asked before the query failed
   trace?: TraceHop[];
+  // from a resolver that asked more than one server: what went wrong at each, in the order
+  // they were asked. This error is among them
+  failures?: ServerFailure[];
 
   constructor(message: string, options: DnsErrorOptions = {}) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });

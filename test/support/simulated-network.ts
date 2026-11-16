@@ -181,14 +181,15 @@ export function zoneServer(spec: ZoneSpec): SimulatedServer {
       .filter(delegated => isSubdomain(name, delegated))
       .sort((a, b) => b.length - a.length)[0];
     if (child !== undefined) {
-      const nameservers = Object.entries(spec.delegations ?? {}).find(
+      // the child's name as the delegation wrote it, letter case and all
+      const [written, nameservers] = Object.entries(spec.delegations ?? {}).find(
         ([delegated]) => canonicalName(delegated) === child
-      )?.[1];
+      ) ?? [child, {}];
       return reply({
-        authorities: Object.keys(nameservers ?? {}).map(ns =>
-          record([child, 'NS', ns, 172_800], 'authority')
+        authorities: Object.keys(nameservers).map(ns =>
+          record([written, 'NS', ns, 172_800], 'authority')
         ),
-        additionals: Object.entries(nameservers ?? {}).flatMap(([ns, addresses]) =>
+        additionals: Object.entries(nameservers).flatMap(([ns, addresses]) =>
           addresses.map(address =>
             record([ns, address.includes(':') ? 'AAAA' : 'A', address, 172_800], 'additional')
           )

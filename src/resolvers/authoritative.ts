@@ -5,11 +5,11 @@ import {
   InvalidResponseError,
   TimeoutError,
 } from '../errors';
-import { exchange, hasTransportOptions } from '../exchange';
+import type { ServerFailure } from '../errors';
+import { exchange, hasTransportOptions, presentName } from '../exchange';
 import type { ExchangeResult } from '../exchange';
 import { RCODES, rcodeName } from '../protocol/header';
 import { typeCode, typeName } from '../protocol/types';
-import { parseIpv4, parseIpv6 } from '../records/addresses';
 import { decodeRecords } from '../records/decode';
 import type { DnsRecord, KnownRecordType, RecordOf } from '../records/types';
 import { isIp, isIpv4, isIpv6, normalizeAddress } from '../transports/endpoint';
@@ -17,18 +17,11 @@ import { createTransports, defaultTransports } from '../transports/index';
 import type { Transports } from '../transports/index';
 import { now } from '../transports/runtime';
 import type { OnEvent, TransportOptions } from '../transports/types';
-import {
-  canonicalName,
-  comparableName,
-  compareNames,
-  isSubdomain,
-  parentName,
-  toAsciiName,
-} from '../wire/names';
+import { canonicalName, comparableName, isSubdomain, parentName, toAsciiName } from '../wire/names';
 import { aliasTarget, buildAnswer } from './answer';
 import type { Answer, QuerySettings, TraceHop } from './answer';
-import { createLimiter, createPacer } from './limiter';
-import type { Limiter } from './limiter';
+import { createKeyedLimiter, createLimiter, createPacer } from './limiter';
+import type { KeyedLimiter, Limiter } from './limiter';
 import { ROOT_HINTS } from './root-hints';
 import type { NameserverHint } from './root-hints';
 
@@ -46,8 +39,9 @@ export interface AuthoritativeResolverOptions
   transport?: 'udp' | 'tcp';
   // where to start. Default: the thirteen root servers
   rootServers?: readonly NameserverHint[];
-  // which of a nameserver's addresses to use. Default IPv4 only: a host with no IPv6
-  // route would otherwise wait out a timeout at every step
+  // which of a nameserver's addresses to use. Default both, IPv4 first: a server's IPv6
+  // address is tried only once each of the zone's servers has been tried at its first
+  // address, so a host with no IPv6 route does not wait out a timeout at every step
   addressFamily?: 'ipv4' | 'ipv6' | 'both';
   // when a name is an alias for a name in another zone, resolve that one too and return
   // the whole chain. Off by default: the answer is then what the zone's server said, the
@@ -62,17 +56,21 @@ export interface AuthoritativeResolverOptions
   // with one server; a zone whose servers all stay silent would otherwise cost that for
   // each address of each of them. The last server a zone has left to ask is given the
   // rest of this, shared among its attempts, since there is no next one to save it for.
-  // Default 30000
+  // Default 10000
   totalTimeout?: number;
   // addresses for nameservers by name, used before asking for them. Also what puts a
   // name beside an address in the trace
   hosts?: Readonly<Record<string, string | readonly string[]>>;
-  // the order a zone's nameservers are tried in, as a comparator over their names.
-  // Default: canonical DNS name order, which is the same on every run
-  nameserverOrder?: (a: string, b: string) => number;
-  // the order one nameserver's addresses are tried in, within a family. Default: by the
-  // address as a number, which is the same on every run whatever order they arrived in
-  addressOrder?: (a: string, b: string) => number;
+  // the order servers are tried in. Default: a random order, drawn afresh each time, so
+  // the load falls on all of a zone's servers and one slow server is not always first.
+  // Give one to fix the order: it is called with the root servers, with a zone's
+  // nameservers and with one nameserver's addresses, and returns the same items in the
+  // order to try them. With `addressFamily: 'both'` the IPv4 addresses still come first,
+  // each family in the order returned
+  serverOrder?: ServerOrder;
+  // how many queries may be in flight to one server address at once. Default 8; Infinity
+  // for no limit
+  serverConcurrency?: number;
   // find a nameserver's addresses some other way before it is resolved from the root: a
   // local cache, another resolver. `timeout` is what is left of the total timeout, in
   // milliseconds, and `signal` is the query's, for a lookup that should not outlast
@@ -87,7 +85,7 @@ export interface AuthoritativeResolverOptions
   cache?: boolean;
   // the least time between two queries to the same server, in milliseconds. Default 0
   serverDelay?: number;
-  // how many queries may be in flight at once. Default: no limit
+  // how many queries may be in flight at once, to all servers together. Default: no limit
   concurrency?: number;
   // malformed record data is an error. By default such a record comes back in the
   // generic form
@@ -97,6 +95,13 @@ export interface AuthoritativeResolverOptions
   // a set it was given
   transports?: Transports;
 }
+
+// what `serverOrder` is asked to put in order, and what it is given for each:
+//   roots        the root servers' names, or the address of one given without a name
+//   nameservers  a zone's nameservers' names, as the delegation wrote them
+//   addresses    one nameserver's addresses
+export type ServerOrderKind = 'roots' | 'nameservers' | 'addresses';
+export type ServerOrder = (items: readonly string[], kind: ServerOrderKind) => readonly string[];
 
 export interface AuthoritativeQueryOptions extends Omit<
   QuerySettings,
@@ -119,7 +124,10 @@ interface Nameserver {
 }
 
 interface ZoneCut {
+  // canonical name
   zone: string;
+  // the name as the referral wrote it, where its letter case differs
+  written?: string;
   servers: Nameserver[];
   // milliseconds since the epoch
   expires: number;
@@ -150,21 +158,42 @@ interface Run {
   // nameserver addresses looked up during this call, found or not, so no name is looked
   // up twice for one answer
   lookedUp: Map<string, string[]>;
+  // every server that gave nothing usable, for the error a walk that fails throws
+  failures: ServerFailure[];
 }
 
-// two addresses of one family by their value
-function compareAddresses(a: string, b: string): number {
-  const x = parseIpv4(a) ?? parseIpv6(a.split('%')[0]);
-  const y = parseIpv4(b) ?? parseIpv6(b.split('%')[0]);
-  if (!x || !y || x.length !== y.length) return 0;
-  for (let index = 0; index < x.length; index++) {
-    if (x[index] !== y[index]) return x[index] - y[index];
+// the default order: random, a fresh shuffle every time (Fisher-Yates)
+const randomOrder: ServerOrder = items => {
+  const out = [...items];
+  for (let index = out.length - 1; index > 0; index--) {
+    const other = Math.floor(Math.random() * (index + 1));
+    [out[index], out[other]] = [out[other], out[index]];
   }
-  return 0;
+  return out;
+};
+
+// `items` in the order `serverOrder` gave their keys. Anything it left out goes last, in
+// the order it came, and anything it made up is ignored
+function inOrder<T>(items: readonly T[], keys: readonly string[], ordered: readonly string[]): T[] {
+  const left = items.map((item, index) => ({ item, key: keys[index], taken: false }));
+  const out: T[] = [];
+  for (const key of ordered) {
+    const found = left.find(entry => !entry.taken && entry.key === key);
+    if (!found) continue;
+    found.taken = true;
+    out.push(found.item);
+  }
+  for (const entry of left) if (!entry.taken) out.push(entry.item);
+  return out;
 }
 
 const DEFAULT_MAX_HOPS = 40;
-const DEFAULT_TOTAL_TIMEOUT = 30_000;
+const DEFAULT_TOTAL_TIMEOUT = 10_000;
+// queries in flight to one server address at once
+const DEFAULT_SERVER_CONCURRENCY = 8;
+// the most addresses the resolver keeps a nameserver's name for, for the trace and the
+// answer's `serverName`. Past it the least recently learned are forgotten
+const MAX_NAMES = 10_000;
 // the patience with one server when the caller names none: the same as `exchange` has
 const DEFAULT_TIMEOUT = 5000;
 const DEFAULT_MAX_ALIASES = 8;
@@ -187,18 +216,22 @@ type Outcome =
 export class AuthoritativeResolver {
   private readonly options: AuthoritativeResolverOptions;
   private readonly limit: Limiter;
+  private readonly limitServer: KeyedLimiter;
   private readonly pace: (server: string) => Promise<void>;
   private readonly transports: Transports;
   private readonly ownsTransports: boolean;
   private readonly knowledge: Knowledge = { cuts: new Map(), addresses: new Map() };
   private readonly root: Nameserver[];
-  // address -> name, for the trace
+  // address -> name, for the trace: those the resolver was given, kept for its life, and
+  // those it learned on the way, bounded and forgotten by `clearCache()`
+  private readonly givenNames = new Map<string, string>();
   private readonly names = new Map<string, string>();
   private readonly hosts = new Map<string, string[]>();
 
   constructor(options: AuthoritativeResolverOptions = {}) {
     this.options = options;
     this.limit = createLimiter(options.concurrency ?? Infinity);
+    this.limitServer = createKeyedLimiter(options.serverConcurrency ?? DEFAULT_SERVER_CONCURRENCY);
     this.pace = createPacer(options.serverDelay ?? 0);
     this.ownsTransports = !options.transports && hasTransportOptions(options);
     this.transports =
@@ -207,13 +240,14 @@ export class AuthoritativeResolver {
     for (const [name, addresses] of Object.entries(options.hosts ?? {})) {
       const list = [addresses].flat().map(normalizeAddress);
       this.hosts.set(canonicalName(name), list);
-      for (const address of list) this.names.set(address, canonicalName(name));
+      for (const address of list) this.givenNames.set(address, givenName(name));
     }
     this.root = (options.rootServers ?? ROOT_HINTS).map(hint => {
       const name = hint.name ? canonicalName(hint.name) : '';
+      const written = hint.name ? givenName(hint.name) : '';
       const addresses = this.usable([hint.ipv4, hint.ipv6].filter(isString).map(normalizeAddress));
-      for (const address of addresses) if (name) this.names.set(address, name);
-      return { name, addresses };
+      for (const address of addresses) if (written) this.givenNames.set(address, written);
+      return { name, ...(written !== name && { written }), addresses };
     });
   }
 
@@ -233,9 +267,12 @@ export class AuthoritativeResolver {
     const { signal, totalTimeout: perQuery, ...settings } = options;
     const totalTimeout = perQuery ?? this.options.totalTimeout ?? DEFAULT_TOTAL_TIMEOUT;
     const started = now();
+    // the name as the caller wrote it, for the answer, and as it is compared and sent
+    let shown: string;
     let asked: string;
     try {
-      asked = comparableName(toAsciiName(name));
+      shown = presentName(toAsciiName(name));
+      asked = comparableName(shown);
     } catch (cause) {
       throw new InvalidQueryError(cause instanceof Error ? cause.message : String(cause), {
         cause,
@@ -255,6 +292,7 @@ export class AuthoritativeResolver {
       attempts: 0,
       resolving: new Set(),
       lookedUp: new Map(),
+      failures: [],
     };
 
     const trace: TraceHop[] = [];
@@ -265,21 +303,24 @@ export class AuthoritativeResolver {
     for (;;) {
       const { result, outcome } = await this.resolve(run, current, typeText, trace, 0).catch(
         (error: unknown) => {
-          // a walk that fails still says how far it got
-          if (error instanceof DnsError) error.trace ??= trace;
+          // a walk that fails still says how far it got, and what went wrong on the way
+          if (error instanceof DnsError) {
+            error.trace ??= trace;
+            if (run.failures.length > 0) error.failures ??= run.failures;
+          }
           throw error;
         }
       );
       if (outcome.kind !== 'alias' || this.options.followCnames !== true) {
         return buildAnswer(result, {
           strict: this.options.strict,
-          name: asked,
+          name: shown,
           before: aliases,
           trace,
           // the name of the nameserver that was asked: two names can share an address
           serverName:
             trace.filter(hop => hop.server === result.server).at(-1)?.serverName ??
-            this.names.get(normalizeAddress(result.server)),
+            this.nameOf(normalizeAddress(result.server)),
           elapsed: now() - started,
           attempts: run.attempts,
         });
@@ -308,10 +349,11 @@ export class AuthoritativeResolver {
     }
   }
 
-  // forget every delegation and nameserver address learned so far
+  // forget every delegation, nameserver address and nameserver name learned so far
   clearCache(): void {
     this.knowledge.cuts.clear();
     this.knowledge.addresses.clear();
+    this.names.clear();
   }
 
   // close the sockets and connections this resolver opened. A resolver that shares the
@@ -323,16 +365,50 @@ export class AuthoritativeResolver {
 
   // ---- inside
 
-  // the addresses of a nameserver this resolver is willing to use
+  // the addresses of a nameserver this resolver is willing to use, in the order given
   private usable(addresses: readonly string[]): string[] {
-    const family = this.options.addressFamily ?? 'ipv4';
-    const order = this.options.addressOrder ?? compareAddresses;
-    const v4 = addresses.filter(isIpv4).sort(order);
+    const family = this.options.addressFamily ?? 'both';
     // only addresses: anything else here would be read as a name, or a host and a port
-    const v6 = addresses.filter(isIpv6).sort(order);
-    if (family === 'ipv4') return v4;
-    if (family === 'ipv6') return v6;
-    return [...v4, ...v6];
+    if (family === 'ipv4') return addresses.filter(isIpv4);
+    if (family === 'ipv6') return addresses.filter(isIpv6);
+    return addresses.filter(address => isIpv4(address) || isIpv6(address));
+  }
+
+  // a nameserver's addresses in the order to try them: the caller's order, or a random
+  // one, with IPv4 first
+  private orderAddresses(addresses: readonly string[]): string[] {
+    const ordered = inOrder(addresses, addresses, this.order(addresses, 'addresses'));
+    return [...ordered.filter(isIpv4), ...ordered.filter(address => !isIpv4(address))];
+  }
+
+  // a zone's servers in the order to try them
+  private orderServers(cut: ZoneCut): Nameserver[] {
+    const keys = cut.servers.map(
+      server => server.written ?? (server.name || server.addresses?.[0] || '')
+    );
+    return inOrder(
+      cut.servers,
+      keys,
+      this.order(keys, cut.servers === this.root ? 'roots' : 'nameservers')
+    );
+  }
+
+  private order(items: readonly string[], kind: ServerOrderKind): readonly string[] {
+    if (items.length < 2) return items;
+    return (this.options.serverOrder ?? randomOrder)(items, kind);
+  }
+
+  // the name a nameserver was known by at an address
+  private nameOf(address: string): string | undefined {
+    return this.names.get(address) ?? this.givenNames.get(address);
+  }
+
+  // remember a nameserver's name at an address. The most recent is kept, and the oldest
+  // forgotten past `MAX_NAMES`
+  private learnName(address: string, name: string): void {
+    this.names.delete(address);
+    this.names.set(address, name);
+    if (this.names.size > MAX_NAMES) this.names.delete(this.names.keys().next().value as string);
   }
 
   // the deepest zone already known to hold the name, and its servers
@@ -373,7 +449,7 @@ export class AuthoritativeResolver {
       // zone's next server is the better bet, and with a total timeout it may be the only
       // one left time for: a dead dual-stack server would otherwise spend it on both its
       // addresses. A server's addresses are looked up when it is first needed
-      const turns = cut.servers.map(server => ({
+      const turns = this.orderServers(cut).map(server => ({
         server,
         addresses: undefined as string[] | undefined,
         done: false,
@@ -387,7 +463,7 @@ export class AuthoritativeResolver {
             break servers;
           }
           const { server } = turn;
-          turn.addresses ??= await this.addressesOf(run, server, nesting);
+          turn.addresses ??= this.orderAddresses(await this.addressesOf(run, server, nesting));
           // finding the address may have been what took the time
           if (outOfTime(run)) {
             stalled = server;
@@ -409,7 +485,7 @@ export class AuthoritativeResolver {
           const hop: TraceHop = {
             server: address,
             ...(server.name && { serverName: server.written ?? server.name }),
-            zone: cut.zone,
+            zone: cut.written ?? cut.zone,
             name,
             type,
             elapsed: 0,
@@ -430,7 +506,9 @@ export class AuthoritativeResolver {
               rcodeName: rcodeName(result.message.rcode),
               bytes: result.bytes.length,
               elapsed: now() - hopStarted,
-              ...(outcome.kind === 'referral' && { referral: outcome.cut.zone }),
+              ...(outcome.kind === 'referral' && {
+                referral: outcome.cut.written ?? outcome.cut.zone,
+              }),
             });
             if (outcome.kind === 'lame') {
               hop.error = {
@@ -438,6 +516,16 @@ export class AuthoritativeResolver {
                 message: outcome.reason,
                 retryable: false,
               };
+              run.failures.push({
+                server: address,
+                error: new InvalidResponseError(outcome.reason, {
+                  server: address,
+                  query: name,
+                  type,
+                  transport: result.transport,
+                  ...(!outcome.loop && { rcode: result.message.rcode }),
+                }),
+              });
               if (outcome.loop) {
                 loop = outcome.reason;
                 turn.done = true;
@@ -469,6 +557,7 @@ export class AuthoritativeResolver {
               throw error;
             }
             hop.error = errorData(error);
+            run.failures.push({ server: address, error });
             firstError ??= error;
           }
         }
@@ -547,6 +636,7 @@ export class AuthoritativeResolver {
     if (delegations.length === 0 || message.flags.aa) return undefined;
 
     const child = canonicalName(delegations[0].name);
+    const childWritten = presentName(delegations[0].name);
     const below = child !== zone && isSubdomain(child, zone) && isSubdomain(name, child);
     if (!below) {
       // a referral sideways or back up leads nowhere, or round in a circle
@@ -568,7 +658,6 @@ export class AuthoritativeResolver {
       .filter(record => canonicalName(record.name) === child)
       .map(record => canonicalName(record.target))
       .filter((target, index, all) => all.indexOf(target) === index)
-      .sort(this.options.nameserverOrder ?? compareNames)
       .map(target => {
         // glue is taken only for a nameserver inside the zone of the server that sent it,
         // which holds authority for that name (RFC 2181 §5.4.1). An address for a name
@@ -585,7 +674,7 @@ export class AuthoritativeResolver {
           )
           .map(record => normalizeAddress(record.address));
         const shown = written.get(target);
-        for (const address of addresses) this.names.set(address, shown ?? target);
+        for (const address of addresses) this.learnName(address, shown ?? target);
         const usable = this.usable(addresses);
         // without usable glue the address is looked up when the server is first needed
         return {
@@ -598,7 +687,12 @@ export class AuthoritativeResolver {
     const ttl = Math.min(...delegations.map(record => record.ttl));
     return {
       kind: 'referral',
-      cut: { zone: child, servers, expires: Date.now() + ttl * 1000 },
+      cut: {
+        zone: child,
+        ...(childWritten !== child && { written: childWritten }),
+        servers,
+        expires: Date.now() + ttl * 1000,
+      },
     };
   }
 
@@ -635,7 +729,7 @@ export class AuthoritativeResolver {
         // nothing usable, as when every address is of a family not asked for, is the same
         // as nothing at all: the name is looked up below, and nothing is kept
         if (usable.length > 0) {
-          for (const address of normalized) this.names.set(address, server.written ?? name);
+          for (const address of normalized) this.learnName(address, server.written ?? name);
           run.knowledge.addresses.set(name, {
             addresses: usable,
             expires: Date.now() + SUPPLIED_ADDRESS_TTL * 1000,
@@ -646,7 +740,7 @@ export class AuthoritativeResolver {
         // the lookup took the rest of the time: there is none left to look further
         if (outOfTime(run)) return [];
       }
-      const family = this.options.addressFamily ?? 'ipv4';
+      const family = this.options.addressFamily ?? 'both';
       const types = family === 'ipv4' ? ['A'] : family === 'ipv6' ? ['AAAA'] : ['A', 'AAAA'];
       const found: string[] = [];
       let ttl = Infinity;
@@ -664,7 +758,7 @@ export class AuthoritativeResolver {
           // this nameserver cannot be found; another may be
         }
       }
-      for (const address of found) this.names.set(address, server.written ?? name);
+      for (const address of found) this.learnName(address, server.written ?? name);
       const addresses = this.usable(found);
       // only what was found is kept past this call. A lookup that failed, or found
       // nothing, is tried again by the next query
@@ -693,34 +787,36 @@ export class AuthoritativeResolver {
     const retries = merged.retries ?? 1;
     await this.pace(address);
     const result = await this.limit(() =>
-      withRest(run, left =>
-        // as an object, so that the address is taken whole and nothing in it is read as a
-        // port: the port is the resolver's to choose
-        exchange(
-          { name, type },
-          { address },
-          {
-            transport: merged.transport,
-            port: merged.port,
-            recursionDesired: false,
-            checkingDisabled: merged.checkingDisabled,
-            authenticData: merged.authenticData,
-            dnssecOk: merged.dnssecOk,
-            udpPayloadSize: merged.udpPayloadSize,
-            ednsOptions: merged.ednsOptions,
-            edns: merged.edns,
-            // the last server to ask has what is left shared among its attempts, and never
-            // less than any other server would have had
-            timeout: last ? restOfTime(left, patience, retries) : patience,
-            // no longer than what is left of the time for the whole query, retries and a
-            // TCP fallback included
-            totalTimeout: left,
-            tcpFallback: merged.tcpFallback,
-            retries,
-            transports: this.transports,
-            onEvent: this.options.onEvent,
-            signal: run.signal,
-          }
+      this.limitServer(address, () =>
+        withRest(run, left =>
+          // as an object, so that the address is taken whole and nothing in it is read as a
+          // port: the port is the resolver's to choose
+          exchange(
+            { name, type },
+            { address },
+            {
+              transport: merged.transport,
+              port: merged.port,
+              recursionDesired: false,
+              checkingDisabled: merged.checkingDisabled,
+              authenticData: merged.authenticData,
+              dnssecOk: merged.dnssecOk,
+              udpPayloadSize: merged.udpPayloadSize,
+              ednsOptions: merged.ednsOptions,
+              edns: merged.edns,
+              // the last server to ask has what is left shared among its attempts, and never
+              // less than any other server would have had
+              timeout: last ? restOfTime(left, patience, retries) : patience,
+              // no longer than what is left of the time for the whole query, retries and a
+              // TCP fallback included
+              totalTimeout: left,
+              tcpFallback: merged.tcpFallback,
+              retries,
+              transports: this.transports,
+              onEvent: this.options.onEvent,
+              signal: run.signal,
+            }
+          )
         )
       )
     );
@@ -730,6 +826,16 @@ export class AuthoritativeResolver {
 }
 
 const isString = (value: string | undefined): value is string => typeof value === 'string';
+
+// a name the caller gave for a server, as it is shown. One that cannot be written is
+// shown in its canonical form rather than refused here: asking for it is what fails
+function givenName(name: string): string {
+  try {
+    return presentName(name);
+  } catch {
+    return canonicalName(name);
+  }
+}
 
 // nobody is left in the zone to ask after this server at this address: it has no address
 // after this one, and every other server has refused, referred the walk round in a loop,
