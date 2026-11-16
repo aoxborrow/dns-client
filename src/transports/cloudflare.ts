@@ -5,7 +5,7 @@ import type { Connect, Connection } from './types';
 // `cloudflare:sockets`.
 //
 // this connector has not itself run on Workers. What it does follows a spike that ran the
-// same socket calls on a deployed Worker (docs/research/workers-proxy-spike.md)
+// same socket calls on a deployed Worker
 
 // the parts of a Workers `Socket` this needs
 export interface CloudflareSocket {

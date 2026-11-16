@@ -497,7 +497,8 @@ describe('Resolver', () => {
     const copy = structuredClone(answer);
     expect(copy).toEqual(answer);
     expect(toDig(copy)).toBe(toDig(answer));
-    expect(toDig(answer)).toContain('+dnssec +cd @10.0.0.1 example.com A');
+    // `+tcp` where the runtime has no UDP and TCP is the default, as on Workers
+    expect(toDig(answer)).toMatch(/\+dnssec \+cd (\+tcp )?@10\.0\.0\.1 example\.com A/);
   });
 
   it('keeps when a cached response arrived as a Date', async () => {

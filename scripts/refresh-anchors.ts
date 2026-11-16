@@ -1,12 +1,12 @@
 // compare the bundled root trust anchors and root hints with what IANA publishes, and
 // rewrite them when they differ.
 //
-//   yarn workspace @aoxborrow/dns refresh-anchors          rewrite the bundled data
-//   yarn workspace @aoxborrow/dns refresh-anchors --check  report, and fail on a difference
+//   yarn refresh-anchors          rewrite the bundled data
+//   yarn refresh-anchors --check  report, and fail on a difference
 //
 // the anchors come from https://data.iana.org/root-anchors/root-anchors.xml and the hints
 // from https://www.internic.net/domain/named.root, fetched over TLS only. Before committing
-// a rewrite, check the anchor file's signature as docs/reference/dnssec-trust-anchors.md says
+// a rewrite, check the anchor file's signature as CONTRIBUTING.md says
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -61,8 +61,8 @@ async function main() {
 
   if (check) {
     if (anchors.length + roots.length > 0) {
-      console.log('\nRun `yarn workspace @aoxborrow/dns refresh-anchors` and follow');
-      console.log('docs/reference/dnssec-trust-anchors.md to update the bundled data.');
+      console.log('\nRun `yarn refresh-anchors` and follow');
+      console.log('the trust anchor procedure in CONTRIBUTING.md to update the bundled data.');
       process.exitCode = 1;
     }
     return;
