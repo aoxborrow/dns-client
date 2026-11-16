@@ -107,8 +107,8 @@
     "lint:fix": "yarn eslint:fix && yarn format:fix",
     "eslint": "yarn run -T eslint --cache --cache-location .eslintcache --max-warnings 0 .",
     "eslint:fix": "yarn run -T eslint --cache --cache-location .eslintcache --max-warnings 0 . --fix",
-    "format": "yarn run -T prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"bench/**/*.ts\" \"scripts/**/*.mjs\" eslint.config.mjs tsup.config.ts vitest.config.ts",
-    "format:fix": "yarn run -T prettier --write --list-different \"src/**/*.ts\" \"test/**/*.ts\" \"bench/**/*.ts\" \"scripts/**/*.mjs\" eslint.config.mjs tsup.config.ts vitest.config.ts"
+    "format": "yarn run -T prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"test/fixtures/*.json\" \"bench/**/*.ts\" \"scripts/**/*.{ts,mjs}\" eslint.config.mjs tsup.config.ts vitest.config.ts",
+    "format:fix": "yarn run -T prettier --write --list-different \"src/**/*.ts\" \"test/**/*.ts\" \"test/fixtures/*.json\" \"bench/**/*.ts\" \"scripts/**/*.{ts,mjs}\" eslint.config.mjs tsup.config.ts vitest.config.ts"
   },
   "devDependencies": {
     "@types/dns-packet": "^5.6.5",
