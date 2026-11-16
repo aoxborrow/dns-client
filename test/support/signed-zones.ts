@@ -1,5 +1,4 @@
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import type { KeyObject } from 'node:crypto';
 import { buildSignedData, computeDsDigest, computeKeyTag } from '../../src/dnssec/canonical';
 import type { Rrset, WireRecord } from '../../src/dnssec/canonical';
 import type { TrustAnchor } from '../../src/dnssec/types';
@@ -63,11 +62,16 @@ export function ecdsaKey(flags = 257): TestKey {
   const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   const jwk = publicKey.export({ format: 'jwk' });
   const raw = concatBytes([fromBase64Url(jwk.x!), fromBase64Url(jwk.y!)]);
-  return testKey(flags, 13, raw, data => ecdsaSign(privateKey, data));
+  // the private key goes to sign() as PKCS #8 bytes, not a KeyObject: the Workers runtime's
+  // node:crypto takes only the bytes, and the suite runs there too
+  const pkcs8 = privateKey.export({ format: 'der', type: 'pkcs8' });
+  return testKey(flags, 13, raw, data => ecdsaSign(pkcs8, data));
 }
 
-function ecdsaSign(privateKey: KeyObject, data: Uint8Array): Uint8Array {
-  return Uint8Array.from(sign('sha256', data, { key: privateKey, dsaEncoding: 'ieee-p1363' }));
+function ecdsaSign(pkcs8: Buffer, data: Uint8Array): Uint8Array {
+  return Uint8Array.from(
+    sign('sha256', data, { key: pkcs8, format: 'der', type: 'pkcs8', dsaEncoding: 'ieee-p1363' })
+  );
 }
 
 // a key in an algorithm the library cannot verify (ECC-GOST, 12): any bytes stand in for

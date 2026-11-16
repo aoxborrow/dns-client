@@ -17,8 +17,8 @@ import { TOP_100 as ALL_NAMES } from './top-100';
 // fixture server (no network: the cost of the client itself) and, with --network, against
 // public resolvers and the root servers. Writes bench/RESULTS.md.
 //
-//   yarn workspace @aoxborrow/dns bench              the fixture server only
-//   yarn workspace @aoxborrow/dns bench --network    and the real network
+//   yarn bench              the fixture server only
+//   yarn bench --network    and the real network
 //   options: --only=dns-udp,node   --quick   --out=path
 //
 // each contender runs its fixture scenarios in a child process of its own, so one's
@@ -823,7 +823,7 @@ async function main() {
   const report = [
     '# Benchmarks',
     '',
-    `Written by \`bench/run.ts\`. Reproduce with \`yarn workspace @aoxborrow/dns bench${flag('network') ? ' --network' : ''}\`; see \`bench/README.md\`.`,
+    `Written by \`bench/run.ts\`. Reproduce with \`yarn bench${flag('network') ? ' --network' : ''}\`; see \`bench/README.md\`.`,
     '',
     ...(await environment()),
     '',

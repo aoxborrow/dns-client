@@ -6,7 +6,7 @@ import type { TrustAnchor } from './types';
 // this is the one piece of the library that expires on a schedule, so it is deliberately a
 // literal rather than a network fetch: a validator whose anchor comes from the network has
 // no anchor. `scripts/refresh-anchors.ts` compares it with IANA's file (a weekly CI job runs
-// it in check mode) and rewrites it; the procedure is in docs/reference/dnssec-trust-anchors.md.
+// it in check mode) and rewrites it; the procedure is in CONTRIBUTING.md.
 //
 // both current KSKs are held at once. KSK-2024 (38696) signs the root zone since
 // 2026-10-11 and KSK-2017 (20326) is due to be revoked on 2027-01-11. As of the refresh

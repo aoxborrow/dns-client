@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitest/config';
 
 // the live suite: real resolvers and the real root, over the network. Never part of
-// `yarn test`; run with `yarn workspace @aoxborrow/dns test:live`, and on a schedule in CI
+// `yarn test`; run with `yarn test:live`, and on a schedule in CI
 // (.github/workflows/dns-live.yml)
 export default defineConfig({
   test: {

@@ -1,6 +1,6 @@
 # Benchmarks
 
-Written by `bench/run.ts`. Reproduce with `yarn workspace @aoxborrow/dns bench --network`; see `bench/README.md`.
+Written by `bench/run.ts`. Reproduce with `yarn bench --network`; see `bench/README.md`.
 
 - **Date:** 2026-11-16
 - **CPU:** Apple M2 Max, 12 cores

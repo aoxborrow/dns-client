@@ -141,6 +141,8 @@ export default defineConfig({
       'test/dnssec/**/*.test.ts',
       'test/root/resolvers.test.ts',
     ],
+    // compares the bundled anchors with IANA's files on disk, which a Worker cannot read
+    exclude: ['test/dnssec/anchors.test.ts'],
   },
 });
 ```
@@ -154,6 +156,36 @@ skipped where the runtime cannot make a key for it. The tests of the transports 
 real servers and stay on Node. This runs a local `workerd`, which is more permissive than
 a deployed Worker: it lets TLS start inside a proxy tunnel, which a deployed Worker does
 not.
+
+## Trust anchors
+
+The IANA root trust anchors (`src/dnssec/anchors.ts`) and the root hints
+(`src/resolvers/root-hints.ts`) are data compiled into the library, and they expire on
+IANA's schedule. CI compares them with IANA's files every week, and the check fails when
+they differ:
+
+```bash
+yarn refresh-anchors --check   # report, and fail on a difference
+yarn refresh-anchors           # rewrite the bundled data
+```
+
+The script fetches over TLS alone. Before committing a changed anchor, verify the anchor
+file's detached signature against ICANN's CA, and check that the digests in the diff are
+the ones in the verified file:
+
+```bash
+curl -sO https://data.iana.org/root-anchors/root-anchors.xml
+curl -sO https://data.iana.org/root-anchors/root-anchors.p7s
+curl -sO https://data.iana.org/root-anchors/icannbundle.pem
+openssl smime -verify -CAfile icannbundle.pem -inform der \
+  -in root-anchors.p7s -content root-anchors.xml
+```
+
+Then save the verified `root-anchors.xml` and a fresh
+[`named.root`](https://www.internic.net/domain/named.root) over the copies in
+`test/fixtures/iana/`, so the offline test compares the bundle with what it was refreshed
+from, and run `yarn test`: `test/dnssec/canonical.test.ts` recomputes each anchor's digest
+from the published key.
 
 ## Adding a record type
 

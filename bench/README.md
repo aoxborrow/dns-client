@@ -7,8 +7,8 @@ feature matrix.
 ## Running
 
 ```sh
-yarn workspace @aoxborrow/dns bench              # the fixture server only, about two minutes
-yarn workspace @aoxborrow/dns bench --network    # and the real network, about five more
+yarn bench              # the fixture server only, about two minutes
+yarn bench --network    # and the real network, about five more
 ```
 
 Both rewrite `bench/RESULTS.md`. Other options:

@@ -7,7 +7,7 @@ import type { Answer, Server } from '../../src/index';
 // each verdict compared with what Cloudflare (1.1.1.1) and Google (8.8.8.8) say: AD set
 // for secure, SERVFAIL for bogus, neither for insecure.
 //
-// not part of `yarn test`. Run it with `yarn workspace @aoxborrow/dns test:live`; CI runs
+// not part of `yarn test`. Run it with `yarn test:live`; CI runs
 // it on a schedule (.github/workflows/dns-live.yml). A query that throws, or a verdict of
 // `indeterminate` because a response never came, is tried once more. A verdict is never
 // retried: a wrong one fails the run. Only IPv4 is used, as CI runners have no IPv6
