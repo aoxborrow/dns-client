@@ -48,8 +48,9 @@ export interface CookieOption {
 export interface TcpKeepaliveOption {
   name: 'TCP_KEEPALIVE';
   code: 11;
-  // how long the server will hold an idle connection, in milliseconds; null in a query
-  timeoutMs: number | null;
+  // how long the server will hold an idle connection, as the wire carries it: in units of
+  // 100 milliseconds (RFC 7828 §3.1). Null in a query
+  timeout: number | null;
 }
 
 export interface PaddingOption {
@@ -151,7 +152,7 @@ export function decodeEdnsOption(option: EdnsOption): TypedEdnsOption {
       return {
         name: 'TCP_KEEPALIVE',
         code,
-        timeoutMs: data.length === 2 ? readU16(data, 0) * 100 : null,
+        timeout: data.length === 2 ? readU16(data, 0) : null,
       };
     }
     case EDNS_OPTIONS.PADDING:

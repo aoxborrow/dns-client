@@ -76,10 +76,10 @@ describe('decoding EDNS options', () => {
     });
     expect(decodeEdnsOption({ code: 11, data: hex('012c') })).toMatchObject({
       name: 'TCP_KEEPALIVE',
-      timeoutMs: 30000,
+      timeout: 300,
     });
     expect(decodeEdnsOption({ code: 11, data: new Uint8Array(0) })).toMatchObject({
-      timeoutMs: null,
+      timeout: null,
     });
     expect(decodeEdnsOption({ code: 12, data: new Uint8Array(468) })).toMatchObject({
       name: 'PADDING',
