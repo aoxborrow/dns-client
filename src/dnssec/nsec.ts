@@ -155,7 +155,7 @@ function collectNsec(records: WireRecord[]): NsecEntry[] {
     if (!decoded) continue;
     out.push({
       record: rr,
-      owner: rr.name,
+      owner: canonicalName(rr.name),
       next: canonicalName(decoded.nextDomain),
       types: decoded.types,
     });
@@ -169,7 +169,7 @@ function collectNsec3(records: WireRecord[]): Nsec3Entry[] {
     if (rr.type !== RECORD_TYPES.NSEC3) continue;
     const decoded = orSkip(() => decodeNsec3(rr.rdata));
     if (!decoded) continue;
-    const [ownerHash, ...zone] = splitName(rr.name);
+    const [ownerHash, ...zone] = splitName(canonicalName(rr.name));
     if (zone.length === 0) continue;
     out.push({
       record: rr,
@@ -920,4 +920,28 @@ function sameLabel(a: string, b: string): boolean {
   } catch {
     return a === b;
   }
+}
+
+// ---------------------------------------------------------------------------
+// what a denial says is at a name
+// ---------------------------------------------------------------------------
+
+// the types the NSEC or NSEC3 records say exist at `name`: those of the NSEC whose owner
+// is the name, or of the NSEC3 whose hash matches it. No types when none matches, and
+// `optOut` when the name falls in an opt-out NSEC3 range instead (RFC 5155 §6). What the
+// records prove is only as good as their signatures, which are checked elsewhere
+export function denialTypesAt(
+  name: string,
+  records: WireRecord[]
+): { types?: number[]; optOut: boolean } {
+  const owner = canonicalName(name);
+  const nsec3 = collectNsec3(records);
+  if (nsec3.length > 0) {
+    const match = matchNsec3(nsec3, owner);
+    if (match) return { types: match.types, optOut: false };
+    const covered = coverNsec3(nsec3, owner);
+    return { optOut: Boolean(covered?.entry.optOut) };
+  }
+  const match = collectNsec(records).find(entry => entry.owner === owner);
+  return { types: match?.types, optOut: false };
 }

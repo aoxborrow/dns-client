@@ -80,7 +80,8 @@ const DOWNCASE_NAMES_IN_RDATA = new Set([
 export type WireSection = 'answer' | 'authority' | 'additional';
 
 export interface WireRecord {
-  // owner name, lowercased, without the trailing dot (root is '.')
+  // owner name as the server wrote it, without the trailing dot (root is '.'). Compare
+  // with `canonicalName`
   name: string;
   type: number;
   typeName: string;
@@ -147,11 +148,11 @@ export function canonicalRdata(type: number, rdata: Uint8Array): Uint8Array {
   return out;
 }
 
-// a decoded message as the DNSSEC code reads it: names lowercased, record data in
-// canonical form, the EDNS state flattened
+// a decoded message as the DNSSEC code reads it: names in the case the server wrote them,
+// record data in canonical form, the EDNS state flattened
 export function toWireMessage(message: Message): WireMessage {
   const record = (rr: ResourceRecord): WireRecord => ({
-    name: canonicalName(rr.name),
+    name: rr.name,
     type: rr.type,
     typeName: typeName(rr.type),
     class: rr.class,
@@ -178,7 +179,7 @@ export function toWireMessage(message: Message): WireMessage {
   };
   if (question) {
     wire.question = {
-      name: canonicalName(question.name),
+      name: question.name,
       type: question.type,
       class: question.class,
     };
@@ -211,12 +212,13 @@ export interface Rrset {
   records: WireRecord[];
 }
 
-// group records into RRsets keyed by (name, class, type), as RFC 2181 defines them
+// group records into RRsets keyed by (name, class, type), as RFC 2181 defines them. Names
+// are compared without regard to case; the RRset takes its first record's spelling
 export function groupRrsets(records: WireRecord[]): Rrset[] {
   const map = new Map<string, Rrset>();
   for (const rr of records) {
     if (rr.type === RECORD_TYPES.RRSIG || rr.type === RECORD_TYPES.OPT) continue;
-    const key = `${rr.name}/${rr.class}/${rr.type}`;
+    const key = `${canonicalName(rr.name)}/${rr.class}/${rr.type}`;
     const existing = map.get(key);
     if (existing) {
       existing.records.push(rr);
