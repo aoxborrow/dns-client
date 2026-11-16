@@ -47,6 +47,14 @@ export const RECORDS: PacketRecord[] = [
   { name: `dangling.${ZONE}`, type: 'CNAME', ttl: 60, data: `gone.${ZONE}` },
   { name: `v4only.${ZONE}`, type: 'A', ttl: 300, data: '192.0.2.4' },
   { name: `v6only.${ZONE}`, type: 'AAAA', ttl: 300, data: '2001:db8::6' },
+  // a null MX (RFC 7505) and an SRV saying "no such service": both name the root
+  { name: `nullmx.${ZONE}`, type: 'MX', ttl: 300, data: { preference: 0, exchange: '.' } },
+  {
+    name: `_imap._tcp.${ZONE}`,
+    type: 'SRV',
+    ttl: 300,
+    data: { priority: 0, weight: 0, port: 0, target: '.' },
+  },
   // the address the end-to-end tests connect to
   { name: `app.${ZONE}`, type: 'A', ttl: 300, data: '127.0.0.1' },
   {

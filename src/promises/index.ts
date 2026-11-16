@@ -28,7 +28,7 @@ import type {
   LookupOptions,
   ResultOrder,
 } from './lookup';
-import { toAnyList, toCaa, toMx, toNaptr, toSoa, toSrv, toTlsa } from './records';
+import { nodeName, toAnyList, toCaa, toMx, toNaptr, toSoa, toSrv, toTlsa } from './records';
 import type {
   AnyRecord,
   CaaRecord,
@@ -293,7 +293,7 @@ export class Resolver {
   }
 
   resolveCname(hostname: string): Promise<string[]> {
-    return this.#typed(hostname, 'CNAME', record => record.target);
+    return this.#typed(hostname, 'CNAME', record => nodeName(record.target));
   }
 
   resolveMx(hostname: string): Promise<MxRecord[]> {
@@ -305,11 +305,11 @@ export class Resolver {
   }
 
   resolveNs(hostname: string): Promise<string[]> {
-    return this.#typed(hostname, 'NS', record => record.target);
+    return this.#typed(hostname, 'NS', record => nodeName(record.target));
   }
 
   resolvePtr(hostname: string): Promise<string[]> {
-    return this.#typed(hostname, 'PTR', record => record.target);
+    return this.#typed(hostname, 'PTR', record => nodeName(record.target));
   }
 
   resolveSoa(hostname: string): Promise<SoaRecord> {
@@ -338,7 +338,7 @@ export class Resolver {
       return Promise.reject(nodeError('EINVAL', 'getHostByAddr', ip, { errno: -22 }));
     }
     return this.#run(ip, 'PTR', reverseIp(ip.split('%')[0]), 'getHostByAddr', records =>
-      records.flatMap(record => (record.type === 'PTR' ? [record.target] : []))
+      records.flatMap(record => (record.type === 'PTR' ? [nodeName(record.target)] : []))
     );
   }
 

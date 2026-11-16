@@ -1,5 +1,9 @@
 // records layer: typed record interfaces, protocol tables, and the functions that parse,
 // format and validate records. Runs on any runtime and has no side effects on import.
+// the errors this entry throws, so a caller that imports only `/records` can tell them apart.
+// They are the same classes the root exports
+export { DnsError, InvalidQueryError, ParseError, RecordSyntaxError } from '../errors';
+export type { DnsErrorOptions } from '../errors';
 export { classCode, className, RECORD_CLASSES } from '../protocol/classes';
 export type { RecordClassName } from '../protocol/classes';
 export { DEFAULT_UDP_PAYLOAD_SIZE, EDNS_OPTIONS, EXTENDED_DNS_ERRORS } from '../protocol/edns';

@@ -72,6 +72,8 @@ describe('the same answers as node:dns', () => {
     ['resolveCaa', ZONE],
     ['resolveCname', `alias.${ZONE}`],
     ['resolveMx', ZONE],
+    ['resolveMx', `nullmx.${ZONE}`],
+    ['resolveSrv', `_imap._tcp.${ZONE}`],
     ['resolveNaptr', `naptr.${ZONE}`],
     ['resolveNs', ZONE],
     ['resolvePtr', `ptr.${ZONE}`],

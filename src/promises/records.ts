@@ -113,25 +113,29 @@ export type AnyRecord =
 
 type Of<Type extends DnsRecord['type']> = Extract<DnsRecord, { type: Type }>;
 
+// a name as Node writes it: the root is the empty string (a null MX's exchange, an SRV
+// target meaning "no such service"), where the library writes `.`
+export const nodeName = (name: string): string => (name === '.' ? '' : name);
+
 // Node 24 puts `type` on MX, SRV and CAA results, though its types leave it out
 export const toCaa = (record: Of<'CAA'>): CaaRecord =>
   ({ critical: record.flags, type: 'CAA', [record.tag]: record.value }) as CaaRecord;
 
 export const toMx = (record: Of<'MX'>): MxRecord =>
-  ({ exchange: record.exchange, priority: record.preference, type: 'MX' }) as MxRecord;
+  ({ exchange: nodeName(record.exchange), priority: record.preference, type: 'MX' }) as MxRecord;
 
 export const toNaptr = (record: Of<'NAPTR'>): NaptrRecord => ({
   flags: record.flags,
   service: record.services,
   regexp: record.regexp,
-  replacement: record.replacement,
+  replacement: nodeName(record.replacement),
   order: record.order,
   preference: record.preference,
 });
 
 export const toSoa = (record: Of<'SOA'>): SoaRecord => ({
-  nsname: record.mname,
-  hostmaster: record.rname,
+  nsname: nodeName(record.mname),
+  hostmaster: nodeName(record.rname),
   serial: record.serial,
   refresh: record.refresh,
   retry: record.retry,
@@ -141,7 +145,7 @@ export const toSoa = (record: Of<'SOA'>): SoaRecord => ({
 
 export const toSrv = (record: Of<'SRV'>): SrvRecord =>
   ({
-    name: record.target,
+    name: nodeName(record.target),
     port: record.port,
     priority: record.priority,
     weight: record.weight,
@@ -190,7 +194,7 @@ function toAny(record: DnsRecord, aliasTtl: number): AnyRecord | undefined {
     case 'CNAME':
     case 'NS':
     case 'PTR':
-      return { value: record.target, type: record.type };
+      return { value: nodeName(record.target), type: record.type };
     case 'MX':
       return { ...toMx(record), type: 'MX' };
     case 'TXT':

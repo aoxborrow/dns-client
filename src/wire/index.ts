@@ -1,5 +1,7 @@
 // wire layer: encoding queries and decoding messages on Uint8Array, keeping the raw RDATA.
 // Runs on any runtime.
+// the errors this entry throws, the same classes the root exports
+export { DnsError, InvalidQueryError, ParseError } from '../errors';
 export { decodeMessage } from './message';
 export type {
   Edns,

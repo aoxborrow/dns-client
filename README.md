@@ -101,7 +101,9 @@ This is a DNS client. It asks questions and reads answers.
 | `@aoxborrow/dns/promises` | a `node:dns/promises`-compatible facade, with `connectLookup` | Node |
 
 Error classes are one set across every entry: a `ParseError` thrown by `/wire` is
-`instanceof` the root's `ParseError`.
+`instanceof` the root's `ParseError`. `/records` and `/wire` also export the classes they
+throw (`DnsError`, `ParseError`, `InvalidQueryError`, and `RecordSyntaxError` from
+`/records`), so code that imports only those entries can tell them apart.
 
 ## The root entry: resolvers
 
