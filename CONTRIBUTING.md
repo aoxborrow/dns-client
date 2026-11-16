@@ -69,7 +69,7 @@ export default defineConfig({
     }),
   ],
   test: {
-    name: 'dns-client-workers',
+    name: 'dns-workers',
     globals: true,
     include: [
       'test/protocol.test.ts',

@@ -1,22 +1,21 @@
 {
-  "name": "@aoxborrow/dns-client",
+  "name": "@aoxborrow/dns",
   "version": "1.0.0-dev",
   "private": true,
   "description": "DNS client for TypeScript with no dependencies: wire codec, typed records, resolvers, record validation and DNSSEC primitives",
   "author": "Aaron Oxborrow <aaron@oxborrow.com>",
   "license": "MIT",
-  "homepage": "https://github.com/aoxborrow/dns-client",
+  "homepage": "https://github.com/aoxborrow/dns",
   "funding": "https://github.com/sponsors/aoxborrow",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aoxborrow/dns-client.git"
+    "url": "git+https://github.com/aoxborrow/dns.git"
   },
   "bugs": {
-    "url": "https://github.com/aoxborrow/dns-client/issues"
+    "url": "https://github.com/aoxborrow/dns/issues"
   },
   "keywords": [
     "dns",
-    "dns-client",
     "dns-resolver",
     "resolver",
     "dnssec",

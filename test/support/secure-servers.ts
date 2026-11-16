@@ -23,7 +23,7 @@ let certificate: TestCertificate | undefined;
 // a self-signed certificate for localhost and 127.0.0.1, valid for a couple of days
 export function testCertificate(): TestCertificate {
   if (certificate) return certificate;
-  const dir = mkdtempSync(path.join(tmpdir(), 'dns-client-cert-'));
+  const dir = mkdtempSync(path.join(tmpdir(), 'dns-cert-'));
   try {
     const key = path.join(dir, 'key.pem');
     const cert = path.join(dir, 'cert.pem');

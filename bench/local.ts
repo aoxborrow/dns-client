@@ -11,7 +11,7 @@ import { startFixtureServer } from '../test/support/fixture-server';
 //
 // the server runs in the same thread as the clients and its cost is the same for each of
 // them, so the numbers compare the clients with each other; they are not what a query
-// costs against a real resolver. Run with: yarn workspace @aoxborrow/dns-client bench
+// costs against a real resolver. Run with: yarn workspace @aoxborrow/dns bench
 
 const SEQUENTIAL = 2000;
 const BURST = 500;
@@ -88,16 +88,16 @@ async function main() {
       ask: async name => (await resolver.resolve4(name)).length,
     },
     {
-      label: 'dns-client Resolver, UDP',
+      label: 'dns Resolver, UDP',
       ask: async name => (await client.query(name, 'A')).records.length,
     },
     {
-      label: 'dns-client single query, UDP',
+      label: 'dns single query, UDP',
       ask: async name =>
         (await exchange({ name, type: 'A' }, server.address, options)).message.answers.length,
     },
     {
-      label: 'dns-client single query, TCP pipelined',
+      label: 'dns single query, TCP pipelined',
       ask: async name =>
         (
           await exchange({ name, type: 'A' }, server.address, {

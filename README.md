@@ -5,7 +5,7 @@ resolvers that ask a recursive resolver or walk from the root, record validation
 DNSSEC primitives to verify signatures, digests and denial proofs. No runtime dependencies.
 
 ```bash
-npm install @aoxborrow/dns-client
+npm install @aoxborrow/dns
 ```
 
 **Status:** 1.0 is a rewrite and is in pre-release. It is not compatible with 0.x; see
@@ -14,7 +14,7 @@ npm install @aoxborrow/dns-client
 ## Asking a question
 
 ```ts
-import { Resolver } from '@aoxborrow/dns-client';
+import { Resolver } from '@aoxborrow/dns';
 
 // an ordinary recursive query, like dig or node:dns, to the resolvers this machine uses
 const resolver = new Resolver();
@@ -47,7 +47,7 @@ REFUSED.
 ### From the root
 
 ```ts
-import { AuthoritativeResolver } from '@aoxborrow/dns-client';
+import { AuthoritativeResolver } from '@aoxborrow/dns';
 
 const resolver = new AuthoritativeResolver();
 const answer = await resolver.query('example.com', 'A');
@@ -122,7 +122,7 @@ itself prints nothing.
 An error means no usable response arrived. Every one is a `DnsError` subclass:
 
 ```ts
-import { DnsError } from '@aoxborrow/dns-client';
+import { DnsError } from '@aoxborrow/dns';
 
 try {
   await resolver.query('example.com', 'A');
@@ -157,7 +157,7 @@ inside a record stays as it was on the wire: names keep their case, binary data 
 base64, times are numbers.
 
 ```ts
-import { formatRecord, flattenRecords, reverseIp, typeCode, typeName } from '@aoxborrow/dns-client/records';
+import { formatRecord, flattenRecords, reverseIp, typeCode, typeName } from '@aoxborrow/dns/records';
 
 formatRecord(answer.records[0]); // 'example.com.\t300\tIN\tMX\t0 .', a zone-file line
 flattenRecords(answer.records); // [{ name: 'example.com', type: 'MX', ttl: 300, data: '0 .' }]
@@ -179,7 +179,7 @@ The same package checks records written by a person or held by a DNS provider. T
 pure functions and touch no network:
 
 ```ts
-import { canonicalRecord, diffRecords, findCnameConflicts, parseRecord } from '@aoxborrow/dns-client/records';
+import { canonicalRecord, diffRecords, findCnameConflicts, parseRecord } from '@aoxborrow/dns/records';
 
 // text to a typed record, or a RecordSyntaxError saying what is wrong
 parseRecord({ name: 'example.com', type: 'MX', ttl: 300, data: '10 mail.example.com.' });
@@ -205,7 +205,7 @@ relative to a zone, `@` included.
 ## DNSSEC
 
 ```ts
-import { Resolver } from '@aoxborrow/dns-client';
+import { Resolver } from '@aoxborrow/dns';
 import {
   buildSignedData,
   computeKeyTag,
@@ -214,7 +214,7 @@ import {
   groupRrsets,
   toWireMessage,
   verifySignature,
-} from '@aoxborrow/dns-client/dnssec';
+} from '@aoxborrow/dns/dnssec';
 
 // a zone's keys and the signatures over them, from a resolver asked not to validate
 const resolver = new Resolver({ servers: ['1.1.1.1'] });
@@ -256,7 +256,7 @@ caller. The resolvers do not validate answers yet: `dnssecOk` asks for signature
 ## The wire format
 
 ```ts
-import { decodeMessage, encodeQuery } from '@aoxborrow/dns-client/wire';
+import { decodeMessage, encodeQuery } from '@aoxborrow/dns/wire';
 
 const bytes = encodeQuery({ id: 1234, name: 'example.com', type: 'A', recursionDesired: true });
 const message = decodeMessage(response); // header, flags, question, three record sections, EDNS
@@ -269,14 +269,14 @@ returned in ASCII.
 
 | Entry | Contents | Runs on |
 | --- | --- | --- |
-| `@aoxborrow/dns-client` | everything below | Node |
-| `@aoxborrow/dns-client/records` | typed records, protocol tables, parsing, formatting, validation | anywhere |
-| `@aoxborrow/dns-client/wire` | encoding queries and decoding messages | anywhere |
-| `@aoxborrow/dns-client/transports/udp` | DNS over UDP, a fresh port per query | Node |
-| `@aoxborrow/dns-client/transports/tcp` | DNS over TCP | Node, Cloudflare Workers |
-| `@aoxborrow/dns-client/transports/tls` | DNS over TLS | Node, Cloudflare Workers |
-| `@aoxborrow/dns-client/transports/doh` | DNS over HTTPS | anywhere with `fetch` |
-| `@aoxborrow/dns-client/dnssec` | signature verification, DS digests, NSEC/NSEC3 proofs, trust anchors | anywhere |
+| `@aoxborrow/dns` | everything below | Node |
+| `@aoxborrow/dns/records` | typed records, protocol tables, parsing, formatting, validation | anywhere |
+| `@aoxborrow/dns/wire` | encoding queries and decoding messages | anywhere |
+| `@aoxborrow/dns/transports/udp` | DNS over UDP, a fresh port per query | Node |
+| `@aoxborrow/dns/transports/tcp` | DNS over TCP | Node, Cloudflare Workers |
+| `@aoxborrow/dns/transports/tls` | DNS over TLS | Node, Cloudflare Workers |
+| `@aoxborrow/dns/transports/doh` | DNS over HTTPS | anywhere with `fetch` |
+| `@aoxborrow/dns/dnssec` | signature verification, DS digests, NSEC/NSEC3 proofs, trust anchors | anywhere |
 
 Node 20 or later. The package ships ES modules and CommonJS, with type declarations for
 both. Node built-ins are imported only by the transports, and only when a query needs

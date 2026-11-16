@@ -14,11 +14,11 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const run = (cmd, args, cwd) =>
   execFileSync(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'inherit'] });
 const fail = message => {
-  console.error(`✗ dns-client pack check: ${message}`);
+  console.error(`✗ dns pack check: ${message}`);
   process.exit(1);
 };
 
-const work = mkdtempSync(join(tmpdir(), 'dns-client-pack-'));
+const work = mkdtempSync(join(tmpdir(), 'dns-pack-'));
 try {
   run('yarn', ['build'], root);
 
@@ -26,7 +26,7 @@ try {
   run('yarn', ['pack', '--out', tarball], root);
 
   // install by extracting: no registry, no lockfile, nothing but the tarball's contents
-  const installed = join(work, 'node_modules', '@aoxborrow', 'dns-client');
+  const installed = join(work, 'node_modules', '@aoxborrow', 'dns');
   mkdirSync(installed, { recursive: true });
   run('tar', ['-xzf', tarball, '-C', installed, '--strip-components=1'], work);
 
@@ -64,7 +64,7 @@ try {
   run(process.execPath, ['cjs.cjs'], work);
 
   console.log(
-    `✓ dns-client pack check: ${specifiers.length} entry points import as ESM and CommonJS from the tarball.`
+    `✓ dns pack check: ${specifiers.length} entry points import as ESM and CommonJS from the tarball.`
   );
 } finally {
   rmSync(work, { recursive: true, force: true });

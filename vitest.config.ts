@@ -3,7 +3,7 @@ import { defineConfig } from 'vitest/config';
 // unit tests only: no network, no database
 export default defineConfig({
   test: {
-    name: 'dns-client',
+    name: 'dns',
     environment: 'node',
     globals: true,
     include: ['test/**/*.test.ts', 'src/**/*.test.ts'],

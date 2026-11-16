@@ -106,13 +106,13 @@ data an error.
 
 This one breaks code written against the 1.0.0-dev builds, not 0.x. Those builds also
 carried a chain-of-trust analysis, which has moved out of the library into DNS.Tools.
-`@aoxborrow/dns-client/dnssec` now holds only the primitives a validator is built from.
+`@aoxborrow/dns/dnssec` now holds only the primitives a validator is built from.
 
 | 1.0.0-dev | 1.0 |
 | --- | --- |
 | `analyze(name, options)`, `DnssecEngine` | removed. Walking a chain of trust and reaching a verdict is left to the caller, built from the primitives |
 | `AnalyzeOptions`, `DnssecReport`, `EngineOptions`, `EngineOutput` | removed with them |
-| `@aoxborrow/dns-client/dnssec/types`: the report types, the finding catalog and the status vocabularies | removed. The primitives' own types (`DenialProof`, `ProofStep`, `TrustAnchor`, `Nsec3Params`, `VerificationResult` and the like) come from `@aoxborrow/dns-client/dnssec` |
+| `@aoxborrow/dns/dnssec/types`: the report types, the finding catalog and the status vocabularies | removed. The primitives' own types (`DenialProof`, `ProofStep`, `TrustAnchor`, `Nsec3Params`, `VerificationResult` and the like) come from `@aoxborrow/dns/dnssec` |
 | `KSK_2024_SIGNING_DATE`, `KSK_2017_REVOCATION_DATE` | removed. `ROOT_TRUST_ANCHORS` and `isAnchorCurrent` remain |
 
 ## Requirements

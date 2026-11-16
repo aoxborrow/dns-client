@@ -24,9 +24,9 @@ try {
     format: 'esm',
     logLevel: 'warning',
   });
-  console.log(`✓ dns-client: ${browserSafeEntries.length} browser-safe entries bundled clean.`);
+  console.log(`✓ dns: ${browserSafeEntries.length} browser-safe entries bundled clean.`);
 } catch {
   // esbuild already printed the resolution failures; exit non-zero for CI
-  console.error('✗ dns-client: a browser-safe entry is NOT browser-safe (see errors above).');
+  console.error('✗ dns: a browser-safe entry is NOT browser-safe (see errors above).');
   process.exit(1);
 }
