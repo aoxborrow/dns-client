@@ -1,5 +1,14 @@
 // the root servers: where a resolution that knows nothing starts. From the root hints
-// file IANA publishes (https://www.internic.net/domain/named.root), 2026-11
+// file IANA publishes, which `scripts/refresh-anchors.ts` compares this with (a weekly CI
+// job runs it in check mode)
+export const ROOT_HINTS_SOURCE = 'https://www.internic.net/domain/named.root';
+
+// the version of that file the data below was taken from: its "related version of root
+// zone" line
+export const ROOT_HINTS_DATA_VERSION = '2026111201';
+
+// when the data below was last checked against the source
+export const ROOT_HINTS_REFRESHED = '2026-11-16';
 
 export interface NameserverHint {
   // the server's name, for the trace
