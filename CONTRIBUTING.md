@@ -66,6 +66,47 @@ Unit tests use no network. Three things make that possible, all under `test/supp
 A change to how the library reads a response should come with a recorded response that
 shows it. A change to what it sends should assert the bytes.
 
+### The message corpus
+
+`test/fixtures/messages.json` holds a few hundred real responses that the codec and record
+tests decode, format, parse and fuzz, each checked against `dns-packet` where it can read
+the type. Every response answers a question about a public zone: the root, top-level
+domains, the example domains, the IANA, ISC, IETF and CZ.NIC zones, and test zones kept
+broken on purpose. Record types no public zone serves are built in code as synthetic
+messages. The corpus holds a record of every type the library decodes, and a test fails
+if one goes missing.
+
+The questions are listed in `test/fixtures/questions.json`, in groups. A group asks every
+combination of its names, types and servers:
+
+```json
+{
+  "note": "what the group is for (optional)",
+  "server": ["198.41.0.4", "193.0.14.129"],
+  "transport": "tcp",
+  "flags": ["do", "nsid"],
+  "name": "example.com",
+  "type": ["A", "DS"]
+}
+```
+
+- `server`: an IP address, or a list of them
+- `transport`: `tcp` (the default) or `udp`
+- `flags`: any of `rd` (recursion desired), `cd` (checking disabled), `do` (DNSSEC OK),
+  `nsid` (ask for the server's identifier) and `noedns` (send no OPT record)
+- `name` and `type`: one, or a list
+
+To add a response, add its question and capture it; to refresh some, name them:
+
+```bash
+yarn capture                    # ask every question again and rewrite the corpus
+yarn capture 'cloudflare.com'   # ask again only the questions whose label contains the text
+```
+
+A label reads `<transport> <server> <name> <type> +<flag>...`. Every response is kept,
+whatever its response code, and a truncated UDP response is kept as it came. Capturing
+needs the network, TCP and UDP on port 53; the tests never do.
+
 ## Cloudflare Workers
 
 The parts of the suite that need no listening socket (the codec, the records, the

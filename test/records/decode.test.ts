@@ -7,6 +7,7 @@ import {
   decodeRecords,
   isKnownRecordType,
   ParseError,
+  RECORD_TYPES,
   typeCode,
   typeName,
   type DnsRecord,
@@ -22,7 +23,7 @@ import {
   decodeTypeBitmap,
 } from '../../src/records/index';
 import { toBase32Hex } from '../../src/wire/bytes';
-import { CAPTURED, CORPUS, seededRandom } from '../support/corpus';
+import { CORPUS, corpusAnswer, seededRandom } from '../support/corpus';
 
 // ---- helpers
 
@@ -184,27 +185,32 @@ function comparable(decoded: DnsRecord): Record<string, unknown> {
 
 // ---------------------------------------------------------------------------
 
-describe('decodeRecord over real responses', () => {
-  const everything = [...CORPUS, ...CAPTURED];
-
+describe('decodeRecord over the corpus', () => {
   it('decodes every record of a known type, strictly', () => {
     let decoded = 0;
-    for (const { label, response } of everything) {
+    const types = new Set<number>();
+    for (const { label, response } of CORPUS) {
       const message = decodeMessage(response);
       for (const rr of [...message.answers, ...message.authorities, ...message.additionals]) {
         expect(isKnownRecordType(rr.type), `${label}: ${typeName(rr.type)}`).toBe(true);
         const result = decodeRecord(rr);
         expect(result.type, label).toBe(typeName(rr.type));
         expect(result.name, label).toBe(rr.name);
+        types.add(rr.type);
         decoded++;
       }
     }
-    expect(decoded).toBeGreaterThan(6000);
+    expect(decoded).toBeGreaterThan(2000);
+    // and the corpus holds a record of every type the library decodes
+    const missing = Object.entries(RECORD_TYPES)
+      .filter(([, code]) => isKnownRecordType(code) && !types.has(code))
+      .map(([name]) => name);
+    expect(missing).toEqual([]);
   });
 
   it('agrees with dns-packet on every field of every type dns-packet decodes', () => {
     const compared = new Map<string, number>();
-    for (const { label, response } of everything) {
+    for (const { label, response } of CORPUS) {
       const ours = decodeMessage(response);
       const theirs = dnsPacket.decode(Buffer.from(response));
       const sections: [ResourceRecord[], dnsPacket.Answer[] | undefined][] = [
@@ -223,20 +229,23 @@ describe('decodeRecord over real responses', () => {
         });
       }
     }
-    // the types real traffic gave us to compare
+    // the types the corpus gave us to compare
     expect([...compared.keys()].sort()).toEqual([
       'A',
       'AAAA',
       'CAA',
       'CNAME',
+      'DNAME',
       'DNSKEY',
       'DS',
+      'HINFO',
       'MX',
       'NAPTR',
       'NS',
       'NSEC',
       'NSEC3',
       'PTR',
+      'RP',
       'RRSIG',
       'SOA',
       'SRV',
@@ -383,9 +392,7 @@ describe('decodeRecord against dns-packet-encoded records', () => {
 
 describe('decodeRecord: types with no second opinion', () => {
   it('reads the HTTPS record captured from cloudflare.com', () => {
-    const message = decodeMessage(
-      CAPTURED.find(m => m.label === 'captured: cloudflare.com HTTPS')!.response
-    );
+    const message = decodeMessage(corpusAnswer('cloudflare.com', 'HTTPS'));
     expect(fields(decodeRecord(message.answers[0]))).toEqual({
       priority: 1,
       target: '.',
@@ -398,9 +405,7 @@ describe('decodeRecord: types with no second opinion', () => {
   });
 
   it('reads the SVCB records a resolver publishes about itself', () => {
-    const message = decodeMessage(
-      CAPTURED.find(m => m.label === 'captured: _dns.resolver.arpa SVCB')!.response
-    );
+    const message = decodeMessage(corpusAnswer('_dns.resolver.arpa', 'SVCB'));
     expect(decodeRecords(message.answers).map(fields)).toEqual([
       {
         priority: 1,
@@ -526,18 +531,14 @@ describe('decodeRecord: types with no second opinion', () => {
   });
 
   it('reads CDS and CDNSKEY as DS and DNSKEY, from cloudflare.com', () => {
-    const cds = decodeMessage(
-      CAPTURED.find(m => m.label === 'captured: cloudflare.com CDS')!.response
-    );
+    const cds = decodeMessage(corpusAnswer('cloudflare.com', 'CDS'));
     expect(fields(decodeRecord(cds.answers[0]))).toEqual({
       keyTag: 2371,
       algorithm: 13,
       digestType: 2,
       digest: '32996839a6d808afe3eb4a795a0e6a7a39a76fc52ff228b22b76f6d63826f2b9',
     });
-    const cdnskey = decodeMessage(
-      CAPTURED.find(m => m.label === 'captured: cloudflare.com CDNSKEY')!.response
-    );
+    const cdnskey = decodeMessage(corpusAnswer('cloudflare.com', 'CDNSKEY'));
     expect(fields(decodeRecord(cdnskey.answers[0]))).toEqual({
       flags: 257,
       protocol: 3,
@@ -549,9 +550,7 @@ describe('decodeRecord: types with no second opinion', () => {
 
   it('reads LOC the way dig prints it', () => {
     // dig: 42 21 43.528 N 71 5 6.284 W -25.00m 1m 3000m 10m
-    const message = decodeMessage(
-      CAPTURED.find(m => m.label === 'captured: ckdhr.com LOC')!.response
-    );
+    const message = decodeMessage(corpusAnswer('ckdhr.com', 'LOC'));
     const loc = fields(decodeRecord(message.answers[0]));
     expect(loc).toMatchObject({
       version: 0,
@@ -738,7 +737,7 @@ describe('decodeRecord: unknown and malformed', () => {
 
   it('never throws anything but ParseError, whatever the record data', () => {
     const random = seededRandom(1109);
-    const sources = [...CORPUS, ...CAPTURED];
+    const sources = CORPUS;
     for (let round = 0; round < 4000; round++) {
       const message = decodeMessage(sources[Math.floor(random() * sources.length)].response);
       const records = [...message.answers, ...message.authorities, ...message.additionals];

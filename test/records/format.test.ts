@@ -16,15 +16,13 @@ import {
   type DnsRecord,
 } from '../../src/index';
 import { formatIpv6 } from '../../src/wire/bytes';
-import { CAPTURED, CORPUS, seededRandom } from '../support/corpus';
+import { CORPUS, corpusAnswer, seededRandom } from '../support/corpus';
 
 const base = { name: 'example.com', class: 'IN', ttl: 300 };
 
-// the answers of a captured response, as presentation-format data
-const captured = (label: string) =>
-  decodeRecords(
-    decodeMessage(CAPTURED.find(m => m.label === `captured: ${label}`)!.response).answers
-  )
+// the answers of a response in the corpus, as presentation-format data
+const captured = (question: string) =>
+  decodeRecords(decodeMessage(corpusAnswer(...(question.split(' ') as [string, string]))).answers)
     .filter(record => record.type !== 'RRSIG')
     .map(record => formatRecordData(record));
 
@@ -244,7 +242,7 @@ describe('formatRecordData', () => {
 
   it('formats every record in the corpus on one line', () => {
     let formatted = 0;
-    for (const { label, response } of [...CORPUS, ...CAPTURED]) {
+    for (const { label, response } of CORPUS) {
       const message = decodeMessage(response);
       for (const rr of [...message.answers, ...message.authorities, ...message.additionals]) {
         const text = formatRecordData(decodeRecord(rr));
@@ -253,7 +251,7 @@ describe('formatRecordData', () => {
         formatted++;
       }
     }
-    expect(formatted).toBeGreaterThan(6000);
+    expect(formatted).toBeGreaterThan(2000);
   });
 });
 

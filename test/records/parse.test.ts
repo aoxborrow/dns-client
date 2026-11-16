@@ -7,7 +7,7 @@ import {
   RecordSyntaxError,
   type DnsRecord,
 } from '../../src/index';
-import { CAPTURED, CORPUS } from '../support/corpus';
+import { CORPUS } from '../support/corpus';
 
 const base = { name: 'example.com', class: 'IN', ttl: 300 };
 
@@ -19,7 +19,7 @@ const fields = (decoded: DnsRecord): Record<string, unknown> => {
 describe('parseRecordData is the inverse of formatRecordData', () => {
   it('reads back every record in the corpus exactly', () => {
     const seen = new Map<string, number>();
-    for (const { label, response } of [...CORPUS, ...CAPTURED]) {
+    for (const { label, response } of CORPUS) {
       const message = decodeMessage(response);
       for (const rr of [...message.answers, ...message.authorities, ...message.additionals]) {
         const decoded = decodeRecord(rr);
@@ -30,7 +30,7 @@ describe('parseRecordData is the inverse of formatRecordData', () => {
         seen.set(decoded.type, (seen.get(decoded.type) ?? 0) + 1);
       }
     }
-    expect(seen.size).toBeGreaterThanOrEqual(23);
+    expect(seen.size).toBeGreaterThanOrEqual(33);
   });
 
   // one of each type the corpus does not contain, and the awkward values of those it does

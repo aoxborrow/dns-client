@@ -1,0 +1,346 @@
+[
+  {
+    "note": "the root zone, from two root server instances",
+    "server": ["198.41.0.4", "193.0.14.129"],
+    "flags": ["do", "nsid"],
+    "name": ".",
+    "type": ["SOA", "NS", "DNSKEY"]
+  },
+  {
+    "note": "top-level domains from the root: signed delegations and their DS records",
+    "server": ["198.41.0.4", "193.0.14.129"],
+    "flags": ["do", "nsid"],
+    "name": ["com", "net", "org", "cz", "de", "uk", "arpa"],
+    "type": ["NS", "DS"]
+  },
+  {
+    "note": "referrals from the root, and a top-level domain that does not exist",
+    "server": "198.41.0.4",
+    "flags": ["do", "nsid"],
+    "name": [
+      "example.com",
+      "iana.org",
+      "nic.cz",
+      "xn--mnchen-3ya.de",
+      "nic.uk",
+      "8.8.8.8.in-addr.arpa",
+      "no-such-tld-for-testing"
+    ],
+    "type": "A"
+  },
+  {
+    "note": "the same questions without the DO bit, so the referrals carry no signatures",
+    "server": "193.0.14.129",
+    "flags": ["nsid"],
+    "name": ["example.com", "iana.org", "no-such-tld-for-testing"],
+    "type": "A"
+  },
+  {
+    "note": "com and net: signed and unsigned delegations, NSEC3 proofs, a name that does not exist",
+    "server": "192.5.6.30",
+    "flags": ["do", "nsid"],
+    "name": [
+      "example.com",
+      "www.example.com",
+      "google.com",
+      "cloudflare.com",
+      "example.net",
+      "brokendnssec.net",
+      "no-such-name-for-testing.com"
+    ],
+    "type": ["A", "DS"]
+  },
+  {
+    "server": "192.5.6.30",
+    "flags": ["do", "nsid"],
+    "name": ["com", "net"],
+    "type": ["SOA", "DNSKEY", "NSEC3PARAM"]
+  },
+  {
+    "note": "org: delegations to signed, unsigned and broken zones",
+    "server": "199.19.56.1",
+    "flags": ["do", "nsid"],
+    "name": [
+      "iana.org",
+      "isc.org",
+      "ietf.org",
+      "example.org",
+      "wikipedia.org",
+      "dnssec-failed.org",
+      "no-such-name-for-testing.org"
+    ],
+    "type": ["A", "DS"]
+  },
+  {
+    "server": "199.19.56.1",
+    "flags": ["do", "nsid"],
+    "name": "org",
+    "type": ["SOA", "DNSKEY", "NSEC3PARAM"]
+  },
+  {
+    "note": "cz: NSEC rather than NSEC3, and a zone signed with RSASHA1 and RSASHA1-NSEC3-SHA1",
+    "server": "194.0.12.1",
+    "flags": ["do", "nsid"],
+    "name": ["rhybar.cz", "no-such-name-for-testing.cz"],
+    "type": ["A", "DS"]
+  },
+  {
+    "server": "194.0.12.1",
+    "flags": ["do", "nsid"],
+    "name": "cz",
+    "type": ["SOA", "DNSKEY"]
+  },
+  {
+    "note": "de, with an internationalized name",
+    "server": "194.0.0.53",
+    "flags": ["do", "nsid"],
+    "name": ["de", "xn--mnchen-3ya.de", "www.xn--mnchen-3ya.de"],
+    "type": ["DNSKEY", "A", "DS"]
+  },
+  {
+    "server": "213.248.216.1",
+    "flags": ["do", "nsid"],
+    "name": ["uk", "nic.uk"],
+    "type": ["SOA", "DNSKEY", "A"]
+  },
+  {
+    "note": "the reverse tree",
+    "server": "199.180.182.53",
+    "flags": ["do", "nsid"],
+    "name": ["8.8.8.8.in-addr.arpa", "1.1.1.1.in-addr.arpa"],
+    "type": "PTR"
+  },
+  {
+    "note": "example.com and its neighbours, from their own servers",
+    "server": "173.245.58.162",
+    "flags": ["do", "nsid"],
+    "name": "example.com",
+    "type": [
+      "A",
+      "AAAA",
+      "MX",
+      "TXT",
+      "NS",
+      "SOA",
+      "DNSKEY",
+      "CDS",
+      "CDNSKEY",
+      "CAA",
+      "HTTPS",
+      "NSEC3PARAM",
+      "NAPTR",
+      "RRSIG",
+      "ANY"
+    ]
+  },
+  {
+    "server": "173.245.58.162",
+    "flags": ["do", "nsid"],
+    "name": ["www.example.com", "mail.example.com", "no-such-name-for-testing.example.com"],
+    "type": ["A", "AAAA"]
+  },
+  {
+    "server": "173.245.58.162",
+    "flags": [],
+    "name": ["example.com", "www.example.com"],
+    "type": ["A", "AAAA", "MX", "TXT"]
+  },
+  {
+    "server": "172.64.32.75",
+    "flags": ["do", "nsid"],
+    "name": ["example.net", "www.example.net"],
+    "type": ["A", "AAAA", "MX", "TXT", "NS", "SOA", "DNSKEY"]
+  },
+  {
+    "server": "108.162.194.235",
+    "flags": ["do", "nsid"],
+    "name": ["example.org", "www.example.org"],
+    "type": ["A", "AAAA", "MX", "TXT", "NS", "SOA", "DNSKEY"]
+  },
+  {
+    "note": "iana.org, from a.iana-servers.net",
+    "server": "199.43.135.53",
+    "flags": ["do", "nsid"],
+    "name": "iana.org",
+    "type": ["A", "AAAA", "MX", "TXT", "NS", "SOA", "DNSKEY", "NSEC3PARAM", "CAA", "HTTPS"]
+  },
+  {
+    "server": "199.43.135.53",
+    "flags": ["do", "nsid"],
+    "name": ["www.iana.org", "data.iana.org", "no-such-name-for-testing.iana.org"],
+    "type": ["A", "AAAA"]
+  },
+  {
+    "note": "isc.org, from ns.isc.afilias-nst.info",
+    "server": "199.254.63.254",
+    "flags": ["do", "nsid"],
+    "name": "isc.org",
+    "type": ["A", "AAAA", "MX", "TXT", "NS", "SOA", "DNSKEY", "NSEC3PARAM", "NAPTR", "CAA", "CDS"]
+  },
+  {
+    "server": "199.254.63.254",
+    "flags": ["do", "nsid"],
+    "name": ["www.isc.org", "ftp.isc.org", "no-such-name-for-testing.isc.org"],
+    "type": ["A", "AAAA"]
+  },
+  {
+    "note": "ietf.org",
+    "server": "173.245.58.122",
+    "flags": ["do", "nsid"],
+    "name": "ietf.org",
+    "type": ["A", "AAAA", "MX", "TXT", "NS", "SOA", "DNSKEY", "CAA"]
+  },
+  {
+    "server": "173.245.58.122",
+    "flags": ["do", "nsid"],
+    "name": ["www.ietf.org", "mail.ietf.org", "_25._tcp.mail.ietf.org", "datatracker.ietf.org"],
+    "type": ["A", "AAAA", "TLSA"]
+  },
+  {
+    "note": "nic.cz, the registry's own zone",
+    "server": "194.0.12.1",
+    "flags": ["do", "nsid"],
+    "name": ["nic.cz", "www.nic.cz", "no-such-name-for-testing.nic.cz"],
+    "type": ["A", "AAAA", "MX", "TXT", "NS", "SOA", "DNSKEY", "CAA", "DS"]
+  },
+  {
+    "note": "a zone whose signatures are left to expire on purpose",
+    "server": "217.31.207.98",
+    "flags": ["do", "nsid"],
+    "name": "rhybar.cz",
+    "type": ["A", "AAAA", "MX", "TXT", "NS", "SOA", "DNSKEY", "NSEC3PARAM"]
+  },
+  {
+    "note": "a zone whose DS record matches no key, on purpose",
+    "server": "69.252.250.103",
+    "flags": ["do", "nsid"],
+    "name": "dnssec-failed.org",
+    "type": ["A", "AAAA", "MX", "TXT", "NS", "SOA", "DNSKEY"]
+  },
+  {
+    "note": "a zone with a DS record and no keys, on purpose",
+    "server": "173.245.59.106",
+    "flags": ["do", "nsid"],
+    "name": "brokendnssec.net",
+    "type": ["A", "AAAA", "MX", "TXT", "NS", "SOA", "DNSKEY"]
+  },
+  {
+    "server": "194.246.140.196",
+    "flags": ["do", "nsid"],
+    "name": ["xn--mnchen-3ya.de", "www.xn--mnchen-3ya.de"],
+    "type": ["A", "AAAA", "MX", "TXT", "NS", "SOA", "DNSKEY"]
+  },
+  {
+    "note": "google.com: large TXT answers, over TCP and truncated over UDP",
+    "server": "216.239.32.10",
+    "flags": ["nsid"],
+    "name": ["google.com", "_dmarc.google.com", "google._domainkey.google.com"],
+    "type": ["TXT"]
+  },
+  {
+    "server": "216.239.32.10",
+    "transport": "udp",
+    "flags": ["noedns"],
+    "name": ["google.com"],
+    "type": ["TXT"]
+  },
+  {
+    "server": "216.239.32.10",
+    "transport": "udp",
+    "flags": ["nsid"],
+    "name": ["google.com", "_dmarc.google.com"],
+    "type": ["TXT"]
+  },
+  {
+    "server": "216.239.32.10",
+    "flags": ["nsid"],
+    "name": ["google.com", "ns1.google.com"],
+    "type": ["A", "AAAA", "MX", "NS", "SOA", "CAA"]
+  },
+  {
+    "note": "cloudflare.com: compact denial of existence, HTTPS, CDS and CDNSKEY",
+    "server": "162.159.0.33",
+    "flags": ["do", "nsid"],
+    "name": "cloudflare.com",
+    "type": ["A", "AAAA", "MX", "TXT", "NS", "SOA", "DNSKEY", "CDS", "CDNSKEY", "HTTPS", "CAA"]
+  },
+  {
+    "server": "162.159.0.33",
+    "flags": ["do", "nsid"],
+    "name": ["www.cloudflare.com", "no-such-name-for-testing.cloudflare.com"],
+    "type": ["A", "AAAA"]
+  },
+  {
+    "note": "wikipedia.org: an unsigned zone whose servers send a TCP keepalive",
+    "server": "208.80.154.238",
+    "flags": ["nsid"],
+    "name": ["wikipedia.org", "en.wikipedia.org", "no-such-name-for-testing.wikipedia.org"],
+    "type": ["A", "AAAA", "MX", "NS", "SOA"]
+  },
+  {
+    "note": "record types few zones publish, through a public resolver",
+    "server": "1.1.1.1",
+    "flags": ["rd", "do"],
+    "name": "_25._tcp.mail.ietf.org",
+    "type": "TLSA"
+  },
+  { "server": "1.1.1.1", "flags": ["rd", "do"], "name": "_443._tcp.www.huque.com", "type": "TLSA" },
+  { "server": "1.1.1.1", "flags": ["rd", "do"], "name": "_dns.resolver.arpa", "type": "SVCB" },
+  {
+    "server": "1.1.1.1",
+    "flags": ["rd", "do"],
+    "name": "_xmpp-server._tcp.jabber.org",
+    "type": "SRV"
+  },
+  {
+    "server": "1.1.1.1",
+    "flags": ["rd", "do"],
+    "name": ["isc.org", "sip2sip.info", "4.4.2.2.3.3.5.6.8.1.4.4.e164.arpa"],
+    "type": "NAPTR"
+  },
+  { "server": "1.1.1.1", "flags": ["rd", "do"], "name": "ckdhr.com", "type": "LOC" },
+  {
+    "server": "1.1.1.1",
+    "flags": ["rd", "do"],
+    "name": "cloudflare.com",
+    "type": ["CDS", "CDNSKEY", "HTTPS"]
+  },
+  { "server": "1.1.1.1", "flags": ["rd", "do"], "name": "google.com", "type": "CAA" },
+  { "server": "1.1.1.1", "flags": ["rd", "do"], "name": "master.debian.org", "type": "SSHFP" },
+  {
+    "server": "1.1.1.1",
+    "flags": ["rd", "do"],
+    "name": "_kerberos.fedoraproject.org",
+    "type": "URI"
+  },
+  {
+    "note": "a validating resolver refusing a bogus answer, and the same answer with checking disabled",
+    "server": "1.1.1.1",
+    "flags": ["rd", "do", "nsid"],
+    "name": ["dnssec-failed.org", "rhybar.cz", "brokendnssec.net"],
+    "type": "A"
+  },
+  {
+    "server": "1.1.1.1",
+    "flags": ["rd", "do", "cd"],
+    "name": ["dnssec-failed.org", "rhybar.cz"],
+    "type": "A"
+  },
+  {
+    "note": "reverse lookups and plain questions through three public resolvers",
+    "server": ["1.1.1.1", "8.8.8.8", "9.9.9.9"],
+    "flags": ["rd", "do"],
+    "name": [
+      "8.8.8.8.in-addr.arpa",
+      "1.1.1.1.in-addr.arpa",
+      "8.8.8.8.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.4.0.6.8.4.1.0.0.2.ip6.arpa"
+    ],
+    "type": "PTR"
+  },
+  {
+    "server": ["1.1.1.1", "8.8.8.8", "9.9.9.9"],
+    "flags": ["rd", "do"],
+    "name": ["example.com", "iana.org", "no-such-name-for-testing.example.com"],
+    "type": ["A", "MX"]
+  }
+]
