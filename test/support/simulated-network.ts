@@ -123,7 +123,7 @@ function rdata(type: string, value: string): Uint8Array {
   }
 }
 
-function soaRecord(zone: string, ttl: number, minimum: number): ResourceRecord {
+export function soaRecord(zone: string, ttl: number, minimum: number): ResourceRecord {
   const suffix = zone === '.' ? '' : `.${zone}`;
   const numbers = new Uint8Array(20);
   [1, 7200, 3600, 1_209_600, minimum].forEach((value, index) =>
