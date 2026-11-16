@@ -1,10 +1,15 @@
-import { getServers } from 'node:dns';
+import { ADDRCONFIG, ALL, getServers, V4MAPPED } from 'node:dns';
 import { readFileSync, statSync } from 'node:fs';
 import { isIpv4, isIpv6 } from './endpoint';
 
 // what the machine itself says about names, read the way the system resolver reads it: the
 // hosts file and the configured DNS servers. Node only; the `node:dns` facade is the one
 // user, and loads this at import
+
+// getaddrinfo's hint flags. Their values are the platform's own (ADDRCONFIG is 1024 on
+// macOS and Windows and 32 on Linux), so they are read from `node:dns` rather than written
+// down
+export const LOOKUP_HINTS = { ADDRCONFIG, V4MAPPED, ALL } as const;
 
 export interface HostsEntry {
   address: string;

@@ -1,5 +1,5 @@
 import { parseIpv4, parseIpv6 } from '../records/addresses';
-import { hostsEntries } from '../transports/host';
+import { hostsEntries, LOOKUP_HINTS } from '../transports/host';
 import { argumentError, checkHostname, getaddrinfoError } from './errors';
 
 // `lookup`: what `node:dns`'s `lookup` does with the operating system's getaddrinfo,
@@ -31,10 +31,8 @@ export interface LookupAddress {
   family: number;
 }
 
-// `node:dns`'s hint flags, with Node's values
-export const ADDRCONFIG = 1024;
-export const V4MAPPED = 2048;
-export const ALL = 256;
+// `node:dns`'s hint flags, with this platform's values
+export const { ADDRCONFIG, V4MAPPED, ALL } = LOOKUP_HINTS;
 
 export type ResultOrder = 'ipv4first' | 'ipv6first' | 'verbatim';
 
