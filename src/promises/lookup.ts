@@ -125,9 +125,9 @@ export async function lookupAddresses(
   const fromHosts = hostsEntries(name);
   const local = fromHosts.length > 0 ? fromHosts : isLocalhost(name) ? LOOPBACK : [];
   if (local.length > 0) {
+    if (mapped) return withMapped(local, hints);
     const found = local.filter(wanted);
     if (found.length > 0) return ordered(found, order);
-    if (mapped) return mapV4(local.filter(entry => entry.family === 4));
   }
 
   const families: (4 | 6)[] = family === 4 ? [4] : family === 6 && !mapped ? [6] : [4, 6];
@@ -141,10 +141,7 @@ export async function lookupAddresses(
   });
 
   if (mapped) {
-    const ipv6 = found.filter(entry => entry.family === 6);
-    const ipv4 = mapV4(found.filter(entry => entry.family === 4));
-    // ALL with V4MAPPED: both, the IPv4 ones mapped; V4MAPPED alone: IPv4 only as a fallback
-    const result = (hints & ALL) !== 0 ? [...ipv6, ...ipv4] : ipv6.length > 0 ? ipv6 : ipv4;
+    const result = withMapped(found, hints);
     if (result.length > 0) return result;
   } else if (found.length > 0) {
     return ordered(found, order);
@@ -163,6 +160,15 @@ export async function lookupAddresses(
 
 const isNoData = (error: unknown) =>
   ['ENODATA', 'EBADNAME'].includes((error as { code?: string }).code ?? '');
+
+// family 6 with V4MAPPED, from addresses of both families. With ALL: the IPv6 addresses,
+// then the IPv4 ones mapped; alone: the IPv4 ones mapped only when there is no IPv6
+function withMapped(addresses: LookupAddress[], hints: number): LookupAddress[] {
+  const ipv6 = addresses.filter(entry => entry.family === 6);
+  const ipv4 = mapV4(addresses.filter(entry => entry.family === 4));
+  if ((hints & ALL) !== 0) return [...ipv6, ...ipv4];
+  return ipv6.length > 0 ? ipv6 : ipv4;
+}
 
 const mapV4 = (addresses: LookupAddress[]): LookupAddress[] =>
   addresses.map(entry => ({ address: `::ffff:${entry.address}`, family: 6 }));

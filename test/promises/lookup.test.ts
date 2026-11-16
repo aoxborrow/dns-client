@@ -3,12 +3,33 @@ import net from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { promisify } from 'node:util';
 import { Agent, fetch } from 'undici';
+import { vi } from 'vitest';
 import { ALL, Resolver, V4MAPPED } from '../../src/promises/index';
 import type { LookupAddress } from '../../src/promises/index';
 import { parseHosts } from '../../src/transports/host';
 import { startFixtureServer } from '../support/fixture-server';
 import type { FixtureServer } from '../support/fixture-server';
 import { ZONE, zoneResponder } from '../support/zone';
+
+// the hosts file these tests read: these names, and nothing else, so the machine's own
+// file does not change what `localhost` gives
+const HOSTS = vi.hoisted(
+  () =>
+    new Map([
+      [
+        'dual.hosts.test',
+        [
+          { address: '192.0.2.5', family: 4 },
+          { address: '2001:db8::5', family: 6 },
+        ],
+      ],
+      ['v4.hosts.test', [{ address: '192.0.2.6', family: 4 }]],
+    ])
+);
+vi.mock('../../src/transports/host', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../src/transports/host')>()),
+  hostsEntries: (name: string) => HOSTS.get(name.toLowerCase()) ?? [],
+}));
 
 // `lookup` and `connectLookup` against the fixture server, and the callback form doing
 // its job for net.connect, http.Agent and undici: `app.example.test` resolves to
@@ -83,6 +104,34 @@ describe('lookup', () => {
     const all = (await resolver.lookup('localhost', { all: true })) as LookupAddress[];
     expect(all.map(entry => entry.address).sort()).toEqual(['127.0.0.1', '::1']);
     expect(await resolver.lookup('api.localhost', 4)).toEqual({ address: '127.0.0.1', family: 4 });
+    expect(dnsServer.received.length).toBe(before);
+  });
+
+  // getaddrinfo with AI_V4MAPPED | AI_ALL, as glibc has it: the IPv6 addresses, then the
+  // IPv4 ones mapped. macOS ignores AI_ALL, so this is checked against glibc's rule and
+  // the DNS branch, not against the machine running the tests
+  it('maps IPv4 for family 6 with V4MAPPED and ALL, from the hosts file and for localhost', async () => {
+    const before = dnsServer.received.length;
+    const options = { family: 6, hints: V4MAPPED | ALL, all: true } as const;
+    expect(await resolver.lookup('dual.hosts.test', options)).toEqual([
+      { address: '2001:db8::5', family: 6 },
+      { address: '::ffff:192.0.2.5', family: 6 },
+    ]);
+    expect(await resolver.lookup('localhost', options)).toEqual([
+      { address: '::1', family: 6 },
+      { address: '::ffff:127.0.0.1', family: 6 },
+    ]);
+    expect(await resolver.lookup('v4.hosts.test', options)).toEqual([
+      { address: '::ffff:192.0.2.6', family: 6 },
+    ]);
+    // V4MAPPED alone maps IPv4 only when there is no IPv6
+    expect(
+      await resolver.lookup('dual.hosts.test', { family: 6, hints: V4MAPPED, all: true })
+    ).toEqual([{ address: '2001:db8::5', family: 6 }]);
+    expect(await resolver.lookup('v4.hosts.test', { family: 6, hints: V4MAPPED })).toEqual({
+      address: '::ffff:192.0.2.6',
+      family: 6,
+    });
     expect(dnsServer.received.length).toBe(before);
   });
 
