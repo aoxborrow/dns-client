@@ -163,7 +163,7 @@ Each of the 100 names resolved from the root servers down, over IPv4 UDP, one na
 | DNS over TLS | yes | no | no | no | no | no | no | BIND 9.18+ (`+tls`) |
 | DNS over HTTPS | yes | no | no | yes | yes, only | no | no | BIND 9.18+ (`+https`) |
 | Iterative resolution from the root | yes (`AuthoritativeResolver`) | no | no | no | no | no | no | `+trace` |
-| DNSSEC | primitives: record decoding, signature and DS checks, NSEC/NSEC3 | no | no | record types only | DO bit, reads the resolver's AD flag | no | no | DO bit (`+dnssec`), no validation |
+| DNSSEC | validation (`validate: true`), and the primitives it is built from | no | no | record types only | DO bit, reads the resolver's AD flag | no | no | DO bit (`+dnssec`), no validation |
 | Cache | yes, by TTL, shared between callers | c-ares query cache | the system's | no | yes, pluggable (Map, Redis) | yes | no | no |
 | One query on the wire for callers asking the same thing | yes | no | no | no | no | not documented | no | n/a |
 | SOCKS5 and HTTP CONNECT proxies | yes | no | no | no | through its `request` function | no | no | no |

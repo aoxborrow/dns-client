@@ -10,7 +10,7 @@ yarn lint            # typecheck, eslint, prettier
 yarn build           # ES modules and type declarations into dist/
 yarn check:browser   # the browser-safe entries bundle with no Node built-ins
 yarn check:pack      # the packed tarball installs and imports, with one set of error classes
-yarn bench           # a local benchmark against node:dns, no network
+yarn bench           # against other DNS clients on a local server; --network adds public resolvers
 ```
 
 Node 22 or later.
@@ -27,7 +27,8 @@ Each layer uses only the ones above it in this list.
 | `src/transports` | UDP, TCP, TLS and HTTPS, the proxy handshakes, and the connectors for Node and Cloudflare Workers |
 | `src/exchange.ts` | one question to one server: retries, the fallback to TCP, events. Internal, not exported |
 | `src/resolvers` | `Resolver` and `AuthoritativeResolver`, the cache, the root hints |
-| `src/dnssec` | signature verification, NSEC and NSEC3 proofs, trust anchors, canonical form and digests |
+| `src/dnssec` | the judging core and the validator, signature verification, NSEC and NSEC3 proofs, trust anchors, canonical form and digests |
+| `src/promises` | the `node:dns/promises` facade over `Resolver` |
 
 ## Rules
 
@@ -55,7 +56,9 @@ The tests follow the entry points, one directory each:
 | `test/support` | the servers, mocks and fixture loaders the others share, and their own tests |
 | `test/fixtures` | recorded messages and the IANA root files |
 
-`test/package.test.ts` checks the manifest and the entry points themselves.
+`test/package.test.ts` checks the manifest and the entry points themselves, and
+`test/readme.test.ts` typechecks every TypeScript example in the README, so each must
+stand alone with its own imports.
 
 Unit tests use no network. Three things make that possible, all under `test/support`:
 
@@ -165,6 +168,6 @@ not.
 
 ## Adding an entry point
 
-An entry point is listed in four places, and `test/package.test.ts` fails if they
+An entry point is listed in three places, and `test/package.test.ts` fails if they
 disagree: `exports` and `publishConfig.exports` in `package.json`, and `entries` in
 `tsup.config.ts`. If it must run in a browser, add it to `scripts/browser-check.mjs`.
