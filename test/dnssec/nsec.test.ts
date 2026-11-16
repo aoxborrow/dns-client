@@ -6,17 +6,14 @@ import {
   verifyWildcardProof,
   assessNsec3Params,
 } from '../../src/dnssec/nsec';
-import {
-  encodeName,
-  nsec3Hash,
-  WireRecord,
-  TYPE_NSEC,
-  TYPE_NSEC3,
-  TYPE_A,
-} from '../../src/dnssec/wire';
+import { nsec3Hash } from '../../src/dnssec/canonical';
+import type { WireRecord } from '../../src/dnssec/canonical';
+import { RECORD_TYPES } from '../../src/protocol/types';
+import { encodeName } from '../../src/wire/names';
 import { PROOF_STATUSES, VERIFICATION_RESULTS } from '../../src/dnssec/constants';
 
 const { VERIFIED, FAILED, UNCHECKED } = VERIFICATION_RESULTS;
+const { A: TYPE_A, NSEC: TYPE_NSEC, NSEC3: TYPE_NSEC3 } = RECORD_TYPES;
 
 // ---------------------------------------------------------------------------
 // builders

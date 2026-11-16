@@ -1,28 +1,21 @@
+import { RECORD_TYPES, typeName } from '../../src/protocol/types';
+import { decodeDnskey, decodeRrsig, decodeTypeBitmap } from '../../src/records/decode';
 import {
-  computeKeyTag,
-  computeDsDigest,
-  encodeName,
-  canonicalName,
-  countLabels,
-  parentName,
-  isInZone,
-  groupRrsets,
   buildSignedData,
   canonicalRdata,
-  decodeRrsig,
-  decodeDnskey,
-  decodeTypeBitmap,
+  computeDsDigest,
+  computeKeyTag,
+  groupRrsets,
   nsec3Hash,
-  presentRecord,
-  recordTypeName,
-  TYPE_A,
-  TYPE_NS,
-  TYPE_DNSKEY,
-  WireRecord,
-} from '../../src/dnssec/wire';
+  toWireMessage,
+} from '../../src/dnssec/canonical';
+import type { WireRecord } from '../../src/dnssec/canonical';
+import { presentRecord } from '../../src/dnssec/present';
 import { ROOT_TRUST_ANCHORS } from '../../src/dnssec/anchors';
-import { toWireMessage } from '../../src/dnssec/wire';
+import { encodeName } from '../../src/wire/names';
 import { decodeMessage } from '../../src/wire/index';
+
+const { A: TYPE_A, NS: TYPE_NS, DNSKEY: TYPE_DNSKEY } = RECORD_TYPES;
 
 // a response as the DNSSEC code reads it: decoded by the library, then put in canonical form
 const parseMessage = (bytes: Uint8Array) => toWireMessage(decodeMessage(bytes));
@@ -91,73 +84,6 @@ describe('computeDsDigest', () => {
     expect(hex(computeDsDigest('example.com', rdata, 2))).not.toBe(
       hex(computeDsDigest('.', rdata, 2))
     );
-  });
-});
-
-describe('encodeName', () => {
-  it('encodes the root as a single zero octet', () => {
-    expect(Buffer.from(encodeName('.'))).toEqual(Buffer.from([0]));
-    expect(Buffer.from(encodeName(''))).toEqual(Buffer.from([0]));
-  });
-
-  it('downcases for canonical form', () => {
-    expect(encodeName('EXAMPLE.com')).toEqual(encodeName('example.COM'));
-  });
-
-  it('is length-prefixed per label and root-terminated', () => {
-    expect(Buffer.from(encodeName('a.bc'))).toEqual(Buffer.from([1, 0x61, 2, 0x62, 0x63, 0]));
-  });
-
-  it('tolerates a trailing dot', () => {
-    expect(encodeName('example.com.')).toEqual(encodeName('example.com'));
-  });
-
-  it('keeps an escaped dot at the end, and drops a root dot after an escaped backslash', () => {
-    expect([...encodeName('a\\.')]).toEqual([2, 0x61, 0x2e, 0]);
-    expect([...encodeName('foo\\\\.')]).toEqual([4, ...Buffer.from('foo\\'), 0]);
-  });
-});
-
-describe('name helpers', () => {
-  it('normalises the root and strips trailing dots', () => {
-    expect(canonicalName('EXAMPLE.COM.')).toBe('example.com');
-    expect(canonicalName('.')).toBe('.');
-    expect(canonicalName('')).toBe('.');
-  });
-
-  it('keeps an escaped dot at the end, and drops a root dot after an escaped backslash', () => {
-    expect(canonicalName('A\\.')).toBe('a\\.');
-    expect(canonicalName('Foo\\\\.')).toBe('foo\\\\');
-    expect(canonicalName('foo\\\\.')).toBe(canonicalName('foo\\\\'));
-    expect(countLabels('a\\.')).toBe(1);
-    expect(countLabels('foo\\\\.')).toBe(1);
-    expect(parentName('a\\.example.com.')).toBe('com');
-    expect(parentName('www.a\\.')).toBe('a\\.');
-    expect(isInZone('www.a\\.', 'a\\.')).toBe(true);
-    expect(isInZone('www.a\\.', 'a')).toBe(false);
-    expect(isInZone('www.foo\\\\.', 'foo\\\\')).toBe(true);
-  });
-
-  it('counts labels excluding the root', () => {
-    expect(countLabels('.')).toBe(0);
-    expect(countLabels('com')).toBe(1);
-    expect(countLabels('www.example.com')).toBe(3);
-  });
-
-  it('walks up one label at a time and stops at the root', () => {
-    expect(parentName('www.example.com')).toBe('example.com');
-    expect(parentName('com')).toBe('.');
-    expect(parentName('.')).toBe('.');
-  });
-
-  it('places a name in a zone label by label', () => {
-    expect(isInZone('www.example.com', 'example.com')).toBe(true);
-    expect(isInZone('EXAMPLE.com', 'example.COM.')).toBe(true);
-    expect(isInZone('anything', '.')).toBe(true);
-    expect(isInZone('badexample.com', 'example.com')).toBe(false);
-    // `a.example` is one label, so this name sits directly under com
-    expect(isInZone('a\\.example.com', 'example.com')).toBe(false);
-    expect(isInZone('a\\.example.com', 'com')).toBe(true);
   });
 });
 
@@ -287,6 +213,34 @@ describe('canonicalRdata', () => {
   });
 });
 
+describe('presentRecord', () => {
+  const rr = (type: number, rdata: number[]): WireRecord => ({
+    name: 'example.com',
+    type,
+    typeName: typeName(type),
+    class: 1,
+    ttl: 300,
+    rdata: Uint8Array.from(rdata),
+    section: 'answer',
+  });
+
+  it('writes the signer and next names in lowercase', () => {
+    const signer = [...encodeName('Example.COM')];
+    const rrsig = [0, 1, 13, 2, 0, 0, 1, 44, 0, 0, 0, 1, 0, 0, 0, 0, 0, 7, ...signer, 0xaa];
+    expect(presentRecord(rr(46, rrsig))).toBe(
+      'example.com.\t300\tIN\tRRSIG\tA 13 2 300 19700101000001 19700101000000 7 example.com. qg=='
+    );
+    expect(presentRecord(rr(47, [...encodeName('B.Example'), 0, 1, 0x40]))).toBe(
+      'example.com.\t300\tIN\tNSEC\tb.example. A'
+    );
+  });
+
+  it('writes record data that does not decode in the unknown-type form', () => {
+    expect(presentRecord(rr(46, [0, 1, 13]))).toBe('example.com.\t300\tIN\tRRSIG\t\\# 3 00010D');
+    expect(presentRecord(rr(TYPE_NS, [3, 0x61]))).toBe('example.com.\t300\tIN\tNS\t\\# 2 0361');
+  });
+});
+
 describe('groupRrsets', () => {
   it('groups by owner, class and type and keeps the lowest TTL', () => {
     const base = { class: 1, section: 'answer' as const, typeName: 'A' };
@@ -344,7 +298,7 @@ describe('buildSignedData', () => {
   };
 
   it('orders RRs canonically by RDATA regardless of wire order', () => {
-    const sig = decodeRrsig(rrsigRdata(2))!;
+    const sig = decodeRrsig(rrsigRdata(2));
     const built = buildSignedData(sig, rrset)!;
     // the 1.1.1.1 record sorts before 9.9.9.9, so its RDATA appears first
     const first = Buffer.from(built.data).indexOf(Buffer.from([1, 1, 1, 1]));
@@ -354,7 +308,7 @@ describe('buildSignedData', () => {
   });
 
   it("uses the signature's original TTL, not the TTL the record arrived with", () => {
-    const sig = decodeRrsig(rrsigRdata(2, 77))!;
+    const sig = decodeRrsig(rrsigRdata(2, 77));
     const built = buildSignedData(sig, { ...rrset, ttl: 5 })!;
     // 77 appears as a 32-bit TTL in each RR header of the canonical form
     const ttlBytes = Buffer.alloc(4);
@@ -364,27 +318,38 @@ describe('buildSignedData', () => {
 
   it('reconstructs the wildcard owner name when the label count is short', () => {
     // one label fewer than the owner name means the answer came from *.com
-    const sig = decodeRrsig(rrsigRdata(1))!;
+    const sig = decodeRrsig(rrsigRdata(1));
     const built = buildSignedData(sig, rrset)!;
     expect(built.wildcard).toBe(true);
     expect(built.ownerName).toBe('*.com');
   });
 
   it('refuses to build when the label count exceeds the owner name', () => {
-    const sig = decodeRrsig(rrsigRdata(5))!;
+    const sig = decodeRrsig(rrsigRdata(5));
     expect(buildSignedData(sig, rrset)).toBeNull();
   });
 
   it('drops duplicate RRs, which are not part of the RRset', () => {
-    const sig = decodeRrsig(rrsigRdata(2))!;
+    const sig = decodeRrsig(rrsigRdata(2));
     const withDuplicate = { ...rrset, records: [...rrset.records, rrset.records[0]] };
     expect(buildSignedData(sig, withDuplicate)!.data).toEqual(buildSignedData(sig, rrset)!.data);
+  });
+
+  it('signs over the RRSIG data as sent, with the signer name downcased', () => {
+    const rdata = rrsigRdata(2);
+    const sig = decodeRrsig(rdata);
+    const prefix = rdata.subarray(0, rdata.length - 64);
+    expect(Buffer.from(buildSignedData(sig, rrset)!.data.subarray(0, prefix.length))).toEqual(
+      prefix
+    );
+    const shouted = { ...sig, signerName: 'EXAMPLE.Com' };
+    expect(buildSignedData(shouted, rrset)!.data).toEqual(buildSignedData(sig, rrset)!.data);
   });
 });
 
 describe('decodeDnskey', () => {
   it('splits the flag, protocol and algorithm fields', () => {
-    const decoded = decodeDnskey(dnskeyRdata(257, 3, 8, KSK_2017_KEY))!;
+    const decoded = decodeDnskey(dnskeyRdata(257, 3, 8, KSK_2017_KEY));
     expect(decoded.flags).toBe(257);
     expect(decoded.protocol).toBe(3);
     expect(decoded.algorithm).toBe(8);
@@ -397,7 +362,7 @@ describe('decodeTypeBitmap', () => {
     // window 0, length 1, bit 1 (NS) and bit 6 (SOA) set
     const bitmap = Buffer.from([0x00, 0x01, 0b01000010]);
     expect(decodeTypeBitmap(bitmap)).toEqual([1, 6]);
-    expect(decodeTypeBitmap(bitmap).map(recordTypeName)).toEqual(['A', 'SOA']);
+    expect(decodeTypeBitmap(bitmap).map(typeName)).toEqual(['A', 'SOA']);
   });
 
   it('handles multiple windows', () => {

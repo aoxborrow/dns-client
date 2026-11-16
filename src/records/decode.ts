@@ -77,9 +77,10 @@ class Reader {
   }
 }
 
-// the type bitmap of NSEC and NSEC3 (RFC 4034 §4.1.2): windows of up to 256 types each
-function typeBitmap(reader: Reader): string[] {
-  const types: string[] = [];
+// the type bitmap of NSEC and NSEC3 (RFC 4034 §4.1.2): windows of up to 256 types each,
+// as type codes
+function readTypeBitmap(reader: Reader): number[] {
+  const types: number[] = [];
   while (reader.remaining > 0) {
     const window = reader.u8();
     const length = reader.u8();
@@ -87,38 +88,186 @@ function typeBitmap(reader: Reader): string[] {
     const bitmap = reader.take(length);
     for (let index = 0; index < bitmap.length; index++) {
       for (let bit = 0; bit < 8; bit++) {
-        if (bitmap[index] & (0x80 >> bit)) types.push(typeName(window * 256 + index * 8 + bit));
+        if (bitmap[index] & (0x80 >> bit)) types.push(window * 256 + index * 8 + bit);
       }
     }
   }
   return types;
 }
 
-const delegationSigner = (reader: Reader) => ({
+// the fields of the DNSSEC record types as the wire has them: type codes as numbers, keys,
+// digests and signatures as bytes, times as seconds since the epoch, names as the server
+// sent them. What the DNSSEC primitives compute over; `decodeRecord` presents the same
+// fields as text
+
+export interface DsFields {
+  keyTag: number;
+  algorithm: number;
+  digestType: number;
+  digest: Uint8Array;
+}
+
+export interface DnskeyFields {
+  flags: number;
+  protocol: number;
+  algorithm: number;
+  publicKey: Uint8Array;
+}
+
+export interface RrsigFields {
+  typeCovered: number;
+  algorithm: number;
+  labels: number;
+  originalTtl: number;
+  // seconds since the epoch (RFC 4034 §3.1.5)
+  expiration: number;
+  inception: number;
+  keyTag: number;
+  signerName: string;
+  signature: Uint8Array;
+}
+
+export interface NsecFields {
+  nextDomain: string;
+  types: number[];
+}
+
+export interface Nsec3Fields {
+  hashAlgorithm: number;
+  flags: number;
+  iterations: number;
+  salt: Uint8Array;
+  nextHashed: Uint8Array;
+  types: number[];
+}
+
+export interface Nsec3ParamFields {
+  hashAlgorithm: number;
+  flags: number;
+  iterations: number;
+  salt: Uint8Array;
+}
+
+const readDs = (reader: Reader): DsFields => ({
   keyTag: reader.u16(),
   algorithm: reader.u8(),
   digestType: reader.u8(),
-  digest: toHex(reader.rest()),
+  digest: Uint8Array.from(reader.rest()),
 });
 
-const publicKey = (reader: Reader) => ({
+const readDnskey = (reader: Reader): DnskeyFields => ({
   flags: reader.u16(),
   protocol: reader.u8(),
   algorithm: reader.u8(),
-  publicKey: toBase64(reader.rest()),
+  publicKey: Uint8Array.from(reader.rest()),
 });
 
-const signature = (reader: Reader) => ({
-  typeCovered: typeName(reader.u16()),
+const readRrsig = (reader: Reader): RrsigFields => ({
+  typeCovered: reader.u16(),
   algorithm: reader.u8(),
   labels: reader.u8(),
   originalTtl: reader.u32(),
-  signatureExpiration: reader.u32(),
-  signatureInception: reader.u32(),
+  expiration: reader.u32(),
+  inception: reader.u32(),
   keyTag: reader.u16(),
   signerName: reader.name(),
-  signature: toBase64(reader.rest()),
+  signature: Uint8Array.from(reader.rest()),
 });
+
+const readNsec = (reader: Reader): NsecFields => ({
+  nextDomain: reader.name(),
+  types: readTypeBitmap(reader),
+});
+
+const readNsec3 = (reader: Reader): Nsec3Fields => ({
+  hashAlgorithm: reader.u8(),
+  flags: reader.u8(),
+  iterations: reader.u16(),
+  salt: Uint8Array.from(reader.characterString()),
+  nextHashed: Uint8Array.from(reader.characterString()),
+  types: readTypeBitmap(reader),
+});
+
+const readNsec3Param = (reader: Reader): Nsec3ParamFields => ({
+  hashAlgorithm: reader.u8(),
+  flags: reader.u8(),
+  iterations: reader.u16(),
+  salt: Uint8Array.from(reader.characterString()),
+});
+
+// read one record's data, all of it, with `read`. Throws ParseError for data that is too
+// short or has bytes left over
+function decodeData<T>(rdata: Uint8Array, read: (reader: Reader) => T, what: string): T {
+  try {
+    const reader = new Reader(rdata);
+    const fields = read(reader);
+    if (reader.remaining > 0) throw new ParseError('record data has bytes left over');
+    return fields;
+  } catch (error) {
+    if (!(error instanceof ParseError)) throw error;
+    throw new ParseError(`Malformed ${what}: ${error.message}`, { cause: error });
+  }
+}
+
+// DS or CDS data (RFC 4034 §5.1)
+export function decodeDs(rdata: Uint8Array): DsFields {
+  return decodeData(rdata, readDs, 'DS data');
+}
+
+// DNSKEY, CDNSKEY or KEY data (RFC 4034 §2.1)
+export function decodeDnskey(rdata: Uint8Array): DnskeyFields {
+  return decodeData(rdata, readDnskey, 'DNSKEY data');
+}
+
+// RRSIG or SIG data (RFC 4034 §3.1)
+export function decodeRrsig(rdata: Uint8Array): RrsigFields {
+  return decodeData(rdata, readRrsig, 'RRSIG data');
+}
+
+// NSEC data (RFC 4034 §4.1)
+export function decodeNsec(rdata: Uint8Array): NsecFields {
+  return decodeData(rdata, readNsec, 'NSEC data');
+}
+
+// NSEC3 data (RFC 5155 §3.2)
+export function decodeNsec3(rdata: Uint8Array): Nsec3Fields {
+  return decodeData(rdata, readNsec3, 'NSEC3 data');
+}
+
+// NSEC3PARAM data (RFC 5155 §4.2)
+export function decodeNsec3Param(rdata: Uint8Array): Nsec3ParamFields {
+  return decodeData(rdata, readNsec3Param, 'NSEC3PARAM data');
+}
+
+// an NSEC or NSEC3 type bitmap (RFC 4034 §4.1.2), as type codes
+export function decodeTypeBitmap(bitmap: Uint8Array): number[] {
+  return decodeData(bitmap, readTypeBitmap, 'type bitmap');
+}
+
+const delegationSigner = (reader: Reader) => {
+  const ds = readDs(reader);
+  return { ...ds, digest: toHex(ds.digest) };
+};
+
+const publicKey = (reader: Reader) => {
+  const key = readDnskey(reader);
+  return { ...key, publicKey: toBase64(key.publicKey) };
+};
+
+const signature = (reader: Reader) => {
+  const sig = readRrsig(reader);
+  return {
+    typeCovered: typeName(sig.typeCovered),
+    algorithm: sig.algorithm,
+    labels: sig.labels,
+    originalTtl: sig.originalTtl,
+    signatureExpiration: sig.expiration,
+    signatureInception: sig.inception,
+    keyTag: sig.keyTag,
+    signerName: sig.signerName,
+    signature: toBase64(sig.signature),
+  };
+};
 
 const target = (reader: Reader) => ({ target: reader.name() });
 
@@ -262,21 +411,30 @@ const DECODERS: Record<number, Decoder> = {
   [RECORD_TYPES.KEY]: publicKey,
   [RECORD_TYPES.RRSIG]: signature,
   [RECORD_TYPES.SIG]: signature,
-  [RECORD_TYPES.NSEC]: reader => ({ nextDomain: reader.name(), types: typeBitmap(reader) }),
-  [RECORD_TYPES.NSEC3]: reader => ({
-    algorithm: reader.u8(),
-    flags: reader.u8(),
-    iterations: reader.u16(),
-    salt: toHex(reader.characterString()),
-    nextDomain: toBase32Hex(reader.characterString()),
-    types: typeBitmap(reader),
-  }),
-  [RECORD_TYPES.NSEC3PARAM]: reader => ({
-    algorithm: reader.u8(),
-    flags: reader.u8(),
-    iterations: reader.u16(),
-    salt: toHex(reader.characterString()),
-  }),
+  [RECORD_TYPES.NSEC]: reader => {
+    const nsec = readNsec(reader);
+    return { nextDomain: nsec.nextDomain, types: nsec.types.map(typeName) };
+  },
+  [RECORD_TYPES.NSEC3]: reader => {
+    const nsec3 = readNsec3(reader);
+    return {
+      algorithm: nsec3.hashAlgorithm,
+      flags: nsec3.flags,
+      iterations: nsec3.iterations,
+      salt: toHex(nsec3.salt),
+      nextDomain: toBase32Hex(nsec3.nextHashed),
+      types: nsec3.types.map(typeName),
+    };
+  },
+  [RECORD_TYPES.NSEC3PARAM]: reader => {
+    const param = readNsec3Param(reader);
+    return {
+      algorithm: param.hashAlgorithm,
+      flags: param.flags,
+      iterations: param.iterations,
+      salt: toHex(param.salt),
+    };
+  },
   [RECORD_TYPES.SRV]: reader => ({
     priority: reader.u16(),
     weight: reader.u16(),

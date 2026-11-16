@@ -153,6 +153,23 @@ describe('name helpers', () => {
     expect(isSubdomain('notexample.com', 'example.com')).toBe(false);
     expect(isSubdomain('example.com', 'www.example.com')).toBe(false);
     expect(isSubdomain('anything.at.all', '.')).toBe(true);
+    // `a.example` is one label, so this name sits directly under com
+    expect(isSubdomain('a\\.example.com', 'example.com')).toBe(false);
+    expect(isSubdomain('a\\.example.com', 'com')).toBe(true);
+  });
+
+  it('keeps an escaped final dot, and drops a root dot after an escaped backslash', () => {
+    expect(canonicalName('A\\.')).toBe('a\\.');
+    expect(canonicalName('Foo\\\\.')).toBe('foo\\\\');
+    expect(countLabels('a\\.')).toBe(1);
+    expect(countLabels('foo\\\\.')).toBe(1);
+    expect(parentName('a\\.example.com.')).toBe('com');
+    expect(parentName('www.a\\.')).toBe('a\\.');
+    expect(isSubdomain('www.a\\.', 'a\\.')).toBe(true);
+    expect(isSubdomain('www.a\\.', 'a')).toBe(false);
+    expect(isSubdomain('www.foo\\\\.', 'foo\\\\')).toBe(true);
+    expect([...encodeName('a\\.')]).toEqual([2, 0x61, 0x2e, 0]);
+    expect([...encodeName('foo\\\\.')]).toEqual([4, ...Buffer.from('foo\\'), 0]);
   });
 });
 
