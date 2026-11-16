@@ -744,7 +744,7 @@ Errors are plain `Error`s with `code`, `syscall` and `hostname`, as Node's are:
 | `ETIMEOUT` | `TimeoutError` |
 | `ECONNREFUSED` | `ConnectionError`, `ProxyError`, `EmptyResponseError`, `NoServerError` |
 | `EBADNAME` | `InvalidQueryError` |
-| `ECANCELLED` | `cancel()`, or an aborted query |
+| `ECANCELLED` | `cancel()` |
 | `EAI_AGAIN` | from `lookup`: no server could say whether the name exists |
 
 The library error behind a code, when there is one, is its `cause`. These codes exist only
@@ -754,7 +754,7 @@ in this entry; the rest of the library has none.
 
 Node 22 or later. Node built-ins are imported only by the transports, and only when a query
 needs them, so `/records`, `/wire` and `/dnssec` bundle for a browser with none, and the
-root entry loads no Node module at import. Both are checked on every build.
+root entry loads no Node module at import. `check:browser` checks both.
 
 On Cloudflare Workers there is no UDP, and Ed448 signatures cannot be verified. TCP and
 TLS go through the runtime's `connect()`, found on its own. The codec, the records, both
