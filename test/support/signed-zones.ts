@@ -111,8 +111,10 @@ export interface SignedZone {
   ds?: 'none' | TestKey[];
   // the parent's DS digest does not match the key it names
   badDs?: boolean;
-  // NSEC (default) or NSEC3 proofs of non-existence
-  nsec3?: { iterations?: number; salt?: string; optOut?: boolean };
+  // NSEC (default) or NSEC3 proofs of non-existence. `optOut: true` sets the flag on every
+  // NSEC3 and leaves insecure delegations out of the chain; a function sets it on the
+  // NSEC3 of each name it picks, and leaves the chain whole
+  nsec3?: { iterations?: number; salt?: string; optOut?: boolean | ((name: string) => boolean) };
   // when the zone's signatures are valid. Default: from a day ago for thirty days
   inception?: Date;
   expiration?: Date;
@@ -312,7 +314,7 @@ class ZoneData {
     // empty non-terminals have NSEC3 records too (RFC 5155 §7.1)
     const names = new Set<string>();
     for (const owner of this.owners()) {
-      if (nsec3.optOut && this.isInsecureCut(owner)) continue;
+      if (nsec3.optOut === true && this.isInsecureCut(owner)) continue;
       let current = owner;
       while (current !== this.zone && isSubdomain(current, this.zone)) {
         names.add(current);
@@ -330,7 +332,9 @@ class ZoneData {
       const signedTypes = types.length ? [...types, 46] : [];
       const head = new Uint8Array(5);
       head[0] = 1;
-      head[1] = nsec3.optOut ? 1 : 0;
+      const optOut =
+        typeof nsec3.optOut === 'function' ? nsec3.optOut(entry.name) : Boolean(nsec3.optOut);
+      head[1] = optOut ? 1 : 0;
       writeU16(head, 2, iterations);
       head[4] = this.salt.length;
       const rdata = concatBytes([
@@ -446,8 +450,20 @@ class ZoneData {
     return [...seen];
   }
 
+  // the NSEC or NSEC3 at the name. An empty non-terminal has no NSEC: the one whose range
+  // covers it, and ends below it, shows it is there
   nodataProof(name: string): Set_[] {
-    return this.proofSets([this.match(name)]);
+    return this.proofSets([this.match(name) ?? (this.spec.nsec3 ? undefined : this.cover(name))]);
+  }
+
+  // a name that a wildcard without the type answers for (RFC 4035 §3.1.3.4, RFC 5155 §7.2.5)
+  wildcardNodataProof(name: string, encloser: string, wildcard: string): Set_[] {
+    if (!this.spec.nsec3) return this.proofSets([this.cover(name), this.match(wildcard)]);
+    return this.proofSets([
+      this.match(encloser),
+      this.cover(nextCloser(name, encloser)),
+      this.match(wildcard),
+    ]);
   }
 
   nxdomainProof(name: string): Set_[] {
@@ -583,13 +599,19 @@ function serve(data: ZoneData): SimulatedServer {
     // a wildcard at the closest encloser
     const encloser = data.closestEncloser(name);
     const wildcardName = encloser === '.' ? '*' : `*.${encloser}`;
-    const wildcard = data.get(wildcardName, type);
+    const wildcard = data.get(wildcardName, type) ?? data.get(wildcardName, 5);
     if (wildcard) {
       return reply({
         aa: true,
         answers: data.records(wildcard, 'answer', dnssec, name),
         authorities:
           data.spec.dropProofs === 'wildcard' ? [] : proof(data.wildcardProof(name, encloser)),
+      });
+    }
+    if (data.exists(wildcardName)) {
+      return reply({
+        aa: true,
+        authorities: [...soa(), ...proof(data.wildcardNodataProof(name, encloser, wildcardName))],
       });
     }
 
@@ -665,6 +687,8 @@ function recursiveOver(zones: string[], servers: Record<string, SimulatedServer>
     const [question] = query.questions;
     let name = canonicalName(question.name);
     const answers: ResourceRecord[] = [];
+    // the proofs of every zone on the way: a wildcard's in one, a denial in the next
+    const authorities: ResourceRecord[] = [];
     let last: Message | undefined;
     for (let step = 0; step < 8; step++) {
       const zone = holder(name, question.type);
@@ -673,6 +697,7 @@ function recursiveOver(zones: string[], servers: Record<string, SimulatedServer>
       if (!(bytes instanceof Uint8Array)) return bytes;
       last = decodeMessage(bytes);
       answers.push(...last.answers);
+      authorities.push(...last.authorities);
       const alias = last.answers.find(
         record => record.type === 5 && canonicalName(record.name) === name
       );
@@ -690,7 +715,7 @@ function recursiveOver(zones: string[], servers: Record<string, SimulatedServer>
       rcode: last!.rcode,
       questions: query.questions,
       answers,
-      authorities: last!.authorities,
+      authorities,
       additionals: last!.additionals,
       edns: last!.edns,
     });

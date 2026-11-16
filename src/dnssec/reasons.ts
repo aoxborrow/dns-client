@@ -93,6 +93,9 @@ export const REASON_CODES = {
   ALIAS_MISMATCH: 'alias-mismatch',
   // a zone above is bogus
   PARENT_BOGUS: 'parent-bogus',
+  // the answer needed more signature checks than one judgement may make (KeyTrap,
+  // CVE-2023-50387)
+  VALIDATION_LIMIT: 'validation-limit',
 
   // indeterminate
   // a response the judgement needed is missing
@@ -132,6 +135,7 @@ export const REASON_EDE: Partial<Record<ReasonCode, number>> = {
   [R.DENIAL_INVALID]: E.DNSSEC_BOGUS,
   [R.ALIAS_MISMATCH]: E.DNSSEC_BOGUS,
   [R.PARENT_BOGUS]: E.DNSSEC_BOGUS,
+  [R.VALIDATION_LIMIT]: E.DNSSEC_BOGUS,
   [R.RESPONSE_MISSING]: E.NO_REACHABLE_AUTHORITY,
   [R.UNVERIFIABLE]: E.DNSSEC_INDETERMINATE,
   [R.PARENT_INDETERMINATE]: E.DNSSEC_INDETERMINATE,
