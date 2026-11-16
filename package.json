@@ -98,6 +98,7 @@
     "build": "tsup",
     "typecheck": "yarn run -T tsc --noEmit",
     "test": "yarn run -T vitest run",
+    "test:live": "yarn run -T vitest run --config vitest.live.config.ts --reporter=verbose",
     "check:browser": "node scripts/browser-check.mjs",
     "check:pack": "node scripts/pack-check.mjs",
     "capture": "yarn run -T tsx scripts/capture-messages.ts",
@@ -107,8 +108,8 @@
     "lint:fix": "yarn eslint:fix && yarn format:fix",
     "eslint": "yarn run -T eslint --cache --cache-location .eslintcache --max-warnings 0 .",
     "eslint:fix": "yarn run -T eslint --cache --cache-location .eslintcache --max-warnings 0 . --fix",
-    "format": "yarn run -T prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"bench/**/*.ts\" \"scripts/**/*.mjs\" eslint.config.mjs tsup.config.ts vitest.config.ts",
-    "format:fix": "yarn run -T prettier --write --list-different \"src/**/*.ts\" \"test/**/*.ts\" \"bench/**/*.ts\" \"scripts/**/*.mjs\" eslint.config.mjs tsup.config.ts vitest.config.ts"
+    "format": "yarn run -T prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"bench/**/*.ts\" \"scripts/**/*.mjs\" eslint.config.mjs tsup.config.ts vitest.config.ts vitest.live.config.ts",
+    "format:fix": "yarn run -T prettier --write --list-different \"src/**/*.ts\" \"test/**/*.ts\" \"bench/**/*.ts\" \"scripts/**/*.mjs\" eslint.config.mjs tsup.config.ts vitest.config.ts vitest.live.config.ts"
   },
   "devDependencies": {
     "@types/dns-packet": "^5.6.5",
