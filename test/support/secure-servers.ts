@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import http from 'node:http';
+import http2 from 'node:http2';
 import https from 'node:https';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -203,6 +204,126 @@ export async function startDohServer(
     },
     async close() {
       server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// DNS over HTTPS on HTTP/2
+// ---------------------------------------------------------------------------
+
+export interface Doh2ServerOptions {
+  // hold each answer this long, in milliseconds, so queries overlap
+  delay?: number;
+  // what to do with a request instead of answering it, given how many came before it.
+  // 'refuse' sends a GOAWAY and resets the stream as refused, unprocessed
+  // (REFUSED_STREAM); 'destroy' tears the session down under it
+  misbehave?: (index: number) => 'refuse' | 'destroy' | undefined;
+  // after answering a request, close its session gracefully, which sends a GOAWAY
+  goawayAfterAnswer?: boolean;
+}
+
+export interface Doh2Server {
+  url: string;
+  port: number;
+  requests: DohRequest[];
+  // sessions opened, and open now
+  readonly sessions: number;
+  readonly openSessions: number;
+  // streams the client cancelled before an answer
+  readonly cancelled: number;
+  // the most streams in flight on one session at once
+  readonly maxConcurrent: number;
+  close(): Promise<void>;
+}
+
+export async function startDoh2Server(
+  respond: SecureResponder,
+  options: Doh2ServerOptions = {}
+): Promise<Doh2Server> {
+  const requests: DohRequest[] = [];
+  const live = new Set<http2.ServerHttp2Session>();
+  const inFlight = new Map<http2.Http2Session, number>();
+  let sessions = 0;
+  let cancelled = 0;
+  let maxConcurrent = 0;
+
+  // HTTP/2 only, as some public resolvers are
+  const server = http2.createSecureServer(testCertificate());
+  server.on('session', session => {
+    sessions++;
+    live.add(session);
+    session.on('close', () => live.delete(session));
+    session.on('error', () => undefined);
+  });
+  server.on('stream', (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => {
+    const session = stream.session!;
+    const chunks: Buffer[] = [];
+    stream.on('error', () => undefined);
+    stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+    stream.on('end', () => {
+      const index = requests.length;
+      const path = String(headers[':path'] ?? '/');
+      const method = String(headers[':method'] ?? '');
+      const encoded = new URL(path, 'https://localhost').searchParams.get('dns');
+      const query =
+        method === 'GET' && encoded
+          ? Uint8Array.from(Buffer.from(encoded, 'base64url'))
+          : Uint8Array.from(Buffer.concat(chunks));
+      requests.push({ method, url: path, headers: headers as http.IncomingHttpHeaders, query });
+
+      const misbehaviour = options.misbehave?.(index);
+      if (misbehaviour === 'refuse') {
+        session.goaway();
+        stream.close(http2.constants.NGHTTP2_REFUSED_STREAM);
+        return;
+      }
+      if (misbehaviour === 'destroy') {
+        session.destroy();
+        return;
+      }
+      const answer = respond(query);
+      if (!answer) {
+        stream.on('close', () => {
+          if (stream.rstCode === http2.constants.NGHTTP2_CANCEL) cancelled++;
+        });
+        return; // leave the request hanging
+      }
+      const count = (inFlight.get(session) ?? 0) + 1;
+      inFlight.set(session, count);
+      maxConcurrent = Math.max(maxConcurrent, count);
+      setTimeout(() => {
+        inFlight.set(session, (inFlight.get(session) ?? 1) - 1);
+        if (stream.destroyed) return;
+        stream.respond({ ':status': 200, 'content-type': 'application/dns-message' });
+        stream.end(Buffer.from(withQueryId(answer, query)));
+        if (options.goawayAfterAnswer) session.close();
+      }, options.delay ?? 0);
+    });
+  });
+  server.on('tlsClientError', () => undefined);
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+
+  return {
+    url: `https://127.0.0.1:${port}/dns-query`,
+    port,
+    requests,
+    get sessions() {
+      return sessions;
+    },
+    get openSessions() {
+      return live.size;
+    },
+    get cancelled() {
+      return cancelled;
+    },
+    get maxConcurrent() {
+      return maxConcurrent;
+    },
+    async close() {
+      for (const session of live) session.destroy();
       await new Promise<void>(resolve => server.close(() => resolve()));
     },
   };

@@ -77,7 +77,8 @@ export interface ProxyTarget {
 // picks one per target; returning nothing means no proxy for that target
 export type ProxyInput = string | URL | ((target: ProxyTarget) => string | URL | undefined);
 
-// TLS settings for DoT. Node only; other runtimes use their own trust store
+// TLS settings for DoT, and DoH over HTTP/2. Node only; other runtimes use their own trust
+// store
 export interface TlsOptions {
   // certificate authorities to trust instead of the runtime's, PEM
   ca?: string | readonly string[];
@@ -87,16 +88,18 @@ export interface TlsOptions {
 
 export interface TransportOptions {
   // send everything through this proxy. Nothing falls back to a direct connection. DoH
-  // has no proxy support of its own: with `proxy` set it needs `fetch` as well
+  // goes through it over HTTP/2 on Node; elsewhere, and to a server that does not offer
+  // HTTP/2, it needs `fetch` as well
   proxy?: ProxyInput;
-  // how DoH requests are made. Default: the runtime's `fetch`
+  // how DoH requests are made. Default: HTTP/2 with `node:http2` on Node for an https://
+  // URL, and the runtime's `fetch` otherwise
   fetch?: FetchLike;
   // how TCP connections are opened. Wins over `proxy` for TCP and DoT
   connect?: Connect;
   tls?: TlsOptions;
   // with `pipeline`: how long an unused TCP or DoT connection is kept open, in
-  // milliseconds. 0 closes each connection as soon as its queries are answered.
-  // Default 5000
+  // milliseconds; and how long a DoH HTTP/2 session is. 0 closes each connection as soon
+  // as its queries are answered. Default 5000
   idleTimeout?: number;
   // keep TCP connections open and send several queries down one at a time (RFC 7766).
   // Default false for TCP: each query gets a connection of its own, closed when it is
