@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AuthoritativeResolver, Resolver } from '../../src/index';
 import type { Answer } from '../../src/index';
-import { simulateNetwork } from '../support/simulated-network';
+import { late, simulateNetwork } from '../support/simulated-network';
 import type { SimulatedServer } from '../support/simulated-network';
 import { ecdsaKey, revokedKey, signedNetwork, unverifiableKey } from '../support/signed-zones';
 import type { SignedZone } from '../support/signed-zones';
@@ -1097,4 +1097,49 @@ describe('validate: the chain is asked the way the data was', () => {
       ).rejects.toBe(reason);
     }
   );
+});
+
+describe('validate: one deadline for the whole query', () => {
+  // each server answers 20 ms after it is asked: the data takes two hops, the chain three
+  // more
+  const slowNetwork = () => {
+    const signed = signedNetwork([root, secure('example', [['www.example', 'A', '192.0.2.1']])]);
+    for (const [address, server] of Object.entries(signed.servers)) {
+      signed.servers[address] = late(20, server);
+    }
+    return { signed, network: simulateNetwork(signed.servers) };
+  };
+
+  it('gives the chain only what the data left, and times out when it runs out', async () => {
+    const { signed, network } = slowNetwork();
+    const resolver = new AuthoritativeResolver({
+      transports: network.transports,
+      rootServers: signed.rootServers,
+      trustAnchors: signed.trustAnchors,
+      validate: true,
+      totalTimeout: 60,
+    });
+    const started = Date.now();
+    const error = (await resolver.query('www.example', 'A').catch(e => e)) as Error;
+    const elapsed = Date.now() - started;
+    expect(error.name).toBe('TimeoutError');
+    expect(error.message).toContain('60 ms');
+    expect(elapsed).toBeLessThan(90);
+  });
+
+  it('takes the per-query totalTimeout as the deadline too', async () => {
+    const { signed, network } = slowNetwork();
+    const resolver = new AuthoritativeResolver({
+      transports: network.transports,
+      rootServers: signed.rootServers,
+      trustAnchors: signed.trustAnchors,
+      validate: true,
+    });
+    await expect(resolver.query('www.example', 'A', { totalTimeout: 60 })).rejects.toMatchObject({
+      name: 'TimeoutError',
+    });
+    // with the time it needs, the same query is secure
+    const answer = await resolver.query('www.example', 'A', { totalTimeout: 1000 });
+    expect(answer.security?.status).toBe('secure');
+  });
 });

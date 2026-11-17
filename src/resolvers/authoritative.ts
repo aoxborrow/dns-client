@@ -59,7 +59,7 @@ export interface AuthoritativeResolverOptions
   // with one server; a zone whose servers all stay silent would otherwise cost that for
   // each address of each of them. The last server a zone has left to ask is given the
   // rest of this, shared among its attempts, since there is no next one to save it for.
-  // Default 10000
+  // With `validate`, the queries for the chain share it with the data. Default 10000
   totalTimeout?: number;
   // addresses for nameservers by name, used before asking for them. Also what puts a
   // name beside an address in the trace
@@ -283,9 +283,40 @@ export class AuthoritativeResolver {
   ): Promise<Answer> {
     const follow = this.options.followCnames === true;
     if (!this.validator) return this.walk(name, type, options, follow);
+    // one deadline for the data and the chain together
+    const totalTimeout = options.totalTimeout ?? this.options.totalTimeout ?? DEFAULT_TOTAL_TIMEOUT;
+    const deadline = now() + totalTimeout;
     // every response on the way is judged, the aliases followed included
     const responses: DnssecResponse[] = [];
-    const answer = await this.walk(name, type, { ...options, dnssecOk: true }, follow, responses);
+    const answer = await this.walk(
+      name,
+      type,
+      { ...options, totalTimeout, dnssecOk: true },
+      follow,
+      responses
+    );
+
+    // the chain gets what the data left. When that runs out, the query times out as one
+    // whose data took too long does: the chain queries still out are abandoned, and
+    // validation rejects with a TimeoutError, as it does with the caller's own abort
+    const budget = new AbortController();
+    const timedOut = () =>
+      budget.abort(
+        new TimeoutError(
+          `No validated answer for ${name} ${typeName(typeCode(type))} within ${totalTimeout} ms`,
+          {
+            query: name,
+            type: typeName(typeCode(type)),
+          }
+        )
+      );
+    const forward = () => budget.abort(options.signal?.reason);
+    if (options.signal?.aborted) forward();
+    else options.signal?.addEventListener('abort', forward, { once: true });
+    const left = deadline - now();
+    if (left <= 0) timedOut();
+    const timer = left > 0 && left <= MAX_TIMER ? setTimeout(timedOut, left) : undefined;
+
     // the chain's records are asked for as they are: no alias is followed. They go the way
     // the data query went: the same transport, port, timeouts and EDNS settings
     const {
@@ -293,12 +324,25 @@ export class AuthoritativeResolver {
       authenticData: _authenticData,
       ...sameWay
     } = options;
-    answer.security = await this.validator.validate(
-      responses,
-      async (chainName, chainType) =>
-        (await this.walk(chainName, chainType, { ...sameWay, dnssecOk: true }, false)).message,
-      options.signal
-    );
+    try {
+      answer.security = await this.validator.validate(
+        responses,
+        async (chainName, chainType) => {
+          if (budget.signal.aborted) throw budget.signal.reason;
+          const chainOptions = {
+            ...sameWay,
+            dnssecOk: true,
+            totalTimeout: Math.max(1, deadline - now()),
+            signal: budget.signal,
+          };
+          return (await this.walk(chainName, chainType, chainOptions, false)).message;
+        },
+        budget.signal
+      );
+    } finally {
+      clearTimeout(timer);
+      options.signal?.removeEventListener('abort', forward);
+    }
     return answer;
   }
 

@@ -252,7 +252,7 @@ These can be set on a resolver for every query, or passed to one `query()`:
 | `rootServers` | the 13 root servers | where to start: `{ name, ipv4, ipv6 }[]` |
 | `addressFamily` | `'both'` | `'ipv4'`, `'ipv6'` or `'both'`. With both, a server's IPv6 address is tried only once each of the zone's servers has been tried at its first address |
 | `followCnames`, `maxAliases` | off, `8` | resolve an alias into another zone, and how long a chain may be |
-| `totalTimeout` | `10000` | milliseconds one answer may take altogether, retries and nameserver lookups included. The last server a zone has left to ask gets the rest of it |
+| `totalTimeout` | `10000` | milliseconds one answer may take altogether, retries, nameserver lookups and the queries `validate` makes for the chain included. The last server a zone has left to ask gets the rest of it |
 | `maxHops` | `40` | servers asked on the way to one answer, nameserver lookups included |
 | `serverOrder` | random | the order servers are tried in; see above |
 | `serverConcurrency` | `8` | queries in flight to one server address at once; `Infinity` for no limit |
