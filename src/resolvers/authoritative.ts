@@ -335,7 +335,15 @@ export class AuthoritativeResolver {
             totalTimeout: Math.max(1, deadline - now()),
             signal: budget.signal,
           };
-          return (await this.walk(chainName, chainType, chainOptions, false)).message;
+          try {
+            return (await this.walk(chainName, chainType, chainOptions, false)).message;
+          } catch (error) {
+            // the walk's own deadline is the budget's, and either may fire first: running
+            // out of time always rejects the query, never leaves a link undecided
+            if (!budget.signal.aborted && now() >= deadline) timedOut();
+            if (budget.signal.aborted) throw budget.signal.reason;
+            throw error;
+          }
         },
         budget.signal
       );
