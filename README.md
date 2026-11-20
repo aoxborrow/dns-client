@@ -133,19 +133,9 @@ servers refusing the same way is the zone's answer. It stops at an alias into an
 zone unless `followCnames` is set.
 
 Root servers, nameservers and addresses are tried in a random order, drawn afresh each
-time, so the load falls on all of a zone's servers. `serverOrder` fixes the order: it is
-called with a list of names or addresses and a kind (`'roots'`, `'nameservers'` or
-`'addresses'`), and returns them in the order to try. With `addressFamily: 'both'` (the
-default) IPv4 addresses still come first.
-
-```ts
-import { AuthoritativeResolver } from '@aoxborrow/dns';
-
-// always the same order: alphabetical
-const resolver = new AuthoritativeResolver({
-  serverOrder: items => [...items].sort(),
-});
-```
+time, so the load falls on all of a zone's servers and one slow server is not always
+first. With `addressFamily: 'both'` (the default) IPv4 addresses come first. The trace
+says which servers were asked.
 
 ### The answer
 
@@ -254,13 +244,12 @@ These can be set on a resolver for every query, or passed to one `query()`:
 | `followCnames`, `maxAliases` | off, `8` | resolve an alias into another zone, and how long a chain may be |
 | `totalTimeout` | `10000` | milliseconds one answer may take altogether, retries, nameserver lookups and the queries `validate` makes for the chain included. The last server a zone has left to ask gets the rest of it |
 | `maxHops` | `40` | servers asked on the way to one answer, nameserver lookups included |
-| `serverOrder` | random | the order servers are tried in; see above |
 | `serverConcurrency` | `8` | queries in flight to one server address at once; `Infinity` for no limit |
 | `serverDelay` | `0` | the least milliseconds between two queries to the same server |
 | `concurrency` | no limit | queries in flight at once, to all servers together |
 | `hosts` | none | addresses for nameservers by name, used before asking for them |
-| `resolveNameserver` | none | find a nameserver's addresses some other way first: a local cache, another resolver |
-| `cache` | `true` | remember delegations and nameserver addresses between queries |
+| `cache` | `true` | remember delegations between queries. With `false` every query walks from the root |
+| `nameserverCache` | `true` | remember the addresses of nameservers that came without glue between queries, even with `cache: false` |
 | `strict`, `validate`, `trustAnchors` | | as for `Resolver` |
 
 Both take the transport options (`proxy`, `fetch`, `connect`, `tls`, `pipeline`,
@@ -288,8 +277,20 @@ shared.close(); // closes the sockets this resolver opened, and empties its cach
 ```
 
 `AuthoritativeResolver` caches delegations and nameserver addresses, not answers. With
-`cache: false` every query starts again from the root. Both resolvers have `clearCache()`
-and `close()`.
+`cache: false` every query starts again from the root, so its trace is the whole path, but
+a nameserver that came without glue and was looked up by an earlier query is asked
+straight away; `nameserverCache: false` looks it up again every time. Queries running at
+the same time that meet the same nameserver share one lookup. Both resolvers have
+`clearCache()` and `close()`.
+
+```ts
+import { AuthoritativeResolver } from '@aoxborrow/dns';
+
+// every answer walked from the root, nameserver addresses reused
+const walker = new AuthoritativeResolver({ cache: false });
+await walker.query('example.com', 'A');
+await walker.query('example.com', 'MX');
+```
 
 ### Events
 
@@ -314,6 +315,10 @@ const resolver = new Resolver({
 | `'retry'` | an attempt failed and another is about to be made |
 | `'tcp-fallback'` | a UDP query goes over TCP: the answer was truncated, or the proxy cannot carry UDP |
 | `'proxy'` | a proxy was asked for a tunnel or a UDP association. Credentials never appear |
+
+`AuthoritativeResolver.query()` also takes an `onEvent` of its own, told only of the
+queries that one call sends, nameserver lookups included: how the queries of one answer
+are told apart from those of others the same resolver is working on.
 
 ### Errors
 

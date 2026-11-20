@@ -64,28 +64,17 @@ export interface AuthoritativeResolverOptions
   // addresses for nameservers by name, used before asking for them. Also what puts a
   // name beside an address in the trace
   hosts?: Readonly<Record<string, string | readonly string[]>>;
-  // the order servers are tried in. Default: a random order, drawn afresh each time, so
-  // the load falls on all of a zone's servers and one slow server is not always first.
-  // Give one to fix the order: it is called with the root servers, with a zone's
-  // nameservers and with one nameserver's addresses, and returns the same items in the
-  // order to try them. With `addressFamily: 'both'` the IPv4 addresses still come first,
-  // each family in the order returned
-  serverOrder?: ServerOrder;
   // how many queries may be in flight to one server address at once. Default 8; Infinity
   // for no limit
   serverConcurrency?: number;
-  // find a nameserver's addresses some other way before it is resolved from the root: a
-  // local cache, another resolver. `timeout` is what is left of the total timeout, in
-  // milliseconds, and `signal` is the query's, for a lookup that should not outlast
-  // either. Return nothing, or nothing of the address family asked for, to leave it to
-  // the resolver
-  resolveNameserver?: (
-    name: string,
-    limits: { timeout: number; signal?: AbortSignal }
-  ) => Promise<readonly string[] | undefined> | readonly string[] | undefined;
-  // remember delegations and nameserver addresses between queries, for as long as their
-  // TTLs allow. Default true. With false every query starts again from the root
+  // remember delegations between queries, for as long as their TTLs allow. Default true.
+  // With false every query starts again from the root, and its trace is the whole path
   cache?: boolean;
+  // remember the addresses of nameservers that came without glue between queries, for as
+  // long as their TTLs allow, even with `cache` false: a later query that meets the same
+  // nameserver asks it straight away instead of looking it up again. Lookups of one
+  // nameserver made by queries running at the same time are shared. Default true
+  nameserverCache?: boolean;
   // the least time between two queries to the same server, in milliseconds. Default 0
   serverDelay?: number;
   // how many queries may be in flight at once, to all servers together. Default: no limit
@@ -106,13 +95,6 @@ export interface AuthoritativeResolverOptions
   trustAnchors?: readonly TrustAnchor[];
 }
 
-// what `serverOrder` is asked to put in order, and what it is given for each:
-//   roots        the root servers' names, or the address of one given without a name
-//   nameservers  a zone's nameservers' names, as the delegation wrote them
-//   addresses    one nameserver's addresses
-export type ServerOrderKind = 'roots' | 'nameservers' | 'addresses';
-export type ServerOrder = (items: readonly string[], kind: ServerOrderKind) => readonly string[];
-
 export interface AuthoritativeQueryOptions extends Omit<
   QuerySettings,
   'recursionDesired' | 'transport'
@@ -120,6 +102,10 @@ export interface AuthoritativeQueryOptions extends Omit<
   transport?: 'udp' | 'tcp';
   totalTimeout?: number;
   signal?: AbortSignal;
+  // told of every query this one sends, nameserver lookups included, beside the
+  // resolver's own `onEvent`: what tells the queries of one call apart from those of
+  // others running at the same time
+  onEvent?: OnEvent;
 }
 
 interface Nameserver {
@@ -143,8 +129,8 @@ interface ZoneCut {
   expires: number;
 }
 
-// what is known about the tree: which servers answer for which zones, and where
-// nameservers live
+// what is known about the tree: which servers answer for which zones (kept unless
+// `cache` is false), and where nameservers live (kept unless `nameserverCache` is false)
 interface Knowledge {
   cuts: Map<string, ZoneCut>;
   addresses: Map<string, { addresses: string[]; expires: number }>;
@@ -155,6 +141,7 @@ interface Run {
   knowledge: Knowledge;
   settings: QuerySettings;
   signal: AbortSignal | undefined;
+  onEvent: OnEvent | undefined;
   // when the whole query gives up, on the clock `now()` reads, and the time it was given
   deadline: number;
   totalTimeout: number;
@@ -172,28 +159,14 @@ interface Run {
   failures: ServerFailure[];
 }
 
-// the default order: random, a fresh shuffle every time (Fisher-Yates)
-const randomOrder: ServerOrder = items => {
+// the order servers are tried in: random, a fresh shuffle every time (Fisher-Yates), so
+// the load falls on all of a zone's servers and one slow server is not always first
+function shuffled<T>(items: readonly T[]): T[] {
   const out = [...items];
   for (let index = out.length - 1; index > 0; index--) {
     const other = Math.floor(Math.random() * (index + 1));
     [out[index], out[other]] = [out[other], out[index]];
   }
-  return out;
-};
-
-// `items` in the order `serverOrder` gave their keys. Anything it left out goes last, in
-// the order it came, and anything it made up is ignored
-function inOrder<T>(items: readonly T[], keys: readonly string[], ordered: readonly string[]): T[] {
-  const left = items.map((item, index) => ({ item, key: keys[index], taken: false }));
-  const out: T[] = [];
-  for (const key of ordered) {
-    const found = left.find(entry => !entry.taken && entry.key === key);
-    if (!found) continue;
-    found.taken = true;
-    out.push(found.item);
-  }
-  for (const entry of left) if (!entry.taken) out.push(entry.item);
   return out;
 }
 
@@ -209,9 +182,6 @@ const DEFAULT_TIMEOUT = 5000;
 const DEFAULT_MAX_ALIASES = 8;
 // how deep nameserver lookups may nest: a nameserver whose own nameserver needs looking up
 const MAX_NESTING = 4;
-// addresses from the caller's `resolveNameserver` come with no TTL, so are kept this
-// long, in seconds
-const SUPPLIED_ADDRESS_TTL = 3600;
 
 // rcodes that mean this server is not going to help with this zone: ask its neighbour
 const LAME = new Set<number>([RCODES.SERVFAIL, RCODES.REFUSED, RCODES.NOTIMP, RCODES.NOTAUTH]);
@@ -231,6 +201,9 @@ export class AuthoritativeResolver {
   private readonly transports: Transports;
   private readonly ownsTransports: boolean;
   private readonly knowledge: Knowledge = { cuts: new Map(), addresses: new Map() };
+  // nameserver lookups in flight, by canonical name, for queries that meet the same
+  // nameserver at the same time to share
+  private readonly lookups = new Map<string, Promise<string[]>>();
   private readonly root: Nameserver[];
   // address -> name, for the trace: those the resolver was given, kept for its life, and
   // those it learned on the way, bounded and forgotten by `clearCache()`
@@ -363,7 +336,7 @@ export class AuthoritativeResolver {
     follow: boolean,
     responses?: DnssecResponse[]
   ): Promise<Answer> {
-    const { signal, totalTimeout: perQuery, ...settings } = options;
+    const { signal, totalTimeout: perQuery, onEvent, ...settings } = options;
     const totalTimeout = perQuery ?? this.options.totalTimeout ?? DEFAULT_TOTAL_TIMEOUT;
     const started = now();
     // the name as the caller wrote it, for the answer, and as it is compared and sent
@@ -380,10 +353,16 @@ export class AuthoritativeResolver {
     const typeText = typeName(typeCode(type));
 
     const run: Run = {
-      knowledge:
-        this.options.cache === false ? { cuts: new Map(), addresses: new Map() } : this.knowledge,
+      knowledge: {
+        cuts: this.options.cache === false ? new Map<string, ZoneCut>() : this.knowledge.cuts,
+        addresses:
+          this.options.nameserverCache === false
+            ? new Map<string, { addresses: string[]; expires: number }>()
+            : this.knowledge.addresses,
+      },
       settings: { ...settings },
       signal,
+      onEvent,
       deadline: started + totalTimeout,
       totalTimeout,
       expired: false,
@@ -476,28 +455,10 @@ export class AuthoritativeResolver {
     return addresses.filter(address => isIpv4(address) || isIpv6(address));
   }
 
-  // a nameserver's addresses in the order to try them: the caller's order, or a random
-  // one, with IPv4 first
+  // a nameserver's addresses in the order to try them: random, with IPv4 first
   private orderAddresses(addresses: readonly string[]): string[] {
-    const ordered = inOrder(addresses, addresses, this.order(addresses, 'addresses'));
+    const ordered = shuffled(addresses);
     return [...ordered.filter(isIpv4), ...ordered.filter(address => !isIpv4(address))];
-  }
-
-  // a zone's servers in the order to try them
-  private orderServers(cut: ZoneCut): Nameserver[] {
-    const keys = cut.servers.map(
-      server => server.written ?? (server.name || server.addresses?.[0] || '')
-    );
-    return inOrder(
-      cut.servers,
-      keys,
-      this.order(keys, cut.servers === this.root ? 'roots' : 'nameservers')
-    );
-  }
-
-  private order(items: readonly string[], kind: ServerOrderKind): readonly string[] {
-    if (items.length < 2) return items;
-    return (this.options.serverOrder ?? randomOrder)(items, kind);
   }
 
   // the name a nameserver was known by at an address
@@ -553,7 +514,7 @@ export class AuthoritativeResolver {
       // zone's next server is the better bet, and with a total timeout it may be the only
       // one left time for: a dead dual-stack server would otherwise spend it on both its
       // addresses. A server's addresses are looked up when it is first needed
-      const turns = this.orderServers(cut).map(server => ({
+      const turns = shuffled(cut.servers).map(server => ({
         server,
         addresses: undefined as string[] | undefined,
         done: false,
@@ -819,61 +780,66 @@ export class AuthoritativeResolver {
     // a nameserver that can only be found by asking itself, or a chain of them too deep
     // to be worth following, is skipped: the zone's other servers may do
     if (run.resolving.has(name) || nesting >= MAX_NESTING) return [];
-    run.resolving.add(name);
-    try {
-      // the caller's own way of finding it comes first
-      const lookup = this.options.resolveNameserver;
-      if (lookup) {
-        // no more than the walk has left
-        const supplied = await withRest(run, async timeout =>
-          lookup(server.written ?? name, { timeout, ...(run.signal && { signal: run.signal }) })
-        );
-        const normalized = (supplied ?? []).map(normalizeAddress);
-        const usable = this.usable(normalized);
-        // nothing usable, as when every address is of a family not asked for, is the same
-        // as nothing at all: the name is looked up below, and nothing is kept
-        if (usable.length > 0) {
-          for (const address of normalized) this.learnName(address, server.written ?? name);
-          run.knowledge.addresses.set(name, {
-            addresses: usable,
-            expires: Date.now() + SUPPLIED_ADDRESS_TTL * 1000,
-          });
-          run.lookedUp.set(name, usable);
-          return usable;
-        }
-        // the lookup took the rest of the time: there is none left to look further
-        if (outOfTime(run)) return [];
-      }
-      const family = this.options.addressFamily ?? 'both';
-      const types = family === 'ipv4' ? ['A'] : family === 'ipv6' ? ['AAAA'] : ['A', 'AAAA'];
-      const found: string[] = [];
-      let ttl = Infinity;
-      for (const type of types) {
-        try {
-          const { result } = await this.resolve(run, name, type, undefined, nesting + 1);
-          for (const record of decodeRecords(result.message.answers, { lenient: true })) {
-            if (record.type === 'A' || record.type === 'AAAA') {
-              found.push(normalizeAddress(record.address));
-              ttl = Math.min(ttl, record.ttl);
-            }
-          }
-        } catch (error) {
-          if (run.signal?.aborted || !(error instanceof DnsError)) throw error;
-          // this nameserver cannot be found; another may be
-        }
-      }
-      for (const address of found) this.learnName(address, server.written ?? name);
-      const addresses = this.usable(found);
-      // only what was found is kept past this call. A lookup that failed, or found
-      // nothing, is tried again by the next query
-      if (addresses.length > 0 && ttl > 0) {
-        run.knowledge.addresses.set(name, { addresses, expires: Date.now() + ttl * 1000 });
-      }
+
+    const sharing = this.options.nameserverCache !== false;
+    // another query is looking this nameserver up already: its answer is this one's too.
+    // Only the walk itself waits on another query's lookup, never a lookup: a lookup that
+    // waited could end up waiting on one that waits on it
+    const inFlight = sharing && nesting === 0 ? this.lookups.get(name) : undefined;
+    if (inFlight) {
+      const addresses = await shared(run, inFlight);
       run.lookedUp.set(name, addresses);
       return addresses;
+    }
+
+    run.resolving.add(name);
+    const lookup = this.lookUp(run, server, nesting);
+    if (sharing && !this.lookups.has(name)) {
+      this.lookups.set(name, lookup);
+      // nobody may be waiting to hear that it failed
+      lookup
+        .catch(() => undefined)
+        .finally(() => {
+          if (this.lookups.get(name) === lookup) this.lookups.delete(name);
+        });
+    }
+    try {
+      return await lookup;
     } finally {
       run.resolving.delete(name);
     }
+  }
+
+  // resolve a nameserver's addresses from the root, and keep what was found
+  private async lookUp(run: Run, server: Nameserver, nesting: number): Promise<string[]> {
+    const { name } = server;
+    const family = this.options.addressFamily ?? 'both';
+    const types = family === 'ipv4' ? ['A'] : family === 'ipv6' ? ['AAAA'] : ['A', 'AAAA'];
+    const found: string[] = [];
+    let ttl = Infinity;
+    for (const type of types) {
+      try {
+        const { result } = await this.resolve(run, name, type, undefined, nesting + 1);
+        for (const record of decodeRecords(result.message.answers, { lenient: true })) {
+          if (record.type === 'A' || record.type === 'AAAA') {
+            found.push(normalizeAddress(record.address));
+            ttl = Math.min(ttl, record.ttl);
+          }
+        }
+      } catch (error) {
+        if (run.signal?.aborted || !(error instanceof DnsError)) throw error;
+        // this nameserver cannot be found; another may be
+      }
+    }
+    for (const address of found) this.learnName(address, server.written ?? name);
+    const addresses = this.usable(found);
+    // only what was found is kept past this call. A lookup that failed, or found
+    // nothing, is tried again by the next query
+    if (addresses.length > 0 && ttl > 0) {
+      run.knowledge.addresses.set(name, { addresses, expires: Date.now() + ttl * 1000 });
+    }
+    run.lookedUp.set(name, addresses);
+    return addresses;
   }
 
   // one question to one server, the way an authoritative server is asked: no recursion.
@@ -917,7 +883,7 @@ export class AuthoritativeResolver {
               tcpFallback: merged.tcpFallback,
               retries,
               transports: this.transports,
-              onEvent: this.options.onEvent,
+              onEvent: eventsTo(this.options.onEvent, run.onEvent),
               signal: run.signal,
             }
           )
@@ -965,6 +931,37 @@ function lastToAsk(
 function restOfTime(left: number, patience: number, retries: number): number {
   if (!Number.isFinite(left)) return patience;
   return Math.min(MAX_TIMER, Math.max(patience, Math.floor(left / (retries + 1))));
+}
+
+// one listener that tells both, either of which may be missing
+function eventsTo(first: OnEvent | undefined, second: OnEvent | undefined): OnEvent | undefined {
+  if (!first || !second) return first ?? second;
+  return event => {
+    first(event);
+    second(event);
+  };
+}
+
+// what another query's lookup of a nameserver finds, waited for no longer than this walk
+// has left, and no longer than its caller is willing to wait. A lookup that failed, or
+// that the other query gave up on, found nothing for this walk either
+async function shared(run: Run, lookup: Promise<string[]>): Promise<string[]> {
+  if (run.signal?.aborted) throw run.signal.reason;
+  return withRest(
+    run,
+    left =>
+      new Promise<string[]>((resolve, reject) => {
+        const timer = left <= MAX_TIMER ? setTimeout(() => resolve([]), left) : undefined;
+        const abort = () => reject(run.signal?.reason);
+        run.signal?.addEventListener('abort', abort, { once: true });
+        lookup
+          .then(resolve, () => resolve([]))
+          .finally(() => {
+            clearTimeout(timer);
+            run.signal?.removeEventListener('abort', abort);
+          });
+      })
+  );
 }
 
 // the longest a timer can be set for; anything longer fires at once

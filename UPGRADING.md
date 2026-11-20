@@ -75,7 +75,7 @@ sockets they opened, and `clearCache()`.
 | `retries: 0` by default | `retries: 2` by default, or 1 when there are other servers to turn to |
 | `backoff` | removed. A retry is sent as soon as the attempt before it has failed |
 | `signal` on the client | `signal` on each `query()`. An aborted query rejects with the signal's reason |
-| `cache: true`, `cacheSize: 1000` | `cache: { max: 1000 }` (the default), `cache: false`, or a cache of your own. `AuthoritativeResolver` takes `cache: true \| false` and caches delegations, not answers |
+| `cache: true`, `cacheSize: 1000` | `cache: { max: 1000 }` (the default), `cache: false`, or a cache of your own. `AuthoritativeResolver` takes `cache: true \| false`, which caches delegations, and `nameserverCache: true \| false`, which caches the addresses of nameservers that came without glue; neither caches answers |
 | `concurrency: 10` by default | `concurrency`, no limit by default. Each server also has a limit of its own, `serverConcurrency` |
 
 Options can be set on the resolver for every query, or passed to one `query()`.
@@ -88,22 +88,10 @@ These are new, or differ from what 0.x did.
 | --- | --- | --- |
 | `servers` (`Resolver`) | this machine's resolvers | 0.x asked 1.1.1.1 |
 | `serverConcurrency` | 16 (`Resolver`), 8 (`AuthoritativeResolver`) | queries in flight to one server at once. `Infinity` for no limit |
-| server order (`AuthoritativeResolver`) | random, drawn afresh each time | for root servers, nameservers and addresses. Pass `serverOrder` to fix it |
+| server order (`AuthoritativeResolver`) | random, drawn afresh each time | for root servers, nameservers and addresses. There is no option to fix it; the trace says which servers were asked |
 | `addressFamily` (`AuthoritativeResolver`) | `'both'`, IPv4 first | a server's IPv6 address is tried once each of the zone's servers has been tried at its first address. `'ipv4'` for IPv4 only |
 | `totalTimeout` (`AuthoritativeResolver`) | 10 seconds | the time one answer may take altogether, on top of `timeout` per server |
 | `udpPayloadSize` | 1232 | the EDNS buffer size, as DNS Flag Day 2020 recommends |
-
-To fix the order `AuthoritativeResolver` tries servers in:
-
-```ts
-import { AuthoritativeResolver } from '@aoxborrow/dns';
-
-const resolver = new AuthoritativeResolver({
-  // the root servers, nameservers and addresses in the order they were given
-  serverOrder: items => items,
-  addressFamily: 'ipv4',
-});
-```
 
 ## The answer
 

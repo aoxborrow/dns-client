@@ -12,11 +12,8 @@ import type {
   AuthoritativeResolverOptions,
   CachedResponse,
   ResolverOptions,
-  ServerOrder,
   TraceHop,
 } from '../../src/resolvers/index';
-import { parseIpv4, parseIpv6 } from '../../src/records/addresses';
-import { compareNames } from '../../src/wire/names';
 import { aliasTarget } from '../../src/resolvers/answer';
 import { cacheLifetime } from '../../src/resolvers/resolver';
 import { toEndpoint } from '../../src/transports/endpoint';
@@ -35,21 +32,10 @@ import type { SimulatedNetwork, SimulatedServer } from '../support/simulated-net
 // UDP where there is UDP, which is Node; TCP elsewhere
 const DEFAULT_TRANSPORT = isNode() ? 'udp' : 'tcp';
 
-// the order the authoritative resolver once used by default, the same on every run: the
-// root servers as given, nameservers by name, addresses by value
-const sameOrder: ServerOrder = (items, kind) => {
-  if (kind === 'roots') return items;
-  if (kind === 'nameservers') return [...items].sort(compareNames);
-  const value = (address: string) => parseIpv4(address) ?? parseIpv6(address) ?? new Uint8Array();
-  return [...items].sort((a, b) => {
-    const x = value(a);
-    const y = value(b);
-    if (x.length !== y.length) return x.length - y.length;
-    for (let index = 0; index < x.length; index++)
-      if (x[index] !== y[index]) return x[index] - y[index];
-    return 0;
-  });
-};
+// what Math.random is made to return for the authoritative resolver's shuffle to leave
+// every list as it came: the root servers as given, a zone's nameservers and one
+// nameserver's addresses in the order the referral listed them
+const AS_GIVEN = 1 - Number.EPSILON;
 
 // the two resolvers, against a network that exists only in memory. What is being tested
 // is which server gets asked what, and what is made of the answers
@@ -765,6 +751,15 @@ describe('AuthoritativeResolver', () => {
 
   let network: SimulatedNetwork;
 
+  // the same servers in the same order on every run. The default order has cases of its own
+  beforeEach(() => {
+    vi.spyOn(Math, 'random').mockReturnValue(AS_GIVEN);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   function resolver(
     options: AuthoritativeResolverOptions = {},
     overrides: Record<string, SimulatedServer | undefined> = {}
@@ -780,9 +775,8 @@ describe('AuthoritativeResolver', () => {
       transports: network.transports,
       timeout: 100,
       retries: 0,
-      // the same servers in the same order on every run, and IPv4 only, which most of
-      // these cases are written against. The defaults have cases of their own
-      serverOrder: sameOrder,
+      // IPv4 only, which most of these cases are written against. The defaults have cases
+      // of their own
       addressFamily: 'ipv4',
       ...options,
     });
@@ -885,104 +879,13 @@ describe('AuthoritativeResolver', () => {
     expect(answer.serverName).toBe('ns1.dnshost.net');
   });
 
-  it('asks a caller-supplied lookup for a nameserver address before resolving it', async () => {
-    const asked: string[] = [];
-    const answer = await resolver({
-      resolveNameserver: name => {
-        asked.push(name);
-        return name === 'ns1.dnshost.net' ? ['10.2.0.53'] : undefined;
-      },
-    }).query('glueless.com', 'A');
-    expect(asked).toEqual(['ns1.dnshost.net']);
-    // no walk from the root for the nameserver's own name
-    expect(network.log()).toEqual([
-      '10.0.0.1 glueless.com A',
-      '10.0.1.1 glueless.com A',
-      '10.2.0.53 glueless.com A',
-    ]);
-    expect(answer.serverName).toBe('ns1.dnshost.net');
-  });
-
   it('gives a nameserver lookup what is left of the total timeout, and names it when that runs out', async () => {
-    let given = Infinity;
-    const error = await resolver({
-      totalTimeout: 100,
-      resolveNameserver: async (_name, { timeout }) => {
-        given = timeout;
-        // a lookup that takes all the time there is, and a little over
-        await new Promise(resolve => setTimeout(resolve, timeout + 20));
-        return undefined;
-      },
-    })
+    // dnshost.net's server says nothing, so ns1.dnshost.net cannot be found in time
+    const error = await resolver({ totalTimeout: 100 }, { '10.2.0.1': () => undefined })
       .query('glueless.com', 'A')
       .catch(caught => caught);
-    expect(given).toBeLessThanOrEqual(100);
     expect(error).toBeInstanceOf(TimeoutError);
     expect(error.server).toBe('ns1.dnshost.net');
-  });
-
-  it('names the nameserver when its lookup ends a moment before the clock reaches the deadline', async () => {
-    // a clock that runs slow, so the lookup's timer for the rest of the time fires with the
-    // clock still short of the deadline, as a timer firing a few milliseconds early does
-    const real = performance.now.bind(performance);
-    const origin = real();
-    const clock = vi
-      .spyOn(performance, 'now')
-      .mockImplementation(() => origin + (real() - origin) * 0.8);
-    try {
-      const error = await resolver({
-        totalTimeout: 100,
-        resolveNameserver: async (_name, { timeout }) => {
-          // a lookup that is given the rest of the time, runs it out and finds nothing
-          await new Promise(resolve => setTimeout(resolve, timeout));
-          return undefined;
-        },
-      })
-        .query('glueless.com', 'A')
-        .catch(caught => caught);
-      expect(error).toBeInstanceOf(TimeoutError);
-      expect(error.server).toBe('ns1.dnshost.net');
-      // the time is gone, so the nameserver is not looked for from the root as well
-      expect(network.queries.some(query => query.name === 'ns1.dnshost.net')).toBe(false);
-    } finally {
-      clock.mockRestore();
-    }
-  });
-
-  it('falls back to resolving from the root when the lookup has nothing', async () => {
-    const answer = await resolver({ resolveNameserver: () => undefined }).query(
-      'glueless.com',
-      'A'
-    );
-    expect(answer.records).toHaveLength(1);
-    expect(network.queries.some(query => query.name === 'ns1.dnshost.net')).toBe(true);
-  });
-
-  it('falls back to resolving from the root when the lookup has nothing usable', async () => {
-    // an IPv6 address, with only IPv4 asked for, is as good as no address: it is neither
-    // kept nor allowed to stand in for the nameserver's own A record
-    const asked: string[] = [];
-    const lookup = resolver({
-      resolveNameserver: name => {
-        asked.push(name);
-        return ['2001:db8::53'];
-      },
-    });
-    const answer = await lookup.query('glueless.com', 'A');
-    expect(answer.records.map(record => record.address)).toEqual(['192.0.2.77']);
-    expect(answer).toMatchObject({ server: '10.2.0.53', serverName: 'ns1.dnshost.net' });
-    expect(asked).toEqual(['ns1.dnshost.net']);
-    expect(network.queries.some(query => query.name === 'ns1.dnshost.net')).toBe(true);
-  });
-
-  it('tries nameservers in the order it is given', async () => {
-    // reverse order: ns2 before ns1
-    const answer = await resolver({
-      serverOrder: (items, kind) =>
-        kind === 'nameservers' ? [...items].sort((a, b) => b.localeCompare(a)) : items,
-    }).query('example.com', 'A');
-    expect(answer.server).toBe('10.1.0.2');
-    expect(answer.serverName).toBe('ns2.example.com');
   });
 
   it('names the answering server as the nameserver it asked, when two share an address', async () => {
@@ -1019,8 +922,8 @@ describe('AuthoritativeResolver', () => {
     expect(answer.trace?.at(-1)?.serverName).toBe('NS1.Cased.COM');
   });
 
-  it('tries the addresses of one nameserver in the order it is given', async () => {
-    // glue arrives in whatever order the parent sends it: the order the caller gives wins
+  it('tries the addresses of one nameserver in the order the shuffle leaves them', async () => {
+    // glue arrives in whatever order the parent sends it, and the shuffle starts from that
     const parent = (addresses: string[]) =>
       zoneServer({ zone: 'com', delegations: { 'glued.com': { 'ns1.glued.com': addresses } } });
     const zone = zoneServer({ zone: 'glued.com', records: [['glued.com', 'A', '192.0.2.6']] });
@@ -1034,26 +937,17 @@ describe('AuthoritativeResolver', () => {
         'glued.com',
         'A'
       );
-      expect(answer.server).toBe('10.6.0.9');
+      expect(answer.server).toBe(glue[0]);
     }
 
-    const byText =
-      (direction: number): ServerOrder =>
-      (items, kind) =>
-        kind === 'addresses' ? [...items].sort((a, b) => direction * a.localeCompare(b)) : items;
-    const answer = await resolver(
-      { serverOrder: byText(-1) },
-      { '10.0.1.1': parent(['10.6.0.100', '10.6.0.9', '10.6.0.20']), ...servers }
-    ).query('glued.com', 'A');
+    // with the draw always at the bottom, the shuffle turns 100, 9, 20 into 9, 20, 100
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const glued = parent(['10.6.0.100', '10.6.0.9', '10.6.0.20']);
+    const answer = await resolver({}, { '10.0.1.1': glued, '10.0.1.2': glued, ...servers }).query(
+      'glued.com',
+      'A'
+    );
     expect(answer.server).toBe('10.6.0.9');
-    expect(
-      (
-        await resolver(
-          { serverOrder: byText(1) },
-          { '10.0.1.1': parent(['10.6.0.100', '10.6.0.9', '10.6.0.20']), ...servers }
-        ).query('glued.com', 'A')
-      ).server
-    ).toBe('10.6.0.100');
   });
 
   it('uses nothing but addresses as nameserver addresses', async () => {
@@ -1071,7 +965,7 @@ describe('AuthoritativeResolver', () => {
 
     await resolver({
       addressFamily: 'both',
-      resolveNameserver: () => ['10.2.0.53:6379', '10.2.0.53'],
+      hosts: { 'ns1.dnshost.net': ['10.2.0.53:6379', '10.2.0.53'] },
     }).query('glueless.com', 'A');
     expect(network.queries.map(query => query.server)).toEqual([
       '10.0.0.1',
@@ -1631,6 +1525,88 @@ describe('AuthoritativeResolver', () => {
       const answer = await iterative.query('glueless.com', 'A');
       expect(answer.records.map(record => record.address)).toEqual(['192.0.2.77']);
     });
+
+    it('keeps nameserver addresses when told to remember no delegations', async () => {
+      const iterative = resolver({ cache: false });
+      await iterative.query('glueless.com', 'A');
+      const second = await iterative.query('glueless.com', 'A');
+      // the second walk starts at the root again, and asks ns1.dnshost.net straight away
+      expect(network.log().slice(6)).toEqual([
+        '10.0.0.1 glueless.com A',
+        '10.0.1.1 glueless.com A',
+        '10.2.0.53 glueless.com A',
+      ]);
+      expect(second.trace?.map(hop => hop.zone)).toEqual(['.', 'com', 'glueless.com']);
+      expect(second.serverName).toBe('ns1.dnshost.net');
+      expect(network.queries.filter(query => query.name === 'ns1.dnshost.net')).toHaveLength(3);
+    });
+
+    it('looks a nameserver up for every query when told to remember no addresses', async () => {
+      const iterative = resolver({ cache: false, nameserverCache: false });
+      await iterative.query('glueless.com', 'A');
+      await iterative.query('glueless.com', 'A');
+      expect(network.queries.filter(query => query.name === 'ns1.dnshost.net')).toHaveLength(6);
+    });
+
+    it('forgets nameserver addresses on clearCache', async () => {
+      const iterative = resolver({ cache: false });
+      await iterative.query('glueless.com', 'A');
+      iterative.clearCache();
+      await iterative.query('glueless.com', 'A');
+      expect(network.queries.filter(query => query.name === 'ns1.dnshost.net')).toHaveLength(6);
+    });
+
+    it('shares one lookup of a nameserver among queries asked at the same time', async () => {
+      const slow =
+        (server: SimulatedServer): SimulatedServer =>
+        async query => {
+          await new Promise(resolve => setTimeout(resolve, 5));
+          return server(query);
+        };
+      const iterative = resolver({ cache: false }, { '10.2.0.1': slow(dnshost) });
+      const answers = await Promise.all(
+        ['A', 'MX', 'TXT'].map(type => iterative.query('glueless.com', type))
+      );
+      expect(answers.map(answer => answer.serverName)).toEqual([
+        'ns1.dnshost.net',
+        'ns1.dnshost.net',
+        'ns1.dnshost.net',
+      ]);
+      expect(network.log().filter(line => line.includes('ns1.dnshost.net'))).toEqual([
+        '10.0.0.1 ns1.dnshost.net A',
+        '10.0.2.1 ns1.dnshost.net A',
+        '10.2.0.1 ns1.dnshost.net A',
+      ]);
+    });
+
+    it('tells each query only of the queries it sent', async () => {
+      const iterative = resolver({ cache: false });
+      const seen: Record<string, string[]> = { A: [], MX: [] };
+      await Promise.all(
+        (['A', 'MX'] as const).map(type =>
+          iterative.query('glueless.com', type, {
+            onEvent: event => {
+              if (event.event === 'query')
+                seen[type].push(`${event.server} ${event.query} ${event.type}`);
+            },
+          })
+        )
+      );
+      // A met ns1.dnshost.net first and looked it up; MX waited for that lookup
+      expect(seen.A).toEqual([
+        '10.0.0.1 glueless.com A',
+        '10.0.1.1 glueless.com A',
+        '10.0.0.1 ns1.dnshost.net A',
+        '10.0.2.1 ns1.dnshost.net A',
+        '10.2.0.1 ns1.dnshost.net A',
+        '10.2.0.53 glueless.com A',
+      ]);
+      expect(seen.MX).toEqual([
+        '10.0.0.1 glueless.com MX',
+        '10.0.1.1 glueless.com MX',
+        '10.2.0.53 glueless.com MX',
+      ]);
+    });
   });
 
   describe('addresses', () => {
@@ -1737,7 +1713,7 @@ describe('AuthoritativeResolver', () => {
       // with the draw always at the bottom, the shuffle reverses two servers; at the top it
       // leaves them as they are
       vi.spyOn(Math, 'random').mockReturnValue(0);
-      await resolver({ serverOrder: undefined }).query('example.com', 'A');
+      await resolver().query('example.com', 'A');
       expect(network.log()).toEqual([
         '10.0.0.2 example.com A',
         '10.0.1.2 example.com A',
@@ -1745,7 +1721,7 @@ describe('AuthoritativeResolver', () => {
       ]);
 
       vi.spyOn(Math, 'random').mockReturnValue(0.999);
-      await resolver({ serverOrder: undefined }).query('example.com', 'A');
+      await resolver().query('example.com', 'A');
       expect(network.log()).toEqual([
         '10.0.0.1 example.com A',
         '10.0.1.1 example.com A',
@@ -1753,35 +1729,17 @@ describe('AuthoritativeResolver', () => {
       ]);
     });
 
-    it('asks the order hook about the roots, the nameservers and the addresses', async () => {
-      const asked: string[] = [];
-      await resolver({
-        addressFamily: 'both',
-        serverOrder: (items, kind) => {
-          asked.push(`${kind}: ${items.join(' ')}`);
-          return items;
-        },
-      }).query('example.com', 'A');
-      expect(asked).toEqual([
-        'roots: a.root.test b.root.test',
-        'nameservers: a.gtld.test b.gtld.test',
-        'nameservers: ns1.example.com ns2.example.com',
-        'addresses: 10.1.0.1 2001:db8::1',
-      ]);
-    });
-
-    it('puts IPv4 first whatever order the hook gives', async () => {
+    it('puts IPv4 first whatever the shuffle draws', async () => {
+      // with the draw always at the bottom, every list of two is reversed: ns2 before ns1,
+      // and ns1's IPv6 address before its IPv4 one, until IPv4 is put first
+      vi.spyOn(Math, 'random').mockReturnValue(0);
       const answer = await resolver(
-        {
-          addressFamily: 'both',
-          serverOrder: (items, kind) => (kind === 'addresses' ? [...items].reverse() : items),
-        },
+        { addressFamily: 'both' },
         { '10.1.0.1': undefined, '10.1.0.2': undefined }
       ).query('example.com', 'A');
-      // ns1 at its IPv4 address, ns2, and only then ns1 at its IPv6 address
       expect(network.log().slice(2)).toEqual([
-        '10.1.0.1 example.com A',
         '10.1.0.2 example.com A',
+        '10.1.0.1 example.com A',
         '2001:db8::1 example.com A',
       ]);
       expect(answer.server).toBe('2001:db8::1');

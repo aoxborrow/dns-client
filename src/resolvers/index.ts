@@ -1,11 +1,6 @@
 // the resolvers: how questions get asked
 export { AuthoritativeResolver } from './authoritative';
-export type {
-  AuthoritativeQueryOptions,
-  AuthoritativeResolverOptions,
-  ServerOrder,
-  ServerOrderKind,
-} from './authoritative';
+export type { AuthoritativeQueryOptions, AuthoritativeResolverOptions } from './authoritative';
 export { Resolver } from './resolver';
 export type { CachedResponse, ResolverOptions, ResolverQueryOptions } from './resolver';
 export { createLruCache } from './cache';
