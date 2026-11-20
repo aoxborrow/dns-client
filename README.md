@@ -733,8 +733,10 @@ there: `lookupService`, `setLocalAddress`, the `maxTimeout` option.
 Where it differs from Node:
 
 - It caches by TTL, as the library's `Resolver` does; Node does not. Pass `cache: false`
-  for Node's behaviour. It takes every option of the library's `Resolver` besides Node's
-  `timeout` and `tries`.
+  for Node's behaviour.
+- Node's `timeout` (milliseconds per attempt) and `tries` (attempts per server) work as in
+  Node; `tries: 4` is the library's `retries: 3`. `maxTimeout` is not supported. Every other
+  option of the library's `Resolver` is accepted too.
 - `lookup` does not call getaddrinfo. It returns an IP address as it is, then reads the
   hosts file, answers `localhost` and names under it with the loopback addresses
   (RFC 6761), and otherwise asks the DNS servers for A and AAAA at once. `ADDRCONFIG` is
