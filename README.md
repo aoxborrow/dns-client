@@ -142,6 +142,10 @@ and the walk follows their referrals from there. Nameservers that come without a
 are still looked up from the root servers, and what such a walk is told is not kept for
 other queries.
 
+A query that has to show the whole path sets `fresh`: it walks from the root servers and
+asks every server on the way whatever the resolver remembers, so its trace starts at the
+root. What it learns is still remembered for the other queries.
+
 ```ts
 import { AuthoritativeResolver } from '@aoxborrow/dns';
 
@@ -263,7 +267,7 @@ These can be set on a resolver for every query, or passed to one `query()`:
 | `serverDelay` | `0` | the least milliseconds between two queries to the same server |
 | `concurrency` | no limit | queries in flight at once, to all servers together |
 | `hosts` | none | addresses for nameservers by name, used before asking for them |
-| `cache` | `true` | remember delegations between queries. With `false` every query walks from the root |
+| `cache` | `true` | remember delegations between queries, and share the referrals of queries running at the same time. With `false` every query walks from the root |
 | `nameserverCache` | `true` | remember the addresses of nameservers that came without glue between queries, even with `cache: false` |
 | `strict`, `validate`, `trustAnchors` | | as for `Resolver` |
 
@@ -291,7 +295,13 @@ shared.clearCache();
 shared.close(); // closes the sockets this resolver opened, and empties its cache
 ```
 
-`AuthoritativeResolver` caches delegations and nameserver addresses, not answers. With
+`AuthoritativeResolver` caches delegations and nameserver addresses, not answers, for as
+long as their TTLs allow and never longer than the resolver lives. A query starts at the
+deepest zone it knows, and its trace starts there too. Queries running at the same time
+share referrals: one that needs a delegation another query is asking for right now waits
+for that answer instead of asking the same servers, no longer than its own time allows,
+and asks for itself if the other query gets nothing. A query with `fresh: true` walks from
+the root anyway, asking every server on the way, and the others learn from it. With
 `cache: false` every query starts again from the root, so its trace is the whole path, but
 a nameserver that came without glue and was looked up by an earlier query is asked
 straight away; `nameserverCache: false` looks it up again every time. Queries running at
@@ -306,6 +316,11 @@ import { AuthoritativeResolver } from '@aoxborrow/dns';
 const walker = new AuthoritativeResolver({ cache: false });
 await walker.query('example.com', 'A');
 await walker.query('example.com', 'MX');
+
+// the name's own answer with its whole path, and names under it straight from its zone
+const shared = new AuthoritativeResolver();
+await shared.query('example.com', 'A', { fresh: true });
+await Promise.all(['www', 'mail'].map(label => shared.query(`${label}.example.com`, 'A')));
 ```
 
 ### Events

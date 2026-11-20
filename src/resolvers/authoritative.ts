@@ -17,7 +17,14 @@ import { createTransports, defaultTransports } from '../transports/index';
 import type { Transports } from '../transports/index';
 import { now } from '../transports/runtime';
 import type { OnEvent, TransportOptions } from '../transports/types';
-import { canonicalName, comparableName, isSubdomain, parentName, toAsciiName } from '../wire/names';
+import {
+  canonicalName,
+  comparableName,
+  isSubdomain,
+  parentName,
+  splitName,
+  toAsciiName,
+} from '../wire/names';
 import { dnssecResponse, Validator } from '../dnssec/validate';
 import type { DnssecResponse } from '../dnssec/judge';
 import type { TrustAnchor } from '../dnssec/types';
@@ -67,7 +74,10 @@ export interface AuthoritativeResolverOptions
   // how many queries may be in flight to one server address at once. Default 8; Infinity
   // for no limit
   serverConcurrency?: number;
-  // remember delegations between queries, for as long as their TTLs allow. Default true.
+  // remember delegations between queries, for as long as their TTLs allow, and for no
+  // longer than the resolver lives. A query then starts at the deepest zone it knows, and
+  // its trace starts there too. Queries running at the same time that need the same
+  // delegation share one referral: the others wait for the one asking. Default true.
   // With false every query starts again from the root, and its trace is the whole path
   cache?: boolean;
   // remember the addresses of nameservers that came without glue between queries, for as
@@ -111,6 +121,11 @@ export interface AuthoritativeQueryOptions extends Omit<
   // up from the root servers, and the delegations found on the way are not kept for
   // other queries
   startAt?: readonly NameserverHint[];
+  // walk from the root servers whatever delegations the resolver remembers, asking every
+  // server on the way, so the trace is the whole path. What the walk learns is still kept
+  // for other queries, and other queries that need a delegation it is fetching wait for
+  // it. Nameserver addresses still come from `nameserverCache`. Default false
+  fresh?: boolean;
 }
 
 interface Nameserver {
@@ -149,6 +164,10 @@ interface Run {
   onEvent: OnEvent | undefined;
   // the servers the walk starts at, when not the root servers
   start: Nameserver[] | undefined;
+  // the walk itself ignores the delegations already known (the query's `fresh`)
+  fresh: boolean;
+  // `knowledge.cuts` is the resolver's, so what this run asks may be what another needs
+  shared: boolean;
   // when the whole query gives up, on the clock `now()` reads, and the time it was given
   deadline: number;
   totalTimeout: number;
@@ -179,6 +198,12 @@ interface SharedLookup {
   done: Promise<LookupResult>;
   stop: AbortController;
   waiting: number;
+}
+
+// a zone's servers being asked about a name, by `stepDown`: whatever delegation comes back
+// is in the resolver's knowledge by the time `done` settles
+interface Fetch {
+  done: Promise<void>;
 }
 
 // the order servers are tried in: random, a fresh shuffle every time (Fisher-Yates), so
@@ -226,6 +251,9 @@ export class AuthoritativeResolver {
   // nameserver lookups in flight, by canonical name, for queries that meet the same
   // nameserver at the same time to share
   private readonly lookups = new Map<string, SharedLookup>();
+  // zones being asked right now about names on the way to a delegation, for a walk that
+  // needs the same one to wait for it rather than ask the same servers again
+  private readonly fetches = new Map<string, Fetch>();
   private readonly root: Nameserver[];
   // address -> name, for the trace: those the resolver was given, kept for its life, and
   // those it learned on the way, bounded and forgotten by `clearCache()`
@@ -309,10 +337,12 @@ export class AuthoritativeResolver {
     const timer = left > 0 && left <= MAX_TIMER ? setTimeout(timedOut, left) : undefined;
 
     // the chain's records are asked for as they are: no alias is followed. They go the way
-    // the data query went: the same transport, port, timeouts and EDNS settings
+    // the data query went: the same transport, port, timeouts and EDNS settings. They start
+    // from the delegations already known, `fresh` or not, since their traces are not shown
     const {
       checkingDisabled: _checkingDisabled,
       authenticData: _authenticData,
+      fresh: _fresh,
       ...sameWay
     } = options;
     try {
@@ -354,7 +384,7 @@ export class AuthoritativeResolver {
     follow: boolean,
     responses?: DnssecResponse[]
   ): Promise<Answer> {
-    const { signal, totalTimeout: perQuery, onEvent, startAt, ...settings } = options;
+    const { signal, totalTimeout: perQuery, onEvent, startAt, fresh, ...settings } = options;
     const totalTimeout = perQuery ?? this.options.totalTimeout ?? DEFAULT_TOTAL_TIMEOUT;
     const started = now();
     // the name as the caller wrote it, for the answer, and as it is compared and sent
@@ -372,11 +402,11 @@ export class AuthoritativeResolver {
 
     const start =
       startAt && this.nameservers(startAt, (address, at) => this.learnName(address, at));
+    // a walk from somewhere other than the root keeps what it finds to itself
+    const shared = this.options.cache !== false && !start;
     const run: Run = {
       knowledge: {
-        // a walk from somewhere other than the root keeps what it finds to itself
-        cuts:
-          this.options.cache === false || start ? new Map<string, ZoneCut>() : this.knowledge.cuts,
+        cuts: shared ? this.knowledge.cuts : new Map<string, ZoneCut>(),
         addresses:
           this.options.nameserverCache === false
             ? new Map<string, { addresses: string[]; expires: number }>()
@@ -386,6 +416,8 @@ export class AuthoritativeResolver {
       signal,
       onEvent,
       start,
+      fresh: fresh === true,
+      shared,
       deadline: started + totalTimeout,
       totalTimeout,
       expired: false,
@@ -466,6 +498,7 @@ export class AuthoritativeResolver {
     // a lookup some query is still waiting on ends with the resolver
     for (const lookup of this.lookups.values()) lookup.stop.abort();
     this.lookups.clear();
+    this.fetches.clear();
     this.clearCache();
     if (this.ownsTransports) this.transports.close();
   }
@@ -523,7 +556,48 @@ export class AuthoritativeResolver {
       if (cut) run.knowledge.cuts.delete(zone);
       if (zone === '.') break;
     }
+    return this.rootCut();
+  }
+
+  private rootCut(): ZoneCut {
     return { zone: '.', servers: this.root, expires: Infinity };
+  }
+
+  // say that this run is about to ask a zone's servers about a name, for walks that need
+  // the same delegation to wait for. Returns what to call once the answer is in the
+  // knowledge, or undefined when another run is asking already or this one keeps what it
+  // learns to itself
+  private startFetch(run: Run, zone: string, name: string): (() => void) | undefined {
+    if (!run.shared) return undefined;
+    const { key } = stepDown(zone, name);
+    if (this.fetches.has(key)) return undefined;
+    let finish!: () => void;
+    const fetch: Fetch = { done: new Promise<void>(resolve => (finish = resolve)) };
+    this.fetches.set(key, fetch);
+    return () => {
+      if (this.fetches.get(key) === fetch) this.fetches.delete(key);
+      finish();
+    };
+  }
+
+  // wait for another run's fetch no longer than this walk has left, and no longer than its
+  // caller is willing to wait. However it ends, the walk then carries on with what is known
+  private async awaitFetch(run: Run, fetch: Fetch): Promise<void> {
+    if (run.signal?.aborted) throw run.signal.reason;
+    await withRest(
+      run,
+      left =>
+        new Promise<void>((resolve, reject) => {
+          const timer = left <= MAX_TIMER ? setTimeout(resolve, left) : undefined;
+          const abort = () => reject(run.signal?.reason);
+          run.signal?.addEventListener('abort', abort, { once: true });
+          void fetch.done.then(() => {
+            clearTimeout(timer);
+            run.signal?.removeEventListener('abort', abort);
+            resolve();
+          });
+        })
+    );
   }
 
   // follow referrals from the closest known zone until a server answers for the name.
@@ -538,14 +612,41 @@ export class AuthoritativeResolver {
     const maxHops = this.options.maxHops ?? DEFAULT_MAX_HOPS;
     // a DS RRset is the parent's: the question goes to the zone above the name, even when
     // the name's own zone is already known (RFC 4035 §4.2)
-    // the walk itself starts where the caller said, when it said; a nameserver lookup
-    // starts at the root
+    const owner = type === 'DS' && name !== '.' ? parentName(name) : name;
+    // the walk itself starts where the caller said, when it said, and at the root when it
+    // is `fresh`; a nameserver lookup starts at the deepest zone known, or the root
+    const fresh = nesting === 0 && run.fresh;
     let cut =
       run.start && nesting === 0
         ? { zone: '.', servers: run.start, expires: Infinity }
-        : this.closestCut(run, type === 'DS' && name !== '.' ? parentName(name) : name);
+        : fresh
+          ? this.rootCut()
+          : this.closestCut(run, owner);
+    // the zones this walk has already waited at, so it waits at each at most once
+    const waited = new Set<string>();
 
     for (;;) {
+      // another run is asking this zone's servers about a name on the same way down: wait
+      // for the delegation it brings back rather than ask them the same thing. Only the walk
+      // itself waits, never a nameserver lookup, which may be what that run is waiting on.
+      // Whatever came of it, a delegation further down is taken up, and otherwise the walk
+      // asks for itself: another run's failure or timeout is not this one's
+      const down = stepDown(cut.zone, name);
+      const pending =
+        run.shared && nesting === 0 && !fresh && down.deeper && !waited.has(cut.zone)
+          ? this.fetches.get(down.key)
+          : undefined;
+      if (pending) {
+        waited.add(cut.zone);
+        await this.awaitFetch(run, pending);
+        const closer = this.closestCut(run, owner);
+        if (closer.zone !== cut.zone && isSubdomain(closer.zone, cut.zone)) {
+          cut = closer;
+          continue;
+        }
+      }
+      const finishFetch = this.startFetch(run, cut.zone, name);
+
       // ask the zone's servers in turn until one gives something to go on
       let step: { result: ExchangeResult; outcome: Outcome } | undefined;
       let firstError: DnsError | undefined;
@@ -560,118 +661,127 @@ export class AuthoritativeResolver {
       // zone's next server is the better bet, and with a total timeout it may be the only
       // one left time for: a dead dual-stack server would otherwise spend it on both its
       // addresses. A server's addresses are looked up when it is first needed
-      const turns = shuffled(cut.servers).map(server => ({
-        server,
-        addresses: undefined as string[] | undefined,
-        done: false,
-      }));
-      servers: for (let round = 0; turns.some(turn => !turn.done); round++) {
-        for (const [position, turn] of turns.entries()) {
-          if (turn.done) continue;
-          // out of time: what the zone's servers have said so far is all there will be
-          if (outOfTime(run)) {
-            stalled = turn.server;
-            break servers;
-          }
-          const { server } = turn;
-          turn.addresses ??= this.orderAddresses(await this.addressesOf(run, server, nesting));
-          // finding the address may have been what took the time
-          if (outOfTime(run)) {
-            stalled = server;
-            break servers;
-          }
-          const address = turn.addresses[round];
-          if (address === undefined) {
-            turn.done = true;
-            continue;
-          }
-          if (++run.hops > maxHops) {
-            throw new InvalidResponseError(
-              `Gave up resolving ${name} after asking ${maxHops} servers`,
-              { query: name, type }
-            );
-          }
-          const timestamp = new Date();
-          const hopStarted = now();
-          const hop: TraceHop = {
-            server: address,
-            ...(server.name && { serverName: server.written ?? server.name }),
-            zone: cut.written ?? cut.zone,
-            name,
-            type,
-            elapsed: 0,
-            timestamp,
-          };
-          trace?.push(hop);
-          // the last the zone has left to ask gets the rest of the walk's time, not the
-          // patience with one server: that patience is there to leave time for the next, and
-          // there is no next. Only on the walk itself: a nameserver lookup's time belongs to
-          // the zone that sent for it, whose other servers may still need it
-          const last = nesting === 0 && lastToAsk(turns, position, round);
-          try {
-            const result = await this.ask(run, name, type, address, last);
-            const outcome = this.read(result, name, type, cut.zone);
-            Object.assign(hop, {
-              transport: result.transport,
-              rcode: result.message.rcode,
-              rcodeName: rcodeName(result.message.rcode),
-              bytes: result.bytes.length,
-              elapsed: now() - hopStarted,
-              ...(outcome.kind === 'referral' && {
-                referral: outcome.cut.written ?? outcome.cut.zone,
-              }),
-            });
-            if (outcome.kind === 'lame') {
-              hop.error = {
-                name: 'InvalidResponseError',
-                message: outcome.reason,
-                retryable: false,
-              };
-              run.failures.push({
-                server: address,
-                error: new InvalidResponseError(outcome.reason, {
-                  server: address,
-                  query: name,
-                  type,
-                  transport: result.transport,
-                  ...(!outcome.loop && { rcode: result.message.rcode }),
-                }),
-              });
-              if (outcome.loop) {
-                loop = outcome.reason;
-                turn.done = true;
-                continue;
-              }
-              lastLame = result;
-              // two of a zone's servers refusing the same way is the zone's answer. A
-              // type an operator will not serve (RRSIG, ANY) is refused by every one of
-              // its servers, and asking all eight costs more than the rare third opinion
-              // is worth
-              const rcode = result.message.rcode;
-              if (rcode !== 0 && refusals.has(rcode)) break servers;
-              refusals.add(rcode);
-              // it answered, so it can be reached, and its other addresses are the same
-              // server with the same thing to say: on to the zone's next nameserver
+      try {
+        const turns = shuffled(cut.servers).map(server => ({
+          server,
+          addresses: undefined as string[] | undefined,
+          done: false,
+        }));
+        servers: for (let round = 0; turns.some(turn => !turn.done); round++) {
+          for (const [position, turn] of turns.entries()) {
+            if (turn.done) continue;
+            // out of time: what the zone's servers have said so far is all there will be
+            if (outOfTime(run)) {
+              stalled = turn.server;
+              break servers;
+            }
+            const { server } = turn;
+            turn.addresses ??= this.orderAddresses(await this.addressesOf(run, server, nesting));
+            // finding the address may have been what took the time
+            if (outOfTime(run)) {
+              stalled = server;
+              break servers;
+            }
+            const address = turn.addresses[round];
+            if (address === undefined) {
               turn.done = true;
               continue;
             }
-            step = { result, outcome };
-            break servers;
-          } catch (error) {
-            hop.elapsed = now() - hopStarted;
-            // a question that cannot be asked, or a caller who has given up
-            if (
-              run.signal?.aborted ||
-              !(error instanceof DnsError) ||
-              error instanceof InvalidQueryError
-            ) {
-              throw error;
+            if (++run.hops > maxHops) {
+              throw new InvalidResponseError(
+                `Gave up resolving ${name} after asking ${maxHops} servers`,
+                { query: name, type }
+              );
             }
-            hop.error = errorData(error);
-            run.failures.push({ server: address, error });
-            firstError ??= error;
+            const timestamp = new Date();
+            const hopStarted = now();
+            const hop: TraceHop = {
+              server: address,
+              ...(server.name && { serverName: server.written ?? server.name }),
+              zone: cut.written ?? cut.zone,
+              name,
+              type,
+              elapsed: 0,
+              timestamp,
+            };
+            trace?.push(hop);
+            // the last the zone has left to ask gets the rest of the walk's time, not the
+            // patience with one server: that patience is there to leave time for the next, and
+            // there is no next. Only on the walk itself: a nameserver lookup's time belongs to
+            // the zone that sent for it, whose other servers may still need it
+            const last = nesting === 0 && lastToAsk(turns, position, round);
+            try {
+              const result = await this.ask(run, name, type, address, last);
+              const outcome = this.read(result, name, type, cut.zone);
+              Object.assign(hop, {
+                transport: result.transport,
+                rcode: result.message.rcode,
+                rcodeName: rcodeName(result.message.rcode),
+                bytes: result.bytes.length,
+                elapsed: now() - hopStarted,
+                ...(outcome.kind === 'referral' && {
+                  referral: outcome.cut.written ?? outcome.cut.zone,
+                }),
+              });
+              if (outcome.kind === 'lame') {
+                hop.error = {
+                  name: 'InvalidResponseError',
+                  message: outcome.reason,
+                  retryable: false,
+                };
+                run.failures.push({
+                  server: address,
+                  error: new InvalidResponseError(outcome.reason, {
+                    server: address,
+                    query: name,
+                    type,
+                    transport: result.transport,
+                    ...(!outcome.loop && { rcode: result.message.rcode }),
+                  }),
+                });
+                if (outcome.loop) {
+                  loop = outcome.reason;
+                  turn.done = true;
+                  continue;
+                }
+                lastLame = result;
+                // two of a zone's servers refusing the same way is the zone's answer. A
+                // type an operator will not serve (RRSIG, ANY) is refused by every one of
+                // its servers, and asking all eight costs more than the rare third opinion
+                // is worth
+                const rcode = result.message.rcode;
+                if (rcode !== 0 && refusals.has(rcode)) break servers;
+                refusals.add(rcode);
+                // it answered, so it can be reached, and its other addresses are the same
+                // server with the same thing to say: on to the zone's next nameserver
+                turn.done = true;
+                continue;
+              }
+              step = { result, outcome };
+              break servers;
+            } catch (error) {
+              hop.elapsed = now() - hopStarted;
+              // a question that cannot be asked, or a caller who has given up
+              if (
+                run.signal?.aborted ||
+                !(error instanceof DnsError) ||
+                error instanceof InvalidQueryError
+              ) {
+                throw error;
+              }
+              hop.error = errorData(error);
+              run.failures.push({ server: address, error });
+              firstError ??= error;
+            }
           }
         }
+        // a delegation with a TTL of zero is used for this walk and not kept. It is kept
+        // before the runs waiting on this one are told, so they find it
+        if (step?.outcome.kind === 'referral' && step.outcome.cut.expires > Date.now()) {
+          run.knowledge.cuts.set(step.outcome.cut.zone, step.outcome.cut);
+        }
+      } finally {
+        finishFetch?.();
       }
 
       if (!step) {
@@ -697,8 +807,6 @@ export class AuthoritativeResolver {
       if (step.outcome.kind !== 'referral') return step;
 
       cut = step.outcome.cut;
-      // a delegation with a TTL of zero is used for this walk and not kept
-      if (cut.expires > Date.now()) run.knowledge.cuts.set(cut.zone, cut);
     }
   }
 
@@ -1019,6 +1127,18 @@ export class AuthoritativeResolver {
     run.attempts += result.attempts;
     return result;
   }
+}
+
+// what a zone's servers are asked about, as far as the delegation they refer it to goes:
+// the name one label below the zone on the way to it, so questions about www.example.com
+// and example.com both ask the root about com. `deeper`: the name lies below that one, so
+// the servers can only refer it on. A name one label below the zone may be answered by the
+// zone itself, and waiting for another question about it would most often be for nothing
+function stepDown(zone: string, name: string): { key: string; deeper: boolean } {
+  const labels = splitName(name);
+  const below = zone === '.' ? 0 : splitName(zone).length;
+  const next = labels.length > below ? labels.slice(labels.length - below - 1).join('.') : name;
+  return { key: `${zone} ${next}`, deeper: labels.length > below + 1 };
 }
 
 const isString = (value: string | undefined): value is string => typeof value === 'string';

@@ -1708,6 +1708,125 @@ describe('AuthoritativeResolver', () => {
     });
   });
 
+  describe('delegations shared between queries', () => {
+    const zones = (answer: { trace?: readonly { zone: string }[] }) =>
+      answer.trace?.map(hop => hop.zone);
+    const asked = (prefix: string) =>
+      network.queries.filter(query => query.server.startsWith(prefix)).length;
+
+    it('walks a fresh query from the root, and the next query from what it learned', async () => {
+      const iterative = resolver();
+      const first = await iterative.query('example.com', 'A', { fresh: true });
+      const second = await iterative.query('example.com', 'MX', { fresh: true });
+      expect(zones(first)).toEqual(['.', 'com', 'example.com']);
+      // every server on the way again, though the resolver knows the zone
+      expect(zones(second)).toEqual(['.', 'com', 'example.com']);
+      network.queries.length = 0;
+      const later = await iterative.query('deep.sub.example.com', 'TXT');
+      expect(network.log()).toEqual(['10.1.0.1 deep.sub.example.com TXT']);
+      expect(zones(later)).toEqual(['example.com']);
+    });
+
+    it('asks the root and com once for 50 names under one zone asked at the same time', async () => {
+      const iterative = resolver();
+      const answers = await Promise.all(
+        Array.from({ length: 50 }, (_, index) => iterative.query(`n${index}.example.com`, 'A'))
+      );
+      expect(asked('10.0.0.')).toBe(1);
+      expect(asked('10.0.1.')).toBe(1);
+      expect(asked('10.1.0.')).toBe(50);
+      expect(answers.every(answer => answer.rcodeName === 'NXDOMAIN')).toBe(true);
+      // the first walked the whole way; the others waited for it and asked only the zone
+      expect(zones(answers[0])).toEqual(['.', 'com', 'example.com']);
+      expect(answers.slice(1).every(answer => zones(answer)?.join() === 'example.com')).toBe(true);
+    });
+
+    it('asks the root and com once per fresh query, and once for all the others', async () => {
+      const iterative = resolver();
+      const types = ['A', 'MX', 'TXT', 'NS', 'SOA'];
+      const answers = await Promise.all([
+        ...types.map(type => iterative.query('example.com', type, { fresh: true })),
+        ...Array.from({ length: 45 }, (_, index) => iterative.query(`n${index}.example.com`, 'A')),
+      ]);
+      expect(asked('10.0.0.')).toBe(5);
+      expect(asked('10.0.1.')).toBe(5);
+      expect(answers.slice(0, 5).every(answer => zones(answer)?.[0] === '.')).toBe(true);
+      expect(answers.slice(5).every(answer => zones(answer)?.join() === 'example.com')).toBe(true);
+    });
+
+    it('does not wait at the zone above a name for another question about the same name', async () => {
+      // com may answer for example.com itself, so each type asks it
+      const iterative = resolver();
+      await Promise.all(['A', 'MX'].map(type => iterative.query('example.com', type)));
+      expect(asked('10.0.0.')).toBe(1);
+      expect(asked('10.0.1.')).toBe(2);
+    });
+
+    it('keeps the delegations a walk from somewhere else finds to itself', async () => {
+      const iterative = resolver();
+      await iterative.query('example.com', 'A', { startAt: [{ ipv4: '10.0.1.1' }] });
+      network.queries.length = 0;
+      await iterative.query('example.com', 'MX');
+      expect(network.log()).toEqual([
+        '10.0.0.1 example.com MX',
+        '10.0.1.1 example.com MX',
+        '10.1.0.1 example.com MX',
+      ]);
+    });
+
+    it('forgets the delegations it learned on clearCache', async () => {
+      const iterative = resolver();
+      await iterative.query('example.com', 'A', { fresh: true });
+      iterative.clearCache();
+      const answer = await iterative.query('example.com', 'MX');
+      expect(zones(answer)).toEqual(['.', 'com', 'example.com']);
+    });
+
+    describe('a waiter with more time than the query it waits on', () => {
+      beforeEach(() => vi.useFakeTimers());
+      afterEach(() => vi.useRealTimers());
+
+      it('asks for itself once the other query gives up', async () => {
+        // com's servers take 150 ms. The first query has 100 ms; the second waits for it at
+        // com, sees it give up, and asks com itself
+        const iterative = resolver(
+          { timeout: 500, totalTimeout: 1000 },
+          { '10.0.1.1': late(150, com), '10.0.1.2': late(150, com) }
+        );
+        const first = iterative.query('example.com', 'A', { fresh: true, totalTimeout: 100 });
+        first.catch(() => {});
+        const second = iterative.query('deep.sub.example.com', 'TXT');
+        second.catch(() => {});
+        await vi.advanceTimersByTimeAsync(1000);
+
+        await expect(first).rejects.toBeInstanceOf(TimeoutError);
+        const answer = await second;
+        expect(answer.records.map(record => record.strings)).toEqual([['hello']]);
+        // it waited at the root, which answered the first query at once, and asked from com
+        expect(zones(answer)).toEqual(['com', 'example.com']);
+        expect(asked('10.0.0.')).toBe(1);
+        expect(asked('10.0.1.')).toBe(2);
+      });
+
+      it('gives up when its own time runs out while it waits', async () => {
+        const iterative = resolver(
+          { timeout: 500, totalTimeout: 1000 },
+          { '10.0.1.1': late(400, com), '10.0.1.2': late(400, com) }
+        );
+        const first = iterative.query('example.com', 'A', { fresh: true });
+        first.catch(() => {});
+        const second = iterative.query('deep.sub.example.com', 'TXT', { totalTimeout: 100 });
+        second.catch(() => {});
+        await vi.advanceTimersByTimeAsync(1000);
+
+        await expect(second).rejects.toBeInstanceOf(TimeoutError);
+        expect((await first).records.map(record => record.address)).toEqual(['192.0.2.1']);
+        // it never asked com itself
+        expect(asked('10.0.1.')).toBe(1);
+      });
+    });
+  });
+
   describe('addresses', () => {
     it('uses IPv4 addresses only by default', async () => {
       // ns1's IPv4 address is down; its IPv6 address is not tried
