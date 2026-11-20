@@ -137,6 +137,21 @@ time, so the load falls on all of a zone's servers and one slow server is not al
 first. With `addressFamily: 'both'` (the default) IPv4 addresses come first. The trace
 says which servers were asked.
 
+A query can start somewhere other than the root: `startAt` names the servers to ask first,
+and the walk follows their referrals from there. Nameservers that come without an address
+are still looked up from the root servers, and what such a walk is told is not kept for
+other queries.
+
+```ts
+import { AuthoritativeResolver } from '@aoxborrow/dns';
+
+const resolver = new AuthoritativeResolver();
+// start at one of org's servers
+await resolver.query('mozilla.org', 'NS', {
+  startAt: [{ name: 'v0n0.pir-ns.org', ipv4: '199.19.56.1' }],
+});
+```
+
 ### The answer
 
 An `Answer` is plain data: no methods, so it can be copied, cached, logged or sent as it

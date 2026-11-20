@@ -106,6 +106,11 @@ export interface AuthoritativeQueryOptions extends Omit<
   // resolver's own `onEvent`: what tells the queries of one call apart from those of
   // others running at the same time
   onEvent?: OnEvent;
+  // where this query starts, in place of the root servers: a server to ask first and
+  // follow the referrals of. Nameservers that come without an address are still looked
+  // up from the root servers, and the delegations found on the way are not kept for
+  // other queries
+  startAt?: readonly NameserverHint[];
 }
 
 interface Nameserver {
@@ -142,6 +147,8 @@ interface Run {
   settings: QuerySettings;
   signal: AbortSignal | undefined;
   onEvent: OnEvent | undefined;
+  // the servers the walk starts at, when not the root servers
+  start: Nameserver[] | undefined;
   // when the whole query gives up, on the clock `now()` reads, and the time it was given
   deadline: number;
   totalTimeout: number;
@@ -226,13 +233,9 @@ export class AuthoritativeResolver {
       this.hosts.set(canonicalName(name), list);
       for (const address of list) this.givenNames.set(address, givenName(name));
     }
-    this.root = (options.rootServers ?? ROOT_HINTS).map(hint => {
-      const name = hint.name ? canonicalName(hint.name) : '';
-      const written = hint.name ? givenName(hint.name) : '';
-      const addresses = this.usable([hint.ipv4, hint.ipv6].filter(isString).map(normalizeAddress));
-      for (const address of addresses) if (written) this.givenNames.set(address, written);
-      return { name, ...(written !== name && { written }), addresses };
-    });
+    this.root = this.nameservers(options.rootServers ?? ROOT_HINTS, (address, name) =>
+      this.givenNames.set(address, name)
+    );
     if (options.validate) {
       this.validator = new Validator({
         trustAnchors: options.trustAnchors,
@@ -336,7 +339,7 @@ export class AuthoritativeResolver {
     follow: boolean,
     responses?: DnssecResponse[]
   ): Promise<Answer> {
-    const { signal, totalTimeout: perQuery, onEvent, ...settings } = options;
+    const { signal, totalTimeout: perQuery, onEvent, startAt, ...settings } = options;
     const totalTimeout = perQuery ?? this.options.totalTimeout ?? DEFAULT_TOTAL_TIMEOUT;
     const started = now();
     // the name as the caller wrote it, for the answer, and as it is compared and sent
@@ -352,9 +355,13 @@ export class AuthoritativeResolver {
     }
     const typeText = typeName(typeCode(type));
 
+    const start =
+      startAt && this.nameservers(startAt, (address, at) => this.learnName(address, at));
     const run: Run = {
       knowledge: {
-        cuts: this.options.cache === false ? new Map<string, ZoneCut>() : this.knowledge.cuts,
+        // a walk from somewhere other than the root keeps what it finds to itself
+        cuts:
+          this.options.cache === false || start ? new Map<string, ZoneCut>() : this.knowledge.cuts,
         addresses:
           this.options.nameserverCache === false
             ? new Map<string, { addresses: string[]; expires: number }>()
@@ -363,6 +370,7 @@ export class AuthoritativeResolver {
       settings: { ...settings },
       signal,
       onEvent,
+      start,
       deadline: started + totalTimeout,
       totalTimeout,
       expired: false,
@@ -446,6 +454,21 @@ export class AuthoritativeResolver {
 
   // ---- inside
 
+  // servers given by name and address, as the zone's servers a walk starts at. `remember`
+  // is told each address's name, for the trace
+  private nameservers(
+    hints: readonly NameserverHint[],
+    remember: (address: string, name: string) => void
+  ): Nameserver[] {
+    return hints.map(hint => {
+      const name = hint.name ? canonicalName(hint.name) : '';
+      const written = hint.name ? givenName(hint.name) : '';
+      const addresses = this.usable([hint.ipv4, hint.ipv6].filter(isString).map(normalizeAddress));
+      for (const address of addresses) if (written) remember(address, written);
+      return { name, ...(written !== name && { written }), addresses };
+    });
+  }
+
   // the addresses of a nameserver this resolver is willing to use, in the order given
   private usable(addresses: readonly string[]): string[] {
     const family = this.options.addressFamily ?? 'both';
@@ -497,7 +520,12 @@ export class AuthoritativeResolver {
     const maxHops = this.options.maxHops ?? DEFAULT_MAX_HOPS;
     // a DS RRset is the parent's: the question goes to the zone above the name, even when
     // the name's own zone is already known (RFC 4035 §4.2)
-    let cut = this.closestCut(run, type === 'DS' && name !== '.' ? parentName(name) : name);
+    // the walk itself starts where the caller said, when it said; a nameserver lookup
+    // starts at the root
+    let cut =
+      run.start && nesting === 0
+        ? { zone: '.', servers: run.start, expires: Infinity }
+        : this.closestCut(run, type === 'DS' && name !== '.' ? parentName(name) : name);
 
     for (;;) {
       // ask the zone's servers in turn until one gives something to go on

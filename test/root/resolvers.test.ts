@@ -866,6 +866,34 @@ describe('AuthoritativeResolver', () => {
     expect(answer.attempts).toBe(6);
   });
 
+  it('starts where the query says, and still looks nameservers up from the root', async () => {
+    const iterative = resolver();
+    const answer = await iterative.query('glueless.com', 'A', {
+      startAt: [{ name: 'b.gtld.test', ipv4: '10.0.1.2' }],
+    });
+    expect(answer.records.map(record => record.address)).toEqual(['192.0.2.77']);
+    expect(network.log()).toEqual([
+      '10.0.1.2 glueless.com A',
+      '10.0.0.1 ns1.dnshost.net A',
+      '10.0.2.1 ns1.dnshost.net A',
+      '10.2.0.1 ns1.dnshost.net A',
+      '10.2.0.53 glueless.com A',
+    ]);
+    expect(answer.trace?.map(hop => [hop.server, hop.serverName])).toEqual([
+      ['10.0.1.2', 'b.gtld.test'],
+      ['10.2.0.53', 'ns1.dnshost.net'],
+    ]);
+
+    // what that walk was told is not kept for a query from the root
+    network.queries.length = 0;
+    await iterative.query('glueless.com', 'A');
+    expect(network.log()).toEqual([
+      '10.0.0.1 glueless.com A',
+      '10.0.1.1 glueless.com A',
+      '10.2.0.53 glueless.com A',
+    ]);
+  });
+
   it('takes a nameserver address from the host map before looking it up', async () => {
     const answer = await resolver({ hosts: { 'NS1.dnshost.net.': '10.2.0.53' } }).query(
       'glueless.com',
