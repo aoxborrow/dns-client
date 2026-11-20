@@ -79,8 +79,7 @@ answer.trace; // every server asked on the way
 
 This is a DNS client. It asks questions and reads answers.
 
-- It is not a replacement for `node:dns`, apart from the [`/promises`](#promises) facade,
-  which copies the `node:dns/promises` API.
+- For a drop-in replacement of `node:dns`, use the [`/promises`](#promises) entry.
 - It is not a server: it answers nobody's queries.
 - No zone transfers (AXFR, IXFR), no dynamic UPDATE, no TSIG signing.
 - No zone-file parsing yet. Records are read and written one at a time, in presentation
