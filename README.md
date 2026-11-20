@@ -295,7 +295,8 @@ shared.close(); // closes the sockets this resolver opened, and empties its cach
 `cache: false` every query starts again from the root, so its trace is the whole path, but
 a nameserver that came without glue and was looked up by an earlier query is asked
 straight away; `nameserverCache: false` looks it up again every time. Queries running at
-the same time that meet the same nameserver share one lookup. Both resolvers have
+the same time that meet the same nameserver share one lookup, which has a query's whole
+time of its own and lasts while any of them still waits on it. Both resolvers have
 `clearCache()` and `close()`.
 
 ```ts

@@ -166,6 +166,21 @@ interface Run {
   failures: ServerFailure[];
 }
 
+// what a nameserver lookup found. `cutShort`: it ran out of time or was stopped before it
+// could finish, so finding nothing says nothing about the nameserver
+interface LookupResult {
+  addresses: string[];
+  cutShort: boolean;
+}
+
+// a nameserver lookup queries share while it lasts, and how many are waiting on it
+interface SharedLookup {
+  name: string;
+  done: Promise<LookupResult>;
+  stop: AbortController;
+  waiting: number;
+}
+
 // the order servers are tried in: random, a fresh shuffle every time (Fisher-Yates), so
 // the load falls on all of a zone's servers and one slow server is not always first
 function shuffled<T>(items: readonly T[]): T[] {
@@ -210,7 +225,7 @@ export class AuthoritativeResolver {
   private readonly knowledge: Knowledge = { cuts: new Map(), addresses: new Map() };
   // nameserver lookups in flight, by canonical name, for queries that meet the same
   // nameserver at the same time to share
-  private readonly lookups = new Map<string, Promise<string[]>>();
+  private readonly lookups = new Map<string, SharedLookup>();
   private readonly root: Nameserver[];
   // address -> name, for the trace: those the resolver was given, kept for its life, and
   // those it learned on the way, bounded and forgotten by `clearCache()`
@@ -448,6 +463,9 @@ export class AuthoritativeResolver {
   // close the sockets and connections this resolver opened. A resolver that shares the
   // process-wide set, or was given one, leaves it open
   close(): void {
+    // a lookup some query is still waiting on ends with the resolver
+    for (const lookup of this.lookups.values()) lookup.stop.abort();
+    this.lookups.clear();
     this.clearCache();
     if (this.ownsTransports) this.transports.close();
   }
@@ -809,32 +827,110 @@ export class AuthoritativeResolver {
     // to be worth following, is skipped: the zone's other servers may do
     if (run.resolving.has(name) || nesting >= MAX_NESTING) return [];
 
-    const sharing = this.options.nameserverCache !== false;
-    // another query is looking this nameserver up already: its answer is this one's too.
-    // Only the walk itself waits on another query's lookup, never a lookup: a lookup that
-    // waited could end up waiting on one that waits on it
-    const inFlight = sharing && nesting === 0 ? this.lookups.get(name) : undefined;
-    if (inFlight) {
-      const addresses = await shared(run, inFlight);
+    if (this.options.nameserverCache === false) return this.lookUpHere(run, server, nesting);
+    for (;;) {
+      // another query is looking this nameserver up already: its answer is this one's too.
+      // Only the walk itself waits on another query's lookup, never a lookup: a lookup that
+      // waited could end up waiting on one that waits on it
+      let lookup = this.lookups.get(name);
+      if (lookup && nesting > 0) return this.lookUpHere(run, server, nesting);
+      lookup ??= this.startLookup(run, server, nesting);
+      const { addresses, cutShort } = await this.join(run, lookup);
+      // the lookup ran out of its own time, or this walk ran out of its own: one with time
+      // left looks again rather than take someone else's deadline as the answer
+      if (cutShort && addresses.length === 0 && !outOfTime(run)) continue;
       run.lookedUp.set(name, addresses);
       return addresses;
     }
+  }
 
-    run.resolving.add(name);
-    const lookup = this.lookUp(run, server, nesting);
-    if (sharing && !this.lookups.has(name)) {
-      this.lookups.set(name, lookup);
-      // nobody may be waiting to hear that it failed
-      lookup
-        .catch(() => undefined)
-        .finally(() => {
-          if (this.lookups.get(name) === lookup) this.lookups.delete(name);
-        });
-    }
+  // look a nameserver up on this walk's own time, for this walk alone
+  private async lookUpHere(run: Run, server: Nameserver, nesting: number): Promise<string[]> {
+    run.resolving.add(server.name);
     try {
-      return await lookup;
+      return await this.lookUp(run, server, nesting);
     } finally {
-      run.resolving.delete(name);
+      run.resolving.delete(server.name);
+    }
+  }
+
+  // look a nameserver up for every query that meets it while the lookup lasts. It has a
+  // whole query's time of its own, from now, however little the query that started it has
+  // left: a query that joins later may have more. It stops when the last query waiting on
+  // it gives up, and when the resolver is closed
+  private startLookup(starter: Run, server: Nameserver, nesting: number): SharedLookup {
+    const { name } = server;
+    const totalTimeout = Math.max(
+      starter.totalTimeout,
+      this.options.totalTimeout ?? DEFAULT_TOTAL_TIMEOUT
+    );
+    const stop = new AbortController();
+    const run: Run = {
+      // what the starter knows and how it asks, and the starter hears of the queries sent
+      ...starter,
+      signal: stop.signal,
+      start: undefined,
+      deadline: now() + totalTimeout,
+      totalTimeout,
+      expired: false,
+      attempts: 0,
+      resolving: new Set([...starter.resolving, name]),
+      lookedUp: new Map(starter.lookedUp),
+    };
+    const hopsBefore = run.hops;
+    const lookup: SharedLookup = {
+      done: (async () => {
+        try {
+          const addresses = await this.lookUp(run, server, nesting);
+          return { addresses, cutShort: outOfTime(run) || stop.signal.aborted };
+        } catch (error) {
+          // stopped: by the resolver closing, or with nobody left waiting
+          if (stop.signal.aborted) return { addresses: [], cutShort: true };
+          throw error;
+        } finally {
+          // the servers it asked count against the query that started it, as its own would
+          starter.attempts += run.attempts;
+          starter.hops += run.hops - hopsBefore;
+          if (this.lookups.get(name)?.stop === stop) this.lookups.delete(name);
+        }
+      })(),
+      name,
+      stop,
+      waiting: 0,
+    };
+    // nobody may be waiting to hear that it failed
+    lookup.done.catch(() => undefined);
+    this.lookups.set(name, lookup);
+    return lookup;
+  }
+
+  // wait for a shared lookup no longer than this walk has left, and no longer than its
+  // caller is willing to wait. The lookup stops when the last walk waiting on it leaves
+  private async join(run: Run, lookup: SharedLookup): Promise<LookupResult> {
+    if (run.signal?.aborted) throw run.signal.reason;
+    lookup.waiting++;
+    try {
+      return await withRest(
+        run,
+        left =>
+          new Promise<LookupResult>((resolve, reject) => {
+            const timer =
+              left <= MAX_TIMER
+                ? setTimeout(() => resolve({ addresses: [], cutShort: true }), left)
+                : undefined;
+            const abort = () => reject(run.signal?.reason);
+            run.signal?.addEventListener('abort', abort, { once: true });
+            lookup.done.then(resolve, reject).finally(() => {
+              clearTimeout(timer);
+              run.signal?.removeEventListener('abort', abort);
+            });
+          })
+      );
+    } finally {
+      if (--lookup.waiting === 0) {
+        lookup.stop.abort();
+        if (this.lookups.get(lookup.name) === lookup) this.lookups.delete(lookup.name);
+      }
     }
   }
 
@@ -968,28 +1064,6 @@ function eventsTo(first: OnEvent | undefined, second: OnEvent | undefined): OnEv
     first(event);
     second(event);
   };
-}
-
-// what another query's lookup of a nameserver finds, waited for no longer than this walk
-// has left, and no longer than its caller is willing to wait. A lookup that failed, or
-// that the other query gave up on, found nothing for this walk either
-async function shared(run: Run, lookup: Promise<string[]>): Promise<string[]> {
-  if (run.signal?.aborted) throw run.signal.reason;
-  return withRest(
-    run,
-    left =>
-      new Promise<string[]>((resolve, reject) => {
-        const timer = left <= MAX_TIMER ? setTimeout(() => resolve([]), left) : undefined;
-        const abort = () => reject(run.signal?.reason);
-        run.signal?.addEventListener('abort', abort, { once: true });
-        lookup
-          .then(resolve, () => resolve([]))
-          .finally(() => {
-            clearTimeout(timer);
-            run.signal?.removeEventListener('abort', abort);
-          });
-      })
-  );
 }
 
 // the longest a timer can be set for; anything longer fires at once

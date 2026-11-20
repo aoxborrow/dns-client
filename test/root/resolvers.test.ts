@@ -1635,6 +1635,77 @@ describe('AuthoritativeResolver', () => {
         '10.2.0.53 glueless.com MX',
       ]);
     });
+
+    describe('a lookup shared by queries with different time left', () => {
+      // on a fake clock, so the timers and the clock the walk reads agree
+      beforeEach(() => vi.useFakeTimers());
+      afterEach(() => vi.useRealTimers());
+
+      it('keeps looking for a query with time left after the one that started it gives up', async () => {
+        // dnshost.net's server takes 150 ms. A starts the lookup with 100 ms to live; B
+        // joins it 50 ms later with plenty left
+        const iterative = resolver(
+          { cache: false, timeout: 500, totalTimeout: 1000 },
+          { '10.2.0.1': late(150, dnshost) }
+        );
+        const first = iterative.query('glueless.com', 'A', { totalTimeout: 100 });
+        first.catch(() => {});
+        await vi.advanceTimersByTimeAsync(50);
+        const second = iterative.query('glueless.com', 'MX');
+        second.catch(() => {});
+        await vi.advanceTimersByTimeAsync(1000);
+
+        await expect(first).rejects.toBeInstanceOf(TimeoutError);
+        const answer = await second;
+        expect(answer.serverName).toBe('ns1.dnshost.net');
+        // still one lookup between them
+        expect(network.log().filter(line => line.includes('ns1.dnshost.net'))).toEqual([
+          '10.0.0.1 ns1.dnshost.net A',
+          '10.0.2.1 ns1.dnshost.net A',
+          '10.2.0.1 ns1.dnshost.net A',
+        ]);
+      });
+
+      it('looks a nameserver up again for a query with time left when the shared lookup ran out of its own', async () => {
+        // the lookup has the resolver's 200 ms. B joins it with 1000 ms of its own, sees it
+        // run out, and looks the nameserver up itself, by when dnshost.net answers
+        let silent = true;
+        const iterative = resolver(
+          { cache: false, timeout: 500, totalTimeout: 200 },
+          { '10.2.0.1': query => (silent ? undefined : dnshost(query)) }
+        );
+        const first = iterative.query('glueless.com', 'A');
+        first.catch(() => {});
+        await vi.advanceTimersByTimeAsync(150);
+        const second = iterative.query('glueless.com', 'MX', { totalTimeout: 1000 });
+        second.catch(() => {});
+        await vi.advanceTimersByTimeAsync(40);
+        silent = false;
+        await vi.advanceTimersByTimeAsync(1000);
+
+        await expect(first).rejects.toBeInstanceOf(TimeoutError);
+        const answer = await second;
+        expect(answer.serverName).toBe('ns1.dnshost.net');
+      });
+
+      it('stops a shared lookup once every query waiting on it has given up', async () => {
+        const iterative = resolver(
+          { cache: false, timeout: 5000, totalTimeout: 10_000 },
+          { '10.2.0.1': late(1000, dnshost) }
+        );
+        const pending = iterative.query('glueless.com', 'A', { totalTimeout: 100 });
+        pending.catch(() => {});
+        await vi.advanceTimersByTimeAsync(100);
+        await expect(pending).rejects.toBeInstanceOf(TimeoutError);
+        // a later query does not join the abandoned lookup; it starts its own
+        await vi.advanceTimersByTimeAsync(10);
+        const later = iterative.query('glueless.com', 'MX');
+        later.catch(() => {});
+        await vi.advanceTimersByTimeAsync(2000);
+        expect((await later).serverName).toBe('ns1.dnshost.net');
+        expect(network.log().filter(line => line === '10.2.0.1 ns1.dnshost.net A')).toHaveLength(2);
+      });
+    });
   });
 
   describe('addresses', () => {
