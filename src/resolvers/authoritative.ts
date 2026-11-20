@@ -876,6 +876,8 @@ export class AuthoritativeResolver {
       attempts: 0,
       resolving: new Set([...starter.resolving, name]),
       lookedUp: new Map(starter.lookedUp),
+      // its own, since it can outlive the starter, whose error may already carry its list
+      failures: [],
     };
     const hopsBefore = run.hops;
     const lookup: SharedLookup = {
