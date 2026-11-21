@@ -2137,6 +2137,73 @@ describe('AuthoritativeResolver', () => {
         ]);
       });
 
+      it('still waits at a zone after it says a name under it does not exist', async () => {
+        // an NXDOMAIN for x.missing.example.com only says that missing.example.com does not
+        // exist; example.com still refers, and two queries under b still share its referral
+        const parent = zoneServer({
+          zone: 'example.com',
+          delegations: {
+            'a.example.com': { 'ns.a.example.com': ['10.6.0.1'] },
+            'b.example.com': { 'ns.b.example.com': ['10.6.0.2'] },
+          },
+        });
+        const iterative = resolver(
+          {},
+          {
+            '10.1.0.1': late(50, parent),
+            '10.1.0.2': late(50, parent),
+            '10.6.0.1': zoneServer({ zone: 'a.example.com' }),
+            '10.6.0.2': zoneServer({ zone: 'b.example.com' }),
+          }
+        );
+        for (const name of ['x.a.example.com', 'x.missing.example.com']) {
+          const taught = iterative.query(name, 'A');
+          await vi.advanceTimersByTimeAsync(100);
+          await taught;
+        }
+        network.queries.length = 0;
+
+        const pending = ['x.b.example.com', 'y.b.example.com'].map(name =>
+          iterative.query(name, 'A')
+        );
+        await vi.advanceTimersByTimeAsync(100);
+        await Promise.all(pending);
+        expect(asked('10.1.0.')).toBe(1);
+      });
+
+      it('forgets that a zone refers once its delegation runs out', async () => {
+        const parent = zoneServer({
+          zone: 'example.com',
+          delegations: {
+            'a.example.com': { 'ns.a.example.com': ['10.6.0.1'] },
+            'b.example.com': { 'ns.b.example.com': ['10.6.0.2'] },
+          },
+        });
+        const iterative = resolver(
+          {},
+          {
+            '10.1.0.1': late(50, parent),
+            '10.1.0.2': late(50, parent),
+            '10.6.0.1': zoneServer({ zone: 'a.example.com' }),
+            '10.6.0.2': zoneServer({ zone: 'b.example.com' }),
+          }
+        );
+        const taught = iterative.query('x.a.example.com', 'A');
+        await vi.advanceTimersByTimeAsync(100);
+        await taught;
+        // past every TTL the simulated zones give: the delegations and what was learned of
+        // example.com are gone, so the two queries no longer wait for each other there
+        vi.setSystemTime(Date.now() + 30 * 24 * 3600 * 1000);
+        network.queries.length = 0;
+
+        const pending = ['x.b.example.com', 'y.b.example.com'].map(name =>
+          iterative.query(name, 'A')
+        );
+        await vi.advanceTimersByTimeAsync(200);
+        await Promise.all(pending);
+        expect(asked('10.1.0.')).toBe(2);
+      });
+
       it('does not wait at a zone that has answered for such a name, though it refers too', async () => {
         // example.com delegates a.example.com and answers for the selectors itself. Once it
         // has done both, the selectors do not wait on each other there

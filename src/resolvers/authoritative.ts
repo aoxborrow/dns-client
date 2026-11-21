@@ -155,11 +155,17 @@ interface ZoneCut {
 interface Knowledge {
   cuts: Map<string, ZoneCut>;
   // zones whose servers have referred a question further down ('refers'), the ones worth
-  // waiting at for another walk's referral, or have answered with authority for a name
-  // more than one label below the zone ('answers'), which is kept once seen: such a zone
-  // answers for names under it itself, whatever it delegates
-  zones: Map<string, 'refers' | 'answers'>;
+  // waiting at for another walk's referral, or have answered with authority that a name
+  // more than one label below the zone exists ('answers'), which wins once seen: such a
+  // zone answers for names under it itself, whatever it delegates. Each is kept for as long
+  // as the zone's delegation, and at most `MAX_ZONES` of them
+  zones: Map<string, ZoneHabit>;
   addresses: Map<string, { addresses: string[]; expires: number }>;
+}
+
+interface ZoneHabit {
+  kind: 'refers' | 'answers';
+  expires: number;
 }
 
 // one call to `query`, and everything it does on the way
@@ -232,6 +238,9 @@ const DEFAULT_SERVER_CONCURRENCY = 8;
 // the most addresses the resolver keeps a nameserver's name for, for the trace and the
 // answer's `serverName`. Past it the least recently learned are forgotten
 const MAX_NAMES = 10_000;
+// the most zones the resolver remembers the habits of, for waiting at. Past it the least
+// recently learned are forgotten
+const MAX_ZONES = 10_000;
 // the patience with one server when the caller names none: the same as `exchange` has
 const DEFAULT_TIMEOUT = 5000;
 const DEFAULT_MAX_ALIASES = 8;
@@ -425,7 +434,7 @@ export class AuthoritativeResolver {
     const run: Run = {
       knowledge: {
         cuts: shared ? this.knowledge.cuts : new Map<string, ZoneCut>(),
-        zones: shared ? this.knowledge.zones : new Map<string, 'refers' | 'answers'>(),
+        zones: shared ? this.knowledge.zones : new Map<string, ZoneHabit>(),
         addresses:
           this.options.nameserverCache === false
             ? new Map<string, { addresses: string[]; expires: number }>()
@@ -609,16 +618,39 @@ export class AuthoritativeResolver {
   // itself. Most other zones answer for the names under them, and waiting there would only
   // cost the waiter time
   private refers(run: Run, zone: string): boolean {
-    return isTopLevel(zone) || run.knowledge.zones.get(zone) === 'refers';
+    return isTopLevel(zone) || this.habitOf(run, zone) === 'refers';
   }
 
-  // remember how a zone answered a question about a name, for `refers`
-  private learnZone(run: Run, zone: string, name: string, step: Step | undefined): void {
-    if (!step || run.knowledge.zones.get(zone) === 'answers') return;
-    if (step.outcome.kind === 'referral') run.knowledge.zones.set(zone, 'refers');
-    else if (step.result.message.flags.aa && stepDown(zone, name).deeper) {
-      run.knowledge.zones.set(zone, 'answers');
+  // what is remembered of how a zone answers, while it lasts
+  private habitOf(run: Run, zone: string): ZoneHabit['kind'] | undefined {
+    const habit = run.knowledge.zones.get(zone);
+    if (habit && habit.expires <= Date.now()) {
+      run.knowledge.zones.delete(zone);
+      return undefined;
     }
+    return habit?.kind;
+  }
+
+  // remember how a zone answered a question about a name, for `refers`, for as long as the
+  // zone's delegation lasts. A zone answers for names under it when it says with authority
+  // that one exists (records, or none of the type asked); an NXDOMAIN only says that a name
+  // does not, which a zone that delegates everything says too
+  private learnZone(run: Run, cut: ZoneCut, name: string, step: Step | undefined): void {
+    if (!step || this.habitOf(run, cut.zone) === 'answers') return;
+    let kind: ZoneHabit['kind'] | undefined;
+    if (step.outcome.kind === 'referral') kind = 'refers';
+    else if (
+      step.result.message.flags.aa &&
+      step.result.message.rcode === RCODES.NOERROR &&
+      stepDown(cut.zone, name).deeper
+    ) {
+      kind = 'answers';
+    }
+    if (!kind || cut.expires <= Date.now()) return;
+    const zones = run.knowledge.zones;
+    zones.delete(cut.zone);
+    zones.set(cut.zone, { kind, expires: cut.expires });
+    if (zones.size > MAX_ZONES) zones.delete(zones.keys().next().value as string);
   }
 
   // wait for another run's fetch no longer than this walk has left, and no longer than its
@@ -843,7 +875,7 @@ export class AuthoritativeResolver {
         // from a truncated referral whose TCP retry failed: it may name only some of the
         // zone's servers. A delegation that is kept is kept before the runs waiting on this
         // one are told, so they find it; when there is none they ask for themselves
-        this.learnZone(run, cut.zone, name, step);
+        this.learnZone(run, cut, name, step);
         if (
           step?.outcome.kind === 'referral' &&
           !step.result.tcpFallbackError &&
