@@ -77,8 +77,8 @@ export interface AuthoritativeResolverOptions
   // remember delegations between queries, for as long as their TTLs allow, and for no
   // longer than the resolver lives. A query then starts at the deepest zone it knows, and
   // its trace starts there too. Queries running at the same time that need the same
-  // delegation share one referral: the others wait for the one asking. Default true.
-  // With false every query starts again from the root, and its trace is the whole path
+  // delegation share one referral: the others wait for the one asking, at the root, a
+  // top-level domain or a zone already seen to give referrals. Default true. With false every query starts again from the root, and its trace is the whole path
   cache?: boolean;
   // remember the addresses of nameservers that came without glue between queries, for as
   // long as their TTLs allow, even with `cache` false: a later query that meets the same
@@ -149,10 +149,16 @@ interface ZoneCut {
   expires: number;
 }
 
-// what is known about the tree: which servers answer for which zones (kept unless
-// `cache` is false), and where nameservers live (kept unless `nameserverCache` is false)
+// what is known about the tree: which servers answer for which zones and how zones answer
+// (kept unless `cache` is false), and where nameservers live (kept unless
+// `nameserverCache` is false)
 interface Knowledge {
   cuts: Map<string, ZoneCut>;
+  // zones whose servers have referred a question further down ('refers'), the ones worth
+  // waiting at for another walk's referral, or have answered with authority for a name
+  // more than one label below the zone ('answers'), which is kept once seen: such a zone
+  // answers for names under it itself, whatever it delegates
+  zones: Map<string, 'refers' | 'answers'>;
   addresses: Map<string, { addresses: string[]; expires: number }>;
 }
 
@@ -235,6 +241,12 @@ const MAX_NESTING = 4;
 // rcodes that mean this server is not going to help with this zone: ask its neighbour
 const LAME = new Set<number>([RCODES.SERVFAIL, RCODES.REFUSED, RCODES.NOTIMP, RCODES.NOTAUTH]);
 
+// a response that gave the walk something to go on, and what it means
+interface Step {
+  result: ExchangeResult;
+  outcome: Outcome;
+}
+
 type Outcome =
   | { kind: 'answer' }
   | { kind: 'alias'; target: string }
@@ -249,7 +261,11 @@ export class AuthoritativeResolver {
   private readonly pace: Pacer;
   private readonly transports: Transports;
   private readonly ownsTransports: boolean;
-  private readonly knowledge: Knowledge = { cuts: new Map(), addresses: new Map() };
+  private readonly knowledge: Knowledge = {
+    cuts: new Map(),
+    zones: new Map(),
+    addresses: new Map(),
+  };
   // nameserver lookups in flight, by canonical name, for queries that meet the same
   // nameserver at the same time to share
   private readonly lookups = new Map<string, SharedLookup>();
@@ -409,6 +425,7 @@ export class AuthoritativeResolver {
     const run: Run = {
       knowledge: {
         cuts: shared ? this.knowledge.cuts : new Map<string, ZoneCut>(),
+        zones: shared ? this.knowledge.zones : new Map<string, 'refers' | 'answers'>(),
         addresses:
           this.options.nameserverCache === false
             ? new Map<string, { addresses: string[]; expires: number }>()
@@ -489,6 +506,7 @@ export class AuthoritativeResolver {
   // every zone validation has judged
   clearCache(): void {
     this.knowledge.cuts.clear();
+    this.knowledge.zones.clear();
     this.knowledge.addresses.clear();
     this.names.clear();
     this.validator?.clear();
@@ -567,12 +585,15 @@ export class AuthoritativeResolver {
 
   // say that this run is about to ask a zone's servers about a name, for walks that need
   // the same delegation to wait for. Returns what to call once the answer is in the
-  // knowledge, or undefined when another run is asking already or this one keeps what it
-  // learns to itself
+  // knowledge, or undefined when another run is asking already, this one keeps what it
+  // learns to itself, or the name is one the zone may answer for itself. A name one label
+  // below the zone is such a name, except at the root or a top-level domain, whose servers
+  // all but always refer it on: the questions about www.example.com and example.com that
+  // a site lookup asks together then share com's referral
   private startFetch(run: Run, zone: string, name: string): (() => void) | undefined {
     if (!run.shared) return undefined;
-    const { key } = stepDown(zone, name);
-    if (this.fetches.has(key)) return undefined;
+    const { key, deeper } = stepDown(zone, name);
+    if (!(deeper || isTopLevel(zone)) || this.fetches.has(key)) return undefined;
     let finish!: () => void;
     const fetch: Fetch = { done: new Promise<void>(resolve => (finish = resolve)) };
     this.fetches.set(key, fetch);
@@ -580,6 +601,24 @@ export class AuthoritativeResolver {
       if (this.fetches.get(key) === fetch) this.fetches.delete(key);
       finish();
     };
+  }
+
+  // whether a zone's servers hand out referrals, so that waiting for another walk's question
+  // to them may bring back a delegation: the root and the top-level domains do, and so does
+  // a zone this resolver has seen give one and not seen answer for a name further down
+  // itself. Most other zones answer for the names under them, and waiting there would only
+  // cost the waiter time
+  private refers(run: Run, zone: string): boolean {
+    return isTopLevel(zone) || run.knowledge.zones.get(zone) === 'refers';
+  }
+
+  // remember how a zone answered a question about a name, for `refers`
+  private learnZone(run: Run, zone: string, name: string, step: Step | undefined): void {
+    if (!step || run.knowledge.zones.get(zone) === 'answers') return;
+    if (step.outcome.kind === 'referral') run.knowledge.zones.set(zone, 'refers');
+    else if (step.result.message.flags.aa && stepDown(zone, name).deeper) {
+      run.knowledge.zones.set(zone, 'answers');
+    }
   }
 
   // wait for another run's fetch no longer than this walk has left, and no longer than its
@@ -612,7 +651,7 @@ export class AuthoritativeResolver {
     trace: TraceHop[] | undefined,
     nesting: number,
     first?: string
-  ): Promise<{ result: ExchangeResult; outcome: Outcome }> {
+  ): Promise<Step> {
     const maxHops = this.options.maxHops ?? DEFAULT_MAX_HOPS;
     // a DS RRset is the parent's: the question goes to the zone above the name, even when
     // the name's own zone is already known (RFC 4035 §4.2)
@@ -634,10 +673,16 @@ export class AuthoritativeResolver {
       // for the delegation it brings back rather than ask them the same thing. Only the walk
       // itself waits, never a nameserver lookup, which may be what that run is waiting on.
       // Whatever came of it, a delegation further down is taken up, and otherwise the walk
-      // asks for itself: another run's failure or timeout is not this one's
+      // asks for itself: another run's failure or timeout is not this one's. It waits only
+      // at a zone that hands out referrals
       const down = stepDown(cut.zone, name);
       const pending =
-        run.shared && nesting === 0 && !fromRoot && down.deeper && !waited.has(cut.zone)
+        run.shared &&
+        nesting === 0 &&
+        !fromRoot &&
+        down.deeper &&
+        !waited.has(cut.zone) &&
+        this.refers(run, cut.zone)
           ? this.fetches.get(down.key)
           : undefined;
       if (pending) {
@@ -652,7 +697,7 @@ export class AuthoritativeResolver {
       const finishFetch = this.startFetch(run, cut.zone, name);
 
       // ask the zone's servers in turn until one gives something to go on
-      let step: { result: ExchangeResult; outcome: Outcome } | undefined;
+      let step: Step | undefined;
       let firstError: DnsError | undefined;
       let lastLame: ExchangeResult | undefined;
       const refusals = new Set<number>();
@@ -798,6 +843,7 @@ export class AuthoritativeResolver {
         // from a truncated referral whose TCP retry failed: it may name only some of the
         // zone's servers. A delegation that is kept is kept before the runs waiting on this
         // one are told, so they find it; when there is none they ask for themselves
+        this.learnZone(run, cut.zone, name, step);
         if (
           step?.outcome.kind === 'referral' &&
           !step.result.tcpFallbackError &&
@@ -1176,6 +1222,9 @@ function stepDown(zone: string, name: string): { key: string; deeper: boolean } 
   const next = labels.length > below ? labels.slice(labels.length - below - 1).join('.') : name;
   return { key: `${zone} ${next}`, deeper: labels.length > below + 1 };
 }
+
+// the root or a top-level domain
+const isTopLevel = (zone: string): boolean => zone === '.' || splitName(zone).length === 1;
 
 const isString = (value: string | undefined): value is string => typeof value === 'string';
 

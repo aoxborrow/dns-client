@@ -2067,6 +2067,133 @@ describe('AuthoritativeResolver', () => {
         expect(asked('10.0.1.')).toBe(1);
       });
     });
+
+    describe('names two labels below a zone that answers for them itself', () => {
+      beforeEach(() => vi.useFakeTimers());
+      afterEach(() => vi.useRealTimers());
+
+      const selectors = ['sel1', 'sel2', 'sel3'].map(label => `${label}._domainkey.example.com`);
+      const dkim = zoneServer({
+        zone: 'example.com',
+        records: selectors.map((name): [string, string, string] => [name, 'TXT', 'v=DKIM1']),
+      });
+
+      it('does not wait on another question under the same empty name', async () => {
+        // ns1 never answers, so each query spends 100 ms on it before ns2. Had the later
+        // two waited for the first, they would have had too little left for ns2
+        const iterative = resolver(
+          { timeout: 100, totalTimeout: 150 },
+          { '10.1.0.1': () => undefined, '10.1.0.2': dkim }
+        );
+        const pending = selectors.map(name => iterative.query(name, 'TXT'));
+        for (const query of pending) query.catch(() => {});
+        await vi.advanceTimersByTimeAsync(200);
+
+        const answers = await Promise.all(pending);
+        expect(answers.map(answer => answer.records.map(record => record.strings))).toEqual([
+          [['v=DKIM1']],
+          [['v=DKIM1']],
+          [['v=DKIM1']],
+        ]);
+        // each asked both of the zone's servers itself
+        expect(asked('10.1.0.1')).toBe(3);
+        expect(asked('10.1.0.2')).toBe(3);
+      });
+
+      it('waits at a zone that has given a referral before', async () => {
+        // example.com delegates a.example.com and b.example.com. A query under a teaches
+        // the resolver that example.com refers; two queries under b then share its referral
+        const parent = zoneServer({
+          zone: 'example.com',
+          delegations: {
+            'a.example.com': { 'ns.a.example.com': ['10.6.0.1'] },
+            'b.example.com': { 'ns.b.example.com': ['10.6.0.2'] },
+          },
+        });
+        const iterative = resolver(
+          {},
+          {
+            '10.1.0.1': late(50, parent),
+            '10.1.0.2': late(50, parent),
+            '10.6.0.1': zoneServer({ zone: 'a.example.com' }),
+            '10.6.0.2': zoneServer({ zone: 'b.example.com' }),
+          }
+        );
+        const taught = iterative.query('x.a.example.com', 'A');
+        await vi.advanceTimersByTimeAsync(100);
+        await taught;
+        network.queries.length = 0;
+
+        const pending = ['x.b.example.com', 'y.b.example.com'].map(name =>
+          iterative.query(name, 'A')
+        );
+        await vi.advanceTimersByTimeAsync(100);
+        const answers = await Promise.all(pending);
+        expect(answers.map(answer => answer.rcodeName)).toEqual(['NXDOMAIN', 'NXDOMAIN']);
+        expect(asked('10.1.0.')).toBe(1);
+        expect(answers.map(answer => zones(answer)?.join())).toEqual([
+          'example.com,b.example.com',
+          'b.example.com',
+        ]);
+      });
+
+      it('does not wait at a zone that has answered for such a name, though it refers too', async () => {
+        // example.com delegates a.example.com and answers for the selectors itself. Once it
+        // has done both, the selectors do not wait on each other there
+        const both = zoneServer({
+          zone: 'example.com',
+          records: selectors.map((name): [string, string, string] => [name, 'TXT', 'v=DKIM1']),
+          delegations: { 'a.example.com': { 'ns.a.example.com': ['10.6.0.1'] } },
+        });
+        const iterative = resolver(
+          { timeout: 100, totalTimeout: 150 },
+          {
+            '10.1.0.1': () => undefined,
+            '10.1.0.2': both,
+            '10.6.0.1': zoneServer({ zone: 'a.example.com' }),
+          }
+        );
+        for (const name of ['x.a.example.com', selectors[0]]) {
+          const taught = iterative.query(name, name === selectors[0] ? 'TXT' : 'A');
+          await vi.advanceTimersByTimeAsync(200);
+          await taught;
+        }
+        network.queries.length = 0;
+
+        const pending = selectors.slice(1).map(name => iterative.query(name, 'TXT'));
+        for (const query of pending) query.catch(() => {});
+        await vi.advanceTimersByTimeAsync(200);
+        const answers = await Promise.all(pending);
+        expect(answers.map(answer => answer.records.map(record => record.strings))).toEqual([
+          [['v=DKIM1']],
+          [['v=DKIM1']],
+        ]);
+        expect(asked('10.1.0.2')).toBe(2);
+      });
+
+      it('does not wait at a zone it has not seen give a referral', async () => {
+        // the same two queries on a fresh resolver each ask example.com
+        const parent = zoneServer({
+          zone: 'example.com',
+          delegations: { 'b.example.com': { 'ns.b.example.com': ['10.6.0.2'] } },
+        });
+        const iterative = resolver(
+          {},
+          {
+            '10.1.0.1': late(50, parent),
+            '10.1.0.2': late(50, parent),
+            '10.6.0.2': zoneServer({ zone: 'b.example.com' }),
+          }
+        );
+        const pending = ['x.b.example.com', 'y.b.example.com'].map(name =>
+          iterative.query(name, 'A')
+        );
+        await vi.advanceTimersByTimeAsync(200);
+        const answers = await Promise.all(pending);
+        expect(answers.map(answer => answer.rcodeName)).toEqual(['NXDOMAIN', 'NXDOMAIN']);
+        expect(asked('10.1.0.')).toBe(2);
+      });
+    });
   });
 
   describe('addresses', () => {
