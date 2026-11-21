@@ -6,6 +6,7 @@ import {
   TimeoutError,
   TruncatedError,
 } from './errors';
+import type { ErrorData } from './errors';
 import { className, classCode, RECORD_CLASSES } from './protocol/classes';
 import { DEFAULT_UDP_PAYLOAD_SIZE } from './protocol/edns';
 import { rcodeName } from './protocol/header';
@@ -96,7 +97,9 @@ export interface ExchangeOptions extends TransportOptions {
   // out. Default: no limit beyond each attempt's `timeout`
   totalTimeout?: number;
   // ask again over TCP when a UDP answer is truncated. Default true; with false the
-  // truncated answer is returned as it came
+  // truncated answer is returned as it came. When the TCP retry fails (refused, timed
+  // out, no time left for it), the truncated answer is returned too, with the TCP error
+  // in `tcpFallbackError`
   tcpFallback?: boolean;
   signal?: AbortSignal;
   onEvent?: OnEvent;
@@ -122,6 +125,17 @@ export interface ExchangeResult {
   elapsed: number;
   // how many times the query was sent
   attempts: number;
+  // the answer is a truncated UDP one (TC set) because asking again over TCP failed:
+  // why it did
+  tcpFallbackError?: ErrorData;
+}
+
+// the TCP failure behind a result's `tcpFallbackError`, as the error that was thrown, for
+// a resolver that counts it as the server's failure
+const tcpFailures = new WeakMap<ExchangeResult, DnsError>();
+
+export function tcpFallbackFailure(result: ExchangeResult): DnsError | undefined {
+  return tcpFailures.get(result);
 }
 
 const DEFAULT_TIMEOUT = 5000;
@@ -375,6 +389,47 @@ export async function exchange(
 
   let attempt = 0;
   let failures = 0;
+  // the truncated UDP answer while it is asked again over TCP: what comes back if that
+  // fails
+  let truncated: ExchangeResult | undefined;
+  const build = (response: TransportResponse, message: Message): ExchangeResult => ({
+    message,
+    bytes: response.bytes,
+    query: {
+      id,
+      name: presentName(name),
+      type: typeText,
+      class: className(cls),
+      flags: { ...flags },
+      edns: edns && { ...edns },
+      bytes: queryBytes,
+    },
+    server: endpoint.host,
+    port: endpoint.port,
+    ...(response.transport === 'doh' && endpoint.url && { url: endpoint.url }),
+    transport: response.transport,
+    elapsed: now() - started,
+    attempts: attempt,
+  });
+  // TCP did not work: the truncated answer is returned as it came, saying why
+  const fallbackFailed = (answer: ExchangeResult, error: DnsError): ExchangeResult => {
+    const data = errorData(error);
+    const result = {
+      ...answer,
+      elapsed: now() - started,
+      attempts: attempt,
+      tcpFallbackError: data,
+    };
+    tcpFailures.set(result, error);
+    onEvent?.({
+      event: 'tcp-fallback-failed',
+      server: answer.server,
+      query: name,
+      type: typeText,
+      error: data,
+    });
+    return result;
+  };
   try {
     for (;;) {
       attempt++;
@@ -452,7 +507,10 @@ export async function exchange(
         report(undefined, undefined, error);
 
         const retryable = error instanceof DnsError && error.retryable;
-        if (!retryable || failures >= retries || deadlineHit || now() >= deadline) throw error;
+        if (!retryable || failures >= retries || deadlineHit || now() >= deadline) {
+          if (truncated && error instanceof DnsError) return fallbackFailed(truncated, error);
+          throw error;
+        }
         failures++;
         onEvent?.({
           event: 'retry',
@@ -478,17 +536,23 @@ export async function exchange(
 
       if (message.flags.tc) {
         if (response.transport !== 'udp') {
-          throw new TruncatedError(
+          const error = new TruncatedError(
             `Response from ${endpoint.host} is truncated over ${response.transport.toUpperCase()}`,
             { ...context(), transport: response.transport, rcode: message.rcode }
           );
+          if (truncated) return fallbackFailed(truncated, error);
+          throw error;
         }
         if (options.tcpFallback !== false) {
-          // out of time to ask again: the answer is not complete, and none came in time
+          truncated = build(response, message);
+          // out of time to ask again: the truncated answer is the only one there will be
           if (deadlineHit || now() >= deadline) {
-            throw new TimeoutError(
-              `No complete answer from ${endpoint.host} within ${Math.round(options.totalTimeout ?? 0)} ms`,
-              { ...context(), transport: response.transport }
+            return fallbackFailed(
+              truncated,
+              new TimeoutError(
+                `No time left to ask ${endpoint.host} again over TCP within ${Math.round(options.totalTimeout ?? 0)} ms`,
+                { ...context(), transport: 'tcp' }
+              )
             );
           }
           onEvent?.({
@@ -507,25 +571,7 @@ export async function exchange(
         }
       }
 
-      return {
-        message,
-        bytes: response.bytes,
-        query: {
-          id,
-          name: presentName(name),
-          type: typeText,
-          class: className(cls),
-          flags: { ...flags },
-          edns: edns && { ...edns },
-          bytes: queryBytes,
-        },
-        server: endpoint.host,
-        port: endpoint.port,
-        ...(response.transport === 'doh' && endpoint.url && { url: endpoint.url }),
-        transport: response.transport,
-        elapsed: now() - started,
-        attempts: attempt,
-      };
+      return build(response, message);
     }
   } finally {
     signal?.removeEventListener('abort', onAbort);

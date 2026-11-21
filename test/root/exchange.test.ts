@@ -326,6 +326,139 @@ describe('exchange', () => {
       expect(result.message.flags.tc).toBe(true);
       expect(server.received).toHaveLength(1);
     });
+
+    describe('when the TCP retry of a truncated answer fails', () => {
+      // a truncated answer that still carries the one record it had room for
+      const cut = (query: Uint8Array) =>
+        answerTo(query, { flags: { qr: true, aa: true, tc: true, rd: true } });
+
+      it('returns the truncated answer as it came, saying why TCP failed', async () => {
+        const events: DnsEvent[] = [];
+        // TCP:53 blocked: the query goes out and nothing comes back
+        const options = await serve(({ transport, query }) =>
+          transport === 'udp' ? { response: cut(query) } : undefined
+        );
+        const result = await exchange(QUESTION, server.address, {
+          ...options,
+          onEvent: event => events.push(event),
+        });
+        expect(result.transport).toBe('udp');
+        expect(result.message.flags.tc).toBe(true);
+        expect(result.message.answers).toHaveLength(1);
+        expect(result.attempts).toBe(2);
+        expect(result.tcpFallbackError).toMatchObject({ name: 'TimeoutError', retryable: true });
+        // the query is the UDP one the answer came back to
+        expect(result.query.id).toBe(queryId(server.received[0].query));
+        expect(toDig(result)).not.toContain('+tcp');
+        expect(server.received.map(({ transport }) => transport)).toEqual(['udp', 'tcp']);
+        expect(events.map(({ event }) => event)).toEqual([
+          'query',
+          'tcp-fallback',
+          'query',
+          'tcp-fallback-failed',
+        ]);
+        expect(events[2]).toMatchObject({ transport: 'tcp', error: { name: 'TimeoutError' } });
+        expect(events[3]).toMatchObject({
+          server: '127.0.0.1',
+          query: 'example.com',
+          type: 'A',
+          error: { name: 'TimeoutError' },
+        });
+      });
+
+      it('returns it when the TCP connection closes without an answer', async () => {
+        const options = await serve(({ transport, query }) =>
+          transport === 'udp'
+            ? { response: cut(query) }
+            : { response: answerTo(query), closeAfterBytes: 0 }
+        );
+        const result = await exchange(QUESTION, server.address, options);
+        expect(result.message.flags.tc).toBe(true);
+        expect(result.tcpFallbackError?.name).toMatch(/EmptyResponseError|ConnectionError/);
+      });
+
+      it('returns the empty truncated answer too, TC set', async () => {
+        const options = await serve(({ transport, query }) =>
+          transport === 'udp' ? { response: truncated(answerTo(query)) } : undefined
+        );
+        const result = await exchange(QUESTION, server.address, options);
+        expect(result.message.flags.tc).toBe(true);
+        expect(result.message.answers).toHaveLength(0);
+        expect(result.tcpFallbackError?.name).toBe('TimeoutError');
+      });
+
+      it('returns it when the TCP retry runs into the total timeout', async () => {
+        const options = await serve(({ transport, query }) =>
+          transport === 'udp' ? { response: cut(query) } : undefined
+        );
+        const started = Date.now();
+        const result = await exchange(QUESTION, server.address, {
+          ...options,
+          timeout: 1000,
+          retries: 2,
+          totalTimeout: 100,
+        });
+        expect(Date.now() - started).toBeLessThan(180);
+        expect(result.message.flags.tc).toBe(true);
+        expect(result.tcpFallbackError?.name).toBe('TimeoutError');
+        // the TCP query was not sent again: there was no time for it
+        expect(server.received.map(({ transport }) => transport)).toEqual(['udp', 'tcp']);
+      });
+
+      it('returns it when there is no time left to ask over TCP at all', async () => {
+        const events: DnsEvent[] = [];
+        // the clock jumps past the deadline while the UDP answer is on its way
+        const real = performance.now.bind(performance);
+        let skipped = 0;
+        const clock = vi.spyOn(performance, 'now').mockImplementation(() => real() + skipped);
+        try {
+          const options = await serve(({ query }) => {
+            skipped = 10_000;
+            return { response: cut(query) };
+          });
+          const result = await exchange(QUESTION, server.address, {
+            ...options,
+            totalTimeout: 1000,
+            onEvent: event => events.push(event),
+          });
+          expect(result.message.flags.tc).toBe(true);
+          expect(result.tcpFallbackError?.name).toBe('TimeoutError');
+          expect(server.received.map(({ transport }) => transport)).toEqual(['udp']);
+          expect(events.map(({ event }) => event)).toEqual(['query', 'tcp-fallback-failed']);
+        } finally {
+          clock.mockRestore();
+        }
+      });
+
+      it('retries TCP as it would any query before giving up on it', async () => {
+        const options = await serve(({ transport, query }) =>
+          transport === 'udp' ? { response: cut(query) } : undefined
+        );
+        const result = await exchange(QUESTION, server.address, {
+          ...options,
+          timeout: 50,
+          retries: 1,
+        });
+        expect(result.tcpFallbackError?.name).toBe('TimeoutError');
+        expect(result.attempts).toBe(3);
+        expect(server.received.map(({ transport }) => transport)).toEqual(['udp', 'tcp', 'tcp']);
+      });
+
+      it('still rejects with the reason when the caller aborts during the TCP retry', async () => {
+        const options = await serve(({ transport, query }) =>
+          transport === 'udp' ? { response: cut(query) } : undefined
+        );
+        const controller = new AbortController();
+        const reason = new Error('never mind');
+        const pending = exchange(QUESTION, server.address, {
+          ...options,
+          timeout: 5000,
+          signal: controller.signal,
+        });
+        setTimeout(() => controller.abort(reason), 30);
+        await expect(pending).rejects.toBe(reason);
+      });
+    });
   });
 
   describe('over TCP', () => {

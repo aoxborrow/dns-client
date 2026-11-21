@@ -18,7 +18,14 @@ import { createTransports, defaultTransports } from '../transports/index';
 import type { Transports } from '../transports/index';
 import { configuredServers } from '../transports/host';
 import type { Server } from '../transports/types';
-import { argumentError, checkHostname, failureCode, nodeError, rcodeError } from './errors';
+import {
+  argumentError,
+  checkHostname,
+  failureCode,
+  nodeError,
+  rcodeError,
+  tcpFallbackCode,
+} from './errors';
 import type { NodeDnsError } from './errors';
 import { ipFamily, lookupAddresses, lookupSettings } from './lookup';
 import type {
@@ -462,8 +469,9 @@ export class Resolver {
       this.#resolver.query(name, type).then(
         answer => {
           this.#pending.delete(cancel);
-          const code =
-            rcodeError(answer.rcode) ?? (answer.answers.length === 0 ? 'ENODATA' : undefined);
+          const code = answer.tcpFallbackError
+            ? tcpFallbackCode(answer.tcpFallbackError)
+            : (rcodeError(answer.rcode) ?? (answer.answers.length === 0 ? 'ENODATA' : undefined));
           if (code) reject(nodeError(code, syscall, hostname));
           else {
             // an address reached through an alias lives no longer than the alias, as c-ares

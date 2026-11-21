@@ -6,7 +6,7 @@ import {
   TimeoutError,
 } from '../errors';
 import type { ServerFailure } from '../errors';
-import { exchange, hasTransportOptions, presentName } from '../exchange';
+import { exchange, hasTransportOptions, presentName, tcpFallbackFailure } from '../exchange';
 import type { ExchangeResult } from '../exchange';
 import { RCODES, rcodeName } from '../protocol/header';
 import { typeCode, typeName } from '../protocol/types';
@@ -715,6 +715,17 @@ export class AuthoritativeResolver {
             try {
               const result = await this.ask(run, name, type, address, last);
               const outcome = this.read(result, name, type, cut.zone);
+              // truncated over UDP, and TCP failed. A delegation in what did arrive is
+              // followed, and the zone's own answer is the answer, TC and all. Anything
+              // else gives nothing to go on: the server failed the way its TCP retry did
+              const tcpFailure = tcpFallbackFailure(result);
+              if (
+                tcpFailure &&
+                !result.message.flags.aa &&
+                (outcome.kind === 'answer' || outcome.kind === 'alias')
+              ) {
+                throw tcpFailure;
+              }
               Object.assign(hop, {
                 transport: result.transport,
                 rcode: result.message.rcode,
@@ -724,6 +735,7 @@ export class AuthoritativeResolver {
                 ...(outcome.kind === 'referral' && {
                   referral: outcome.cut.written ?? outcome.cut.zone,
                 }),
+                ...(result.tcpFallbackError && { tcpFallbackError: result.tcpFallbackError }),
               });
               if (outcome.kind === 'lame') {
                 hop.error = {

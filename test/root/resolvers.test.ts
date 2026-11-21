@@ -25,6 +25,7 @@ import {
   recursiveServer,
   simulateNetwork,
   soaRecord,
+  truncatedOverUdp,
   zoneServer,
 } from '../support/simulated-network';
 import type { SimulatedNetwork, SimulatedServer } from '../support/simulated-network';
@@ -625,6 +626,70 @@ describe('Resolver', () => {
     // the error thrown is the last server's, and is among them
     expect(failures?.at(-1)?.error).toBe(error);
   });
+
+  describe('a truncated answer whose TCP retry fails', () => {
+    it('comes back as it came, TC set, saying why, and is not cached', async () => {
+      const events: DnsEvent[] = [];
+      const stub = resolver(
+        { '10.0.0.1': truncatedOverUdp(recursiveServer(RECORDS)) },
+        { transport: 'udp', retries: 0, onEvent: event => events.push(event) }
+      );
+      const answer = await stub.query('example.com', 'A');
+      expect(answer.flags.tc).toBe(true);
+      expect(answer.transport).toBe('udp');
+      expect(answer.records.map(record => record.address)).toEqual(['192.0.2.1', '192.0.2.2']);
+      expect(answer.tcpFallbackError).toMatchObject({ name: 'ConnectionError' });
+      expect(events.map(({ event }) => event)).toEqual([
+        'query',
+        'tcp-fallback',
+        'query',
+        'tcp-fallback-failed',
+      ]);
+      expect(network.queries.map(query => query.transport)).toEqual(['udp', 'tcp']);
+
+      // a truncated answer is not the whole answer, and is asked again next time
+      const again = await stub.query('example.com', 'A');
+      expect(again.cached).toBe(false);
+      expect(network.queries).toHaveLength(4);
+    });
+
+    it('comes back empty when the truncated answer was', async () => {
+      const answer = await resolver(
+        { '10.0.0.1': truncatedOverUdp(recursiveServer(RECORDS), true) },
+        { transport: 'udp' }
+      ).query('example.com', 'A');
+      expect(answer.flags.tc).toBe(true);
+      expect(answer.records).toEqual([]);
+      expect(answer.tcpFallbackError?.name).toBe('ConnectionError');
+    });
+
+    it('is the answer: the next server is not asked', async () => {
+      const answer = await resolver(
+        {
+          '10.0.0.1': truncatedOverUdp(recursiveServer(RECORDS)),
+          '10.0.0.2': recursiveServer(RECORDS),
+        },
+        { transport: 'udp', retries: 0 }
+      ).query('example.com', 'A');
+      expect(answer.server).toBe('10.0.0.1');
+      expect(answer.flags.tc).toBe(true);
+      expect(network.queries.map(query => query.server)).toEqual(['10.0.0.1', '10.0.0.1']);
+    });
+
+    it('still rejects with the reason when the caller aborts', async () => {
+      const controller = new AbortController();
+      const reason = new Error('never mind');
+      const hanging: SimulatedServer = (query, transport) =>
+        transport === 'udp' ? truncatedOverUdp(recursiveServer(RECORDS))(query, 'udp') : undefined;
+      const pending = resolver({ '10.0.0.1': hanging }, { transport: 'udp', timeout: 5000 }).query(
+        'example.com',
+        'A',
+        { signal: controller.signal }
+      );
+      setTimeout(() => controller.abort(reason), 20);
+      await expect(pending).rejects.toBe(reason);
+    });
+  });
 });
 
 describe('aliasTarget', () => {
@@ -1074,6 +1139,92 @@ describe('AuthoritativeResolver', () => {
         ['10.1.0.1', 'ConnectionError'],
         ['10.1.0.2', undefined],
       ]);
+    });
+
+    describe('a truncated answer whose TCP retry fails', () => {
+      it("returns the zone's own answer as it came, TC set", async () => {
+        const answer = await resolver({}, { '10.1.0.1': truncatedOverUdp(example) }).query(
+          'example.com',
+          'A'
+        );
+        expect(answer.server).toBe('10.1.0.1');
+        expect(answer.flags).toMatchObject({ aa: true, tc: true });
+        expect(answer.records.map(record => record.address)).toEqual(['192.0.2.1']);
+        expect(answer.tcpFallbackError).toMatchObject({ name: 'ConnectionError' });
+        expect(answer.trace?.at(-1)).toMatchObject({
+          server: '10.1.0.1',
+          transport: 'udp',
+          tcpFallbackError: { name: 'ConnectionError' },
+        });
+        expect(answer.trace?.at(-1)?.error).toBeUndefined();
+      });
+
+      it('returns an empty authoritative answer too, TC set', async () => {
+        const answer = await resolver({}, { '10.1.0.1': truncatedOverUdp(example, true) }).query(
+          'example.com',
+          'A'
+        );
+        expect(answer.server).toBe('10.1.0.1');
+        expect(answer.flags.tc).toBe(true);
+        expect(answer.records).toEqual([]);
+      });
+
+      it('follows the delegation a truncated referral still carries', async () => {
+        const events: DnsEvent[] = [];
+        const answer = await resolver(
+          { onEvent: event => events.push(event) },
+          { '10.0.1.1': truncatedOverUdp(com) }
+        ).query('example.com', 'A');
+        expect(network.log()).toEqual([
+          '10.0.0.1 example.com A',
+          '10.0.1.1 example.com A',
+          '10.0.1.1 example.com A',
+          '10.1.0.1 example.com A',
+        ]);
+        expect(answer.server).toBe('10.1.0.1');
+        expect(answer.flags.tc).toBe(false);
+        expect(answer.tcpFallbackError).toBeUndefined();
+        expect(answer.trace?.[1]).toMatchObject({
+          server: '10.0.1.1',
+          referral: 'example.com',
+          tcpFallbackError: { name: 'ConnectionError' },
+        });
+        expect(events.filter(({ event }) => event === 'tcp-fallback-failed')).toMatchObject([
+          { server: '10.0.1.1', query: 'example.com', error: { name: 'ConnectionError' } },
+        ]);
+      });
+
+      it("moves on to the zone's next server from a truncated referral with nothing in it", async () => {
+        const answer = await resolver({}, { '10.0.1.1': truncatedOverUdp(com, true) }).query(
+          'example.com',
+          'A'
+        );
+        expect(answer.server).toBe('10.1.0.1');
+        expect(answer.flags.tc).toBe(false);
+        expect(answer.trace?.map(hop => [hop.server, hop.error?.name])).toEqual([
+          ['10.0.0.1', undefined],
+          ['10.0.1.1', 'ConnectionError'],
+          ['10.0.1.2', undefined],
+          ['10.1.0.1', undefined],
+        ]);
+      });
+
+      it('throws the TCP failure when every server of the zone sends an empty truncated referral', async () => {
+        const error = await resolver(
+          {},
+          {
+            '10.0.1.1': truncatedOverUdp(com, true),
+            '10.0.1.2': truncatedOverUdp(com, true),
+          }
+        )
+          .query('example.com', 'A')
+          .catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect((error as ConnectionError).failures?.map(failure => failure.server)).toEqual([
+          '10.0.1.1',
+          '10.0.1.2',
+        ]);
+      });
     });
 
     it('moves on from one that refuses the zone', async () => {

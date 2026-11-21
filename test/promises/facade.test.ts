@@ -176,6 +176,36 @@ describe('the same errors as node:dns', () => {
     });
     refusedOurs.close();
   });
+
+  it.each([
+    ['ETIMEOUT', 'says nothing'],
+    ['ECONNREFUSED', 'closes the connection'],
+  ])('is %s when a truncated answer is asked again over TCP and TCP %s', async (code, _how) => {
+    // c-ares does not hand back the truncated answer: the query fails as TCP did
+    const cut = await startFixtureServer(({ transport, query }) => {
+      if (transport === 'tcp') {
+        return code === 'ETIMEOUT' ? undefined : { response: query, closeAfterBytes: 0 };
+      }
+      const reply = zoneResponder({ transport, query });
+      if (!reply) return undefined;
+      const response = Uint8Array.from(reply.response);
+      response[2] |= 0x02;
+      return { ...reply, response };
+    });
+    const address = `${cut.address}:${cut.port}`;
+    const theirs = new nodeDns.Resolver({ timeout: 300, tries: 1 });
+    theirs.setServers([address]);
+    const mine = new Resolver({ timeout: 300, tries: 1, cache: false });
+    mine.setServers([address]);
+    try {
+      const expected = await errorOf(() => theirs.resolve4(`www.${ZONE}`));
+      expect(expected.code).toBe(code);
+      expect(await errorOf(() => mine.resolve4(`www.${ZONE}`))).toEqual(expected);
+    } finally {
+      mine.close();
+      await cut.close();
+    }
+  });
 });
 
 describe('servers', () => {

@@ -10,6 +10,7 @@ import {
   TimeoutError,
   TruncatedError,
 } from '../errors';
+import type { ErrorData } from '../errors';
 import { RCODES } from '../protocol/header';
 
 // the errors the facade throws, shaped like the ones `node:dns` throws: a plain `Error`
@@ -97,6 +98,21 @@ export function failureCode(error: unknown): string {
   if (error instanceof DnsError) return 'EBADRESP';
   // not the library's: a bug, or the caller's own transport failing
   return 'ECONNREFUSED';
+}
+
+// the code for a truncated UDP answer whose TCP retry failed. c-ares does not hand back
+// the truncated answer: the query fails the way its TCP connection did
+export function tcpFallbackCode(error: ErrorData): string {
+  switch (error.name) {
+    case 'TimeoutError':
+      return 'ETIMEOUT';
+    case 'ConnectionError':
+    case 'ProxyError':
+    case 'EmptyResponseError':
+      return 'ECONNREFUSED';
+    default:
+      return 'EBADRESP';
+  }
 }
 
 // Node's argument errors: a TypeError with a code, thrown before anything is asked

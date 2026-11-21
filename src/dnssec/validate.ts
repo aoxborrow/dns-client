@@ -55,7 +55,14 @@ const { DS, DNSKEY, RRSIG, NSEC, NSEC3, NS, CNAME, DNAME } = RECORD_TYPES;
 // a response, as the judging core reads it, for the question that was sent
 export function dnssecResponse(message: Message, name: string, type: number): DnssecResponse {
   const wire = toWireMessage(message);
-  return { name, type, rcode: wire.rcode, answers: wire.answers, authorities: wire.authorities };
+  return {
+    name,
+    type,
+    rcode: wire.rcode,
+    answers: wire.answers,
+    authorities: wire.authorities,
+    ...(message.flags.tc && { truncated: true }),
+  };
 }
 
 export class Validator {
@@ -107,7 +114,8 @@ export class Validator {
         if (signal?.aborted) throw error;
         return undefined;
       });
-      return message && dnssecResponse(message, name, type);
+      // a truncated response is not the chain's records, only some of them: it is missing
+      return message && !message.flags.tc ? dnssecResponse(message, name, type) : undefined;
     };
 
     // the anchored zone's key set

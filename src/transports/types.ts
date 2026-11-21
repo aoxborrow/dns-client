@@ -169,7 +169,18 @@ export interface ProxyEvent {
   error?: ErrorData;
 }
 
-export type DnsEvent = QueryEvent | RetryEvent | TcpFallbackEvent | ProxyEvent;
+// a truncated UDP answer could not be asked again over TCP: the TCP query failed, or there
+// was no time left for it. The truncated answer is what comes back
+export interface TcpFallbackFailedEvent {
+  event: 'tcp-fallback-failed';
+  server: string;
+  query: string;
+  type: string;
+  error: ErrorData;
+}
+
+export type DnsEvent =
+  QueryEvent | RetryEvent | TcpFallbackEvent | TcpFallbackFailedEvent | ProxyEvent;
 export type OnEvent = (event: DnsEvent) => void;
 
 // ---- the transport itself

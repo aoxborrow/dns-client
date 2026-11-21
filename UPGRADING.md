@@ -70,7 +70,7 @@ sockets they opened, and `clearCache()`.
 | `flags: ['RD']` | `recursionDesired: true` (the default on `Resolver`; `AuthoritativeResolver` never sets it) |
 | `flags: ['CD']` | `checkingDisabled: true` |
 | `flags: ['DO']` | `dnssecOk: true` |
-| `tcpFallback` | `tcpFallback`, unchanged |
+| `tcpFallback` | `tcpFallback`. When the TCP retry fails, the truncated answer comes back as it came, `flags.tc` set, with the TCP error in `answer.tcpFallbackError` |
 | `timeout` | `timeout`, unchanged: milliseconds per attempt |
 | `retries: 0` by default | `retries: 2` by default, or 1 when there are other servers to turn to |
 | `backoff` | removed. A retry is sent as soon as the attempt before it has failed |
@@ -163,7 +163,7 @@ try {
 | `TimeoutError`, `ConnectionError` | the same names |
 | `InvalidResponseError` | the same name, no longer retryable |
 | `ParsingError` | `ParseError` |
-| `TruncatedResponseError` | `TruncatedError`, when a TCP, TLS or HTTPS answer comes back truncated. A truncated UDP answer with `tcpFallback` off is returned as it came |
+| `TruncatedResponseError` | `TruncatedError`, when a TCP, TLS or HTTPS answer comes back truncated. A truncated UDP answer with `tcpFallback` off, or one whose TCP retry failed, is returned as it came |
 | `ServerNotFoundError` | `NoServerError` |
 | `ConfigurationError` (an invalid record type) | `InvalidQueryError` |
 | `AbortError` | the signal's reason, as `fetch` does |

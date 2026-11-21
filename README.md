@@ -172,6 +172,7 @@ is. Functions that read it stand alone, such as `toDig(answer)`.
 | `query` | the query as it was sent: name, type, class, flags, EDNS |
 | `server`, `serverName`, `port`, `url`, `transport` | who answered, and how |
 | `elapsed`, `attempts`, `timestamp`, `cached` | milliseconds taken, queries sent, when it arrived, whether it came from the cache |
+| `tcpFallbackError` | the answer is a truncated UDP one (`flags.tc`), with whatever records it carried, because asking again over TCP failed: why, as plain error data. A hop in `trace` carries it too, for a truncated referral the walk followed |
 | `trace` | `AuthoritativeResolver` only: every server asked, from the root |
 | `security` | with `validate: true` only: what DNSSEC validation made of it |
 
@@ -232,7 +233,7 @@ These can be set on a resolver for every query, or passed to one `query()`:
 | `transport` | `'udp'` | `'udp'`, `'tcp'`, `'tls'` or `'doh'`. DoH for a server given as a URL, TCP where there is no UDP. `AuthoritativeResolver` takes `'udp'` or `'tcp'` |
 | `timeout` | `5000` | milliseconds of patience with one server |
 | `retries` | `2` | further attempts at a server that fails in a way worth retrying. One, when there are other servers to turn to |
-| `tcpFallback` | `true` | ask again over TCP when a UDP answer is truncated |
+| `tcpFallback` | `true` | ask again over TCP when a UDP answer is truncated. When TCP fails (refused, timed out, no time left for it), the truncated answer comes back as it came, `flags.tc` set, with the TCP error in `tcpFallbackError` |
 | `recursionDesired` | `true` | the RD flag. `AuthoritativeResolver` never sets it |
 | `dnssecOk` | `false` | the DO bit: ask for signatures with the answer |
 | `checkingDisabled` | `false` | the CD flag: ask a validating resolver not to hold an answer back |
@@ -345,6 +346,7 @@ const resolver = new Resolver({
 | `'query'` | one per network exchange, with its server, transport, attempt, elapsed time, bytes, and rcode or error |
 | `'retry'` | an attempt failed and another is about to be made |
 | `'tcp-fallback'` | a UDP query goes over TCP: the answer was truncated, or the proxy cannot carry UDP |
+| `'tcp-fallback-failed'` | asking a truncated answer again over TCP failed, with the error: the truncated answer is what comes back |
 | `'proxy'` | a proxy was asked for a tunnel or a UDP association. Credentials never appear |
 
 `AuthoritativeResolver.query()` also takes an `onEvent` of its own, told only of the
@@ -564,7 +566,7 @@ nothing changes.
 | `secure` | a chain of valid signatures runs from a trust anchor to the data |
 | `insecure` | the data is proven to sit below a delegation with no DS (or an opt-out range, or a DS set naming only algorithms this runtime cannot verify, RFC 6840 §5.2), so nothing could sign it |
 | `bogus` | a chain should be there and is broken: an expired or invalid signature, a DS that matches no key, a missing proof |
-| `indeterminate` | it could not be told: a response missing, or every signature in an algorithm this runtime cannot check |
+| `indeterminate` | it could not be told: a response missing or truncated, or every signature in an algorithm this runtime cannot check |
 
 `reason` is a code and the values it is about (zone, name, type, key tag, algorithm), never
 English, with `ede` set to the extended DNS error (RFC 8914) a validating resolver would send
@@ -627,6 +629,9 @@ const judgement = await judgeChain(
 judgement.status; // 'secure'
 judgement.links; // every link, with a status and a reason
 ```
+
+A response marked `truncated: true` (it came with TC set) is not the whole answer: in a
+signed zone its data is `indeterminate`, whatever signatures it carries.
 
 `mode: 'first'` (what the resolvers use) stops at the first link that settles the outcome;
 `mode: 'all'` judges every link and every signature. `requireEveryAlgorithm` asks for each
@@ -796,6 +801,9 @@ Errors are plain `Error`s with `code`, `syscall` and `hostname`, as Node's are:
 
 The library error behind a code, when there is one, is its `cause`. These codes exist only
 in this entry; the rest of the library has none.
+
+As in Node, a truncated answer whose TCP retry fails is not returned: the call rejects the
+way the TCP query failed, `ETIMEOUT` or `ECONNREFUSED`.
 
 ## Where it runs
 

@@ -59,6 +59,9 @@ export interface Answer<Rec extends DnsRecord = DnsRecord> {
   timestamp: Date;
   // served from the resolver's cache: the record TTLs are what is left of them
   cached: boolean;
+  // the answer is a truncated UDP one (`flags.tc`), with whatever records it carried,
+  // because asking again over TCP failed: why it did
+  tcpFallbackError?: ErrorData;
 
   // every server asked on the way from the root. AuthoritativeResolver only
   trace?: TraceHop[];
@@ -87,6 +90,9 @@ export interface TraceHop {
   timestamp: Date;
   // why this server gave nothing usable, when it did not
   error?: ErrorData;
+  // its answer was truncated over UDP and asking again over TCP failed: why. The
+  // truncated answer is what the walk went on with, when it could
+  tcpFallbackError?: ErrorData;
 }
 
 // the flags and EDNS settings of a query, which both resolvers take for every query and
@@ -245,6 +251,7 @@ export function buildAnswer(result: ExchangeResult, extras: AnswerExtras = {}): 
     attempts: extras.attempts ?? result.attempts,
     timestamp: extras.timestamp ?? new Date(),
     cached: extras.cached ?? false,
+    ...(result.tcpFallbackError && { tcpFallbackError: { ...result.tcpFallbackError } }),
     ...(extras.trace && { trace: extras.trace }),
   };
 }

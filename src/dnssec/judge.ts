@@ -78,6 +78,8 @@ export interface DnssecResponse {
   // stops at an alias without the target's records owes a proof that the target has none.
   // A zone's own server hands over an alias that leads out of its zone and nothing more
   recursive?: boolean;
+  // the response came with TC set: it is not the whole answer
+  truncated?: boolean;
 }
 
 // a name between the trust anchor and the data, with what was fetched for it
@@ -844,6 +846,25 @@ async function judgeResponse(
           status: INDETERMINATE,
           reason: securityReason(R.RESPONSE_MISSING, '.', { name, type }),
         };
+
+  // a truncated response is not the whole answer: what is missing from it cannot be
+  // judged, in a zone that signs. Below a zone that does not, it is what that zone is
+  if (response.truncated) {
+    const name = canonicalName(response.name);
+    const type = typeName(response.type);
+    const zone = enclosing(name, response.type === DS);
+    if (zone && zone.status !== SECURE) return [inherit(zone, 'rrset', name, type)];
+    return [
+      {
+        kind: 'rrset',
+        zone: zone?.zone ?? '.',
+        name,
+        type,
+        status: INDETERMINATE,
+        reason: securityReason(R.RESPONSE_MISSING, zone?.zone ?? '.', { name, type }),
+      },
+    ];
+  }
 
   // DNAMEs first, so the CNAMEs they synthesize can be judged against them
   const ordered = [

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AuthoritativeResolver, Resolver } from '../../src/index';
 import type { Answer } from '../../src/index';
-import { late, simulateNetwork } from '../support/simulated-network';
+import { late, simulateNetwork, truncatedOverUdp } from '../support/simulated-network';
 import type { SimulatedServer } from '../support/simulated-network';
 import { ecdsaKey, revokedKey, signedNetwork, unverifiableKey } from '../support/signed-zones';
 import type { SignedZone } from '../support/signed-zones';
@@ -93,6 +93,90 @@ describe('validate: a signed answer', () => {
 const secure = (zone: string, records: SignedZone['records'] = []): SignedZone => ({
   zone,
   records,
+});
+
+// a server that truncates its answers about `type` over UDP, records and signatures kept,
+// and cannot be reached over TCP
+function truncating(server: SimulatedServer, type: number): SimulatedServer {
+  const cut = truncatedOverUdp(server);
+  return (query, transport) =>
+    query.questions[0].type === type ? cut(query, transport) : server(query, transport);
+}
+
+describe('validate: a truncated answer whose TCP retry failed', () => {
+  const zones = [root, tld, secure('secure.example', [['www.secure.example', 'A', '192.0.2.1']])];
+
+  it('is indeterminate from a recursive resolver, never secure', async () => {
+    const signed = signedNetwork(zones);
+    signed.servers[signed.recursive] = truncating(signed.servers[signed.recursive], 1);
+    const network = simulateNetwork(signed.servers);
+    const resolver = new Resolver({
+      transports: network.transports,
+      servers: [signed.recursive],
+      trustAnchors: signed.trustAnchors,
+      validate: true,
+    });
+    const answer = await resolver.query('www.secure.example', 'A');
+    expect(answer.flags.tc).toBe(true);
+    expect(answer.records).toMatchObject([{ type: 'A', address: '192.0.2.1' }]);
+    expect(answer.security?.status).toBe('indeterminate');
+    expect(answer.security?.reason).toMatchObject({ code: 'response-missing' });
+    expect(answer.security?.failure).toMatchObject({ name: 'www.secure.example', type: 'A' });
+  });
+
+  it('is indeterminate from the zone server', async () => {
+    const signed = signedNetwork(zones);
+    // secure.example is the third zone
+    signed.servers['10.53.0.3'] = truncating(signed.servers['10.53.0.3'], 1);
+    const network = simulateNetwork(signed.servers);
+    const resolver = new AuthoritativeResolver({
+      transports: network.transports,
+      rootServers: signed.rootServers,
+      trustAnchors: signed.trustAnchors,
+      validate: true,
+    });
+    const answer = await resolver.query('www.secure.example', 'A');
+    expect(answer.flags.tc).toBe(true);
+    expect(answer.tcpFallbackError?.name).toBe('ConnectionError');
+    expect(answer.security?.status).toBe('indeterminate');
+    expect(answer.security?.reason).toMatchObject({ code: 'response-missing' });
+  });
+
+  it('leaves a key set it truncated undecided, not bogus', async () => {
+    const signed = signedNetwork(zones);
+    // DNSKEY = 48
+    signed.servers[signed.recursive] = truncating(signed.servers[signed.recursive], 48);
+    const network = simulateNetwork(signed.servers);
+    const resolver = new Resolver({
+      transports: network.transports,
+      servers: [signed.recursive],
+      trustAnchors: signed.trustAnchors,
+      validate: true,
+    });
+    const answer = await resolver.query('www.secure.example', 'A');
+    expect(answer.flags.tc).toBe(false);
+    expect(answer.security?.status).toBe('indeterminate');
+    expect(answer.security?.reason).toMatchObject({ code: 'response-missing' });
+  });
+
+  it('takes the outcome of a zone that does not sign', async () => {
+    const signed = signedNetwork([
+      root,
+      tld,
+      { zone: 'plain.example', unsigned: true, records: [['www.plain.example', 'A', '192.0.2.9']] },
+    ]);
+    signed.servers[signed.recursive] = truncating(signed.servers[signed.recursive], 1);
+    const network = simulateNetwork(signed.servers);
+    const resolver = new Resolver({
+      transports: network.transports,
+      servers: [signed.recursive],
+      trustAnchors: signed.trustAnchors,
+      validate: true,
+    });
+    const answer = await resolver.query('www.plain.example', 'A');
+    expect(answer.flags.tc).toBe(true);
+    expect(answer.security?.status).toBe('insecure');
+  });
 });
 
 describe('validate: aliases', () => {
