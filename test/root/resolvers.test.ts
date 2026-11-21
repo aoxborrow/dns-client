@@ -1973,6 +1973,49 @@ describe('AuthoritativeResolver', () => {
       ]);
     });
 
+    it('follows a truncated referral but does not keep it for later queries', async () => {
+      // com's servers send many.com's delegation truncated, with one of its four
+      // nameservers, and TCP is blocked
+      const oneOfFour: SimulatedServer = async (query, transport) => {
+        if (transport !== 'udp') return new ConnectionError('connect ECONNREFUSED');
+        const reply = await com(query, transport);
+        if (!(reply instanceof Uint8Array)) return reply;
+        const message = decodeMessage(reply);
+        message.flags.tc = true;
+        message.authorities = message.authorities.slice(0, 1);
+        message.additionals = message.additionals.slice(0, 1);
+        return encodeMessage(message);
+      };
+      const many = zoneServer({ zone: 'many.com', records: [['many.com', 'A', '192.0.2.44']] });
+      const iterative = resolver(
+        {},
+        {
+          '10.0.1.1': oneOfFour,
+          '10.0.1.2': oneOfFour,
+          '10.4.0.1': many,
+          '10.4.0.2': many,
+          '10.4.0.3': many,
+          '10.4.0.4': many,
+        }
+      );
+      const first = await iterative.query('many.com', 'A');
+      expect(first.server).toBe('10.4.0.1');
+      expect(zones(first)).toEqual(['.', 'com', 'many.com']);
+      // the next query asks com again rather than start from the one nameserver it was told of
+      const second = await iterative.query('many.com', 'TXT');
+      expect(zones(second)).toEqual(['com', 'many.com']);
+      // queries waiting on a walk that brings back only such a delegation ask com themselves
+      iterative.clearCache();
+      const together = await Promise.all(
+        ['a.many.com', 'b.many.com'].map(name => iterative.query(name, 'A'))
+      );
+      expect(together.map(answer => answer.rcodeName)).toEqual(['NXDOMAIN', 'NXDOMAIN']);
+      expect(together.map(answer => zones(answer)?.join())).toEqual([
+        '.,com,many.com',
+        'com,many.com',
+      ]);
+    });
+
     it('forgets the delegations it learned on clearCache', async () => {
       const iterative = resolver();
       await iterative.query('example.com', 'A', { fromRoot: true });

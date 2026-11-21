@@ -794,9 +794,15 @@ export class AuthoritativeResolver {
             }
           }
         }
-        // a delegation with a TTL of zero is used for this walk and not kept. It is kept
-        // before the runs waiting on this one are told, so they find it
-        if (step?.outcome.kind === 'referral' && step.outcome.cut.expires > Date.now()) {
+        // a delegation with a TTL of zero is used for this walk and not kept, and so is one
+        // from a truncated referral whose TCP retry failed: it may name only some of the
+        // zone's servers. A delegation that is kept is kept before the runs waiting on this
+        // one are told, so they find it; when there is none they ask for themselves
+        if (
+          step?.outcome.kind === 'referral' &&
+          !step.result.tcpFallbackError &&
+          step.outcome.cut.expires > Date.now()
+        ) {
           run.knowledge.cuts.set(step.outcome.cut.zone, step.outcome.cut);
         }
       } finally {
