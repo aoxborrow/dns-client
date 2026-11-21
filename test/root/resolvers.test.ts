@@ -981,6 +981,25 @@ describe('AuthoritativeResolver', () => {
     expect(error.server).toBe('ns1.dnshost.net');
   });
 
+  it("looks a nameserver's IPv4 and IPv6 addresses up at the same time", async () => {
+    // dnshost.net's first server says nothing. Asked for A and then AAAA, the lookup waited
+    // for it twice, which is more than the walk had
+    const net = zoneServer({
+      zone: 'net',
+      delegations: {
+        'dnshost.net': { 'ns0.dnshost.net': ['10.2.0.9'], 'ns.dnshost.net': ['10.2.0.1'] },
+      },
+    });
+    const answer = await resolver(
+      { addressFamily: 'both', totalTimeout: 170 },
+      { '10.0.2.1': net, '10.2.0.9': () => undefined }
+    ).query('glueless.com', 'A');
+    expect(answer.records.map(record => record.address)).toEqual(['192.0.2.77']);
+    expect(network.log()).toEqual(
+      expect.arrayContaining(['10.2.0.9 ns1.dnshost.net A', '10.2.0.9 ns1.dnshost.net AAAA'])
+    );
+  });
+
   it('names the answering server as the nameserver it asked, when two share an address', async () => {
     // ns1 and ns3 are the same machine. Asked as ns1, it is ns1 that answered
     const shared = zoneServer({

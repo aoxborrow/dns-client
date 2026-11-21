@@ -1069,20 +1069,28 @@ export class AuthoritativeResolver {
     const { name } = server;
     const family = this.options.addressFamily ?? 'both';
     const types = family === 'ipv4' ? ['A'] : family === 'ipv6' ? ['AAAA'] : ['A', 'AAAA'];
-    const found: string[] = [];
     let ttl = Infinity;
-    for (const type of types) {
-      try {
-        const { result } = await this.resolve(run, name, type, undefined, nesting + 1);
-        for (const record of decodeRecords(result.message.answers, { lenient: true })) {
-          if (record.type === 'A' || record.type === 'AAAA') {
-            found.push(normalizeAddress(record.address));
-            ttl = Math.min(ttl, record.ttl);
-          }
-        }
-      } catch (error) {
+    // both families at once: asked one after the other, a dead server of the nameserver's
+    // zone that the order puts first costs its whole patience twice, and that can be all
+    // the time the walk waiting on this lookup has. The addresses keep the order of the
+    // families, IPv4 first
+    const settled = await Promise.allSettled(
+      types.map(type => this.resolve(run, name, type, undefined, nesting + 1))
+    );
+    const found: string[] = [];
+    for (const outcome of settled) {
+      if (outcome.status === 'rejected') {
+        const error: unknown = outcome.reason;
         if (run.signal?.aborted || !(error instanceof DnsError)) throw error;
-        // this nameserver cannot be found; another may be
+        // this nameserver cannot be found this way; the other family, or another
+        // nameserver, may do
+        continue;
+      }
+      for (const record of decodeRecords(outcome.value.result.message.answers, { lenient: true })) {
+        if (record.type === 'A' || record.type === 'AAAA') {
+          found.push(normalizeAddress(record.address));
+          ttl = Math.min(ttl, record.ttl);
+        }
       }
     }
     for (const address of found) this.learnName(address, server.written ?? name);
