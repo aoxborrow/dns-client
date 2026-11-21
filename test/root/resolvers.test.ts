@@ -2504,5 +2504,105 @@ describe('AuthoritativeResolver', () => {
       expect(names.has('10.0')).toBe(false);
       expect(names.get('10.10004')).toBe('ns10004.test');
     });
+
+    describe('bounds on what it knows', () => {
+      type Known = { cuts: Map<string, unknown>; zones: Map<string, unknown> };
+      const knowledgeOf = (iterative: AuthoritativeResolver) =>
+        (iterative as unknown as { knowledge: Known & { addresses: Map<string, unknown> } })
+          .knowledge;
+
+      // com, with a delegation of its own for every dN.com, to one server that has none of
+      // their names
+      const wide: SimulatedServer = query => {
+        const name = query.questions[0].name.toLowerCase();
+        if (!/^d\d+\.com$/.test(name)) return com(query);
+        return zoneServer({
+          zone: 'com',
+          delegations: { [name]: { [`ns.${name}`]: ['10.5.0.1'] } },
+        })(query);
+      };
+      const servers = {
+        '10.0.1.1': wide,
+        '10.0.1.2': wide,
+        '10.5.0.1': zoneServer({ zone: '.' }),
+      };
+
+      it('keeps no more delegations than its bound, the least recently used going first', async () => {
+        const iterative = resolver({}, servers);
+        await iterative.query('example.com', 'A');
+        const { cuts } = knowledgeOf(iterative);
+        for (let index = 0; index < 10_005; index++) {
+          await iterative.query(`d${index}.com`, 'A');
+        }
+        expect(cuts.size).toBe(10_000);
+        // com is used by every query, so stays; example.com and the first of the rest went
+        expect(cuts.has('com')).toBe(true);
+        expect(cuts.has('example.com')).toBe(false);
+        expect(cuts.has('d0.com')).toBe(false);
+        expect(cuts.has('d10004.com')).toBe(true);
+        // one forgotten is learned again, from com
+        network.queries.length = 0;
+        const answer = await iterative.query('example.com', 'A');
+        expect(network.log()).toEqual(['10.0.1.1 example.com A', '10.1.0.1 example.com A']);
+        expect(answer.records).toHaveLength(1);
+        expect(cuts.size).toBe(10_000);
+      }, 60_000);
+
+      it('forgets what has expired without being asked about it again', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+          const iterative = resolver({}, servers);
+          await iterative.query('example.com', 'A');
+          await iterative.query('glueless.com', 'A');
+          await iterative.query('target.other.net', 'A', { fromRoot: true });
+          const { cuts, zones, addresses } = knowledgeOf(iterative);
+          expect([...cuts.keys()].sort()).toEqual([
+            'com',
+            'dnshost.net',
+            'example.com',
+            'glueless.com',
+            'net',
+            'other.net',
+          ]);
+          expect(zones.size).toBeGreaterThan(0);
+          expect([...addresses.keys()]).toEqual(['ns1.dnshost.net']);
+
+          // every delegation runs out; the next one learned sweeps them all away, under net
+          // as much as com
+          vi.setSystemTime(Date.now() + 172_801_000);
+          const answer = await iterative.query('d1.com', 'A');
+          expect(answer.rcodeName).toBe('NXDOMAIN');
+          expect([...cuts.keys()].sort()).toEqual(['com', 'd1.com']);
+          expect([...zones.keys()].sort()).toEqual(['.', 'com']);
+          expect(addresses.size).toBe(0);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('sweeps no more than once a minute', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+          const started = Date.now();
+          const at = (seconds: number) => vi.setSystemTime(started + seconds * 1000);
+          const iterative = resolver({}, servers);
+          // ns1.dnshost.net's address has a TTL of 300
+          await iterative.query('glueless.com', 'A');
+          const { addresses } = knowledgeOf(iterative);
+          at(250);
+          await iterative.query('d1.com', 'A');
+          expect(addresses.size).toBe(1);
+          // run out, but the last sweep was less than a minute ago: it stays until looked at
+          at(301);
+          await iterative.query('d2.com', 'A');
+          expect(addresses.size).toBe(1);
+          at(311);
+          await iterative.query('d3.com', 'A');
+          expect(addresses.size).toBe(0);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+    });
   });
 });

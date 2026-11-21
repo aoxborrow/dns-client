@@ -151,8 +151,10 @@ interface ZoneCut {
 
 // what is known about the tree: which servers answer for which zones and how zones answer
 // (kept unless `cache` is false), and where nameservers live (kept unless
-// `nameserverCache` is false)
+// `nameserverCache` is false). Each map is bounded, and swept of what has expired from
+// time to time; the root's servers are not in it, so they are never forgotten
 interface Knowledge {
+  // at most `MAX_CUTS`, the least recently used forgotten first
   cuts: Map<string, ZoneCut>;
   // zones whose servers have referred a question further down ('refers'), the ones worth
   // waiting at for another walk's referral, or have answered with authority that a name
@@ -160,6 +162,7 @@ interface Knowledge {
   // zone answers for names under it itself, whatever it delegates. Each is kept for as long
   // as the zone's delegation, and at most `MAX_ZONES` of them
   zones: Map<string, ZoneHabit>;
+  // at most `MAX_ADDRESSES`, the least recently learned forgotten first
   addresses: Map<string, { addresses: string[]; expires: number }>;
 }
 
@@ -220,6 +223,14 @@ interface Fetch {
   done: Promise<void>;
 }
 
+// keep `value` under `key` as the newest entry of `map`, and forget the oldest past `max`.
+// A Map remembers insertion order, so the first key is the oldest
+function keepNewest<Value>(map: Map<string, Value>, key: string, value: Value, max: number): void {
+  map.delete(key);
+  map.set(key, value);
+  if (map.size > max) map.delete(map.keys().next().value as string);
+}
+
 // the order servers are tried in: random, a fresh shuffle every time (Fisher-Yates), so
 // the load falls on all of a zone's servers and one slow server is not always first
 function shuffled<T>(items: readonly T[]): T[] {
@@ -241,6 +252,15 @@ const MAX_NAMES = 10_000;
 // the most zones the resolver remembers the habits of, for waiting at. Past it the least
 // recently learned are forgotten
 const MAX_ZONES = 10_000;
+// the most delegations the resolver remembers. Past it the least recently used are
+// forgotten
+const MAX_CUTS = 10_000;
+// the most nameservers the resolver remembers the looked-up addresses of. Past it the least
+// recently learned are forgotten
+const MAX_ADDRESSES = 10_000;
+// how often, at most, what the resolver knows is swept of what has expired: an entry is
+// otherwise dropped only when it is looked at again, and many never are
+const SWEEP_INTERVAL = 60_000;
 // the patience with one server when the caller names none: the same as `exchange` has
 const DEFAULT_TIMEOUT = 5000;
 const DEFAULT_MAX_ALIASES = 8;
@@ -288,6 +308,8 @@ export class AuthoritativeResolver {
   private readonly names = new Map<string, string>();
   private readonly hosts = new Map<string, string[]>();
   private readonly validator: Validator | undefined;
+  // when what the resolver knows was last swept of what has expired, by `Date.now()`
+  private swept = 0;
 
   constructor(options: AuthoritativeResolverOptions = {}) {
     this.options = options;
@@ -572,17 +594,40 @@ export class AuthoritativeResolver {
   // remember a nameserver's name at an address. The most recent is kept, and the oldest
   // forgotten past `MAX_NAMES`
   private learnName(address: string, name: string): void {
-    this.names.delete(address);
-    this.names.set(address, name);
-    if (this.names.size > MAX_NAMES) this.names.delete(this.names.keys().next().value as string);
+    keepNewest(this.names, address, name, MAX_NAMES);
+  }
+
+  // remember something learned about the tree as the newest entry of one of the knowledge's
+  // maps, forgetting the oldest past `max`. Now and then, everything the resolver knows is
+  // swept of what has expired first: at most once every `SWEEP_INTERVAL`, so the cost of a
+  // sweep is spread over all that is learned between two of them
+  private learn<Value extends { expires: number }>(
+    map: Map<string, Value>,
+    key: string,
+    value: Value,
+    max: number
+  ): void {
+    const now = Date.now();
+    if (now - this.swept >= SWEEP_INTERVAL) {
+      this.swept = now;
+      const { cuts, zones, addresses } = this.knowledge;
+      for (const known of [cuts, zones, addresses] as Map<string, { expires: number }>[]) {
+        for (const [entry, { expires }] of known) if (expires <= now) known.delete(entry);
+      }
+    }
+    keepNewest(map, key, value, max);
   }
 
   // the deepest zone already known to hold the name, and its servers
   private closestCut(run: Run, name: string): ZoneCut {
     for (let zone = name; ; zone = parentName(zone)) {
       const cut = run.knowledge.cuts.get(zone);
-      if (cut && cut.expires > Date.now()) return cut;
       if (cut) run.knowledge.cuts.delete(zone);
+      // one still good goes back as the most recently used
+      if (cut && cut.expires > Date.now()) {
+        run.knowledge.cuts.set(zone, cut);
+        return cut;
+      }
       if (zone === '.') break;
     }
     return this.rootCut();
@@ -647,10 +692,7 @@ export class AuthoritativeResolver {
       kind = 'answers';
     }
     if (!kind || cut.expires <= Date.now()) return;
-    const zones = run.knowledge.zones;
-    zones.delete(cut.zone);
-    zones.set(cut.zone, { kind, expires: cut.expires });
-    if (zones.size > MAX_ZONES) zones.delete(zones.keys().next().value as string);
+    this.learn(run.knowledge.zones, cut.zone, { kind, expires: cut.expires }, MAX_ZONES);
   }
 
   // wait for another run's fetch no longer than this walk has left, and no longer than its
@@ -881,7 +923,7 @@ export class AuthoritativeResolver {
           !step.result.tcpFallbackError &&
           step.outcome.cut.expires > Date.now()
         ) {
-          run.knowledge.cuts.set(step.outcome.cut.zone, step.outcome.cut);
+          this.learn(run.knowledge.cuts, step.outcome.cut.zone, step.outcome.cut, MAX_CUTS);
         }
       } finally {
         finishFetch?.();
@@ -1184,7 +1226,8 @@ export class AuthoritativeResolver {
     // only what was found is kept past this call. A lookup that failed, or found
     // nothing, is tried again by the next query
     if (addresses.length > 0 && ttl > 0) {
-      run.knowledge.addresses.set(name, { addresses, expires: Date.now() + ttl * 1000 });
+      const expires = Date.now() + ttl * 1000;
+      this.learn(run.knowledge.addresses, name, { addresses, expires }, MAX_ADDRESSES);
     }
     run.lookedUp.set(name, addresses);
     return addresses;

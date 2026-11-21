@@ -310,6 +310,16 @@ the same time that meet the same nameserver share one lookup, which has a query'
 time of its own and lasts while any of them still waits on it. Both resolvers have
 `clearCache()` and `close()`.
 
+Neither resolver's memory grows with the number of names asked about. `Resolver` keeps at
+most `cache.max` answers (1000 by default). `AuthoritativeResolver` keeps at most 10,000
+delegations (the least recently used forgotten first), 10,000 nameserver addresses looked
+up for nameservers without glue, 10,000 nameserver names for the trace, and what it has
+seen of how 10,000 zones answer (the least recently learned forgotten first). What has
+expired is dropped when it is next looked at, and at most once a minute, when something
+new is learned, everything the resolver knows is swept of it. The root servers, and the
+`hosts` it was given, are never forgotten. A validating resolver of either kind also keeps
+what at most 1000 zones' key sets came to.
+
 ```ts
 import { AuthoritativeResolver } from '@aoxborrow/dns';
 
