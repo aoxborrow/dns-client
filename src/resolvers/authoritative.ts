@@ -190,6 +190,8 @@ interface Run {
 interface LookupResult {
   addresses: string[];
   cutShort: boolean;
+  // the servers that failed while the lookup asked its way to the addresses
+  failures?: ServerFailure[];
 }
 
 // a nameserver lookup queries share while it lasts, and how many are waiting on it
@@ -943,7 +945,9 @@ export class AuthoritativeResolver {
       let lookup = this.lookups.get(name);
       if (lookup && nesting > 0) return this.lookUpHere(run, server, nesting);
       lookup ??= this.startLookup(run, server, nesting);
-      const { addresses, cutShort } = await this.join(run, lookup);
+      const { addresses, cutShort, failures } = await this.join(run, lookup);
+      // each walk that waited lists what went wrong on the way, as its own lookup would have
+      if (failures?.length) run.failures.push(...failures);
       // the lookup ran out of its own time, or this walk ran out of its own: one with time
       // left looks again rather than take someone else's deadline as the answer
       if (cutShort && addresses.length === 0 && !outOfTime(run)) continue;
@@ -992,10 +996,14 @@ export class AuthoritativeResolver {
       done: (async () => {
         try {
           const addresses = await this.lookUp(run, server, nesting);
-          return { addresses, cutShort: outOfTime(run) || stop.signal.aborted };
+          return {
+            addresses,
+            cutShort: outOfTime(run) || stop.signal.aborted,
+            failures: run.failures,
+          };
         } catch (error) {
           // stopped: by the resolver closing, or with nobody left waiting
-          if (stop.signal.aborted) return { addresses: [], cutShort: true };
+          if (stop.signal.aborted) return { addresses: [], cutShort: true, failures: run.failures };
           throw error;
         } finally {
           // the servers it asked count against the query that started it, as its own would

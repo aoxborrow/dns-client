@@ -1554,6 +1554,30 @@ describe('AuthoritativeResolver', () => {
       expect(answer.records.map(record => record.address)).toEqual(['192.0.2.77']);
     });
 
+    it('lists the failures of a nameserver lookup, shared or not, on the error', async () => {
+      const down: SimulatedServer = () => new ConnectionError('Cannot reach 10.2.0.1');
+      const failed = async (options: AuthoritativeResolverOptions) => {
+        const error = (await resolver(options, { '10.2.0.1': down })
+          .query('glueless.com', 'A')
+          .catch(e => e)) as ConnectionError;
+        return error.failures?.map(failure => [failure.server, failure.error.name]);
+      };
+      const alone = await failed({ nameserverCache: false });
+      expect(alone).toContainEqual(['10.2.0.1', 'ConnectionError']);
+      expect(await failed({})).toEqual(alone);
+
+      // a query that joined the lookup another started hears of the same failures
+      const shared = resolver({}, { '10.2.0.1': down });
+      const errors = (await Promise.all(
+        ['A', 'MX'].map(type => shared.query('glueless.com', type).catch(e => e))
+      )) as ConnectionError[];
+      for (const error of errors) {
+        expect(error.failures?.map(failure => [failure.server, failure.error.name])).toContainEqual(
+          ['10.2.0.1', 'ConnectionError']
+        );
+      }
+    });
+
     it('keeps nameserver addresses when told to remember no delegations', async () => {
       const iterative = resolver({ cache: false });
       await iterative.query('glueless.com', 'A');
