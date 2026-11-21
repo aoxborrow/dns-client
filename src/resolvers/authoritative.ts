@@ -623,14 +623,29 @@ export class AuthoritativeResolver {
     for (let zone = name; ; zone = parentName(zone)) {
       const cut = run.knowledge.cuts.get(zone);
       if (cut) run.knowledge.cuts.delete(zone);
-      // one still good goes back as the most recently used
+      // one still good goes back as the most recently used, and so do the zones above it
+      // that are known, since the walk would need them if this one ran out: a busy
+      // top-level domain is passed through by every name under it, cached or not
       if (cut && cut.expires > Date.now()) {
+        this.touchAbove(run, zone);
         run.knowledge.cuts.set(zone, cut);
         return cut;
       }
       if (zone === '.') break;
     }
     return this.rootCut();
+  }
+
+  // move the still-good delegations above a zone to the most recently used end
+  private touchAbove(run: Run, zone: string): void {
+    const now = Date.now();
+    for (let up = zone; up !== '.';) {
+      up = parentName(up);
+      const above = run.knowledge.cuts.get(up);
+      if (!above || above.expires <= now) continue;
+      run.knowledge.cuts.delete(up);
+      run.knowledge.cuts.set(up, above);
+    }
   }
 
   private rootCut(): ZoneCut {

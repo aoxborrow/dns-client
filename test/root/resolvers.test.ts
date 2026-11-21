@@ -2548,6 +2548,16 @@ describe('AuthoritativeResolver', () => {
         expect(cuts.size).toBe(10_000);
       }, 60_000);
 
+      it('keeps the zones above a cached delegation in use as well', async () => {
+        const iterative = resolver({}, servers);
+        await iterative.query('example.com', 'A');
+        for (const name of ['d1.com', 'd2.com', 'd3.com']) await iterative.query(name, 'A');
+        // a name under example.com is answered from its cached delegation, without com; com is
+        // still what the walk would need next, so it moves up to the newest end too
+        await iterative.query('www.example.com', 'A');
+        expect([...knowledgeOf(iterative).cuts.keys()].slice(-2)).toEqual(['com', 'example.com']);
+      });
+
       it('forgets what has expired without being asked about it again', async () => {
         vi.useFakeTimers({ toFake: ['Date'] });
         try {
