@@ -603,13 +603,15 @@ export class AuthoritativeResolver {
   }
 
   // follow referrals from the closest known zone until a server answers for the name.
-  // `nesting` is how many nameserver lookups deep this is
+  // `nesting` is how many nameserver lookups deep this is. `first`: an address to ask
+  // before the zone's other servers, where it is one of them
   private async resolve(
     run: Run,
     name: string,
     type: string,
     trace: TraceHop[] | undefined,
-    nesting: number
+    nesting: number,
+    first?: string
   ): Promise<{ result: ExchangeResult; outcome: Outcome }> {
     const maxHops = this.options.maxHops ?? DEFAULT_MAX_HOPS;
     // a DS RRset is the parent's: the question goes to the zone above the name, even when
@@ -664,7 +666,10 @@ export class AuthoritativeResolver {
       // one left time for: a dead dual-stack server would otherwise spend it on both its
       // addresses. A server's addresses are looked up when it is first needed
       try {
-        const turns = shuffled(cut.servers).map(server => ({
+        const order = shuffled(cut.servers);
+        const ahead = first ? order.findIndex(server => server.addresses?.includes(first)) : -1;
+        if (ahead > 0) order.unshift(...order.splice(ahead, 1));
+        const turns = order.map(server => ({
           server,
           addresses: undefined as string[] | undefined,
           done: false,
@@ -1069,28 +1074,25 @@ export class AuthoritativeResolver {
     const { name } = server;
     const family = this.options.addressFamily ?? 'both';
     const types = family === 'ipv4' ? ['A'] : family === 'ipv6' ? ['AAAA'] : ['A', 'AAAA'];
-    let ttl = Infinity;
-    // both families at once: asked one after the other, a dead server of the nameserver's
-    // zone that the order puts first costs its whole patience twice, and that can be all
-    // the time the walk waiting on this lookup has. The addresses keep the order of the
-    // families, IPv4 first
-    const settled = await Promise.allSettled(
-      types.map(type => this.resolve(run, name, type, undefined, nesting + 1))
-    );
     const found: string[] = [];
-    for (const outcome of settled) {
-      if (outcome.status === 'rejected') {
-        const error: unknown = outcome.reason;
-        if (run.signal?.aborted || !(error instanceof DnsError)) throw error;
-        // this nameserver cannot be found this way; the other family, or another
-        // nameserver, may do
-        continue;
-      }
-      for (const record of decodeRecords(outcome.value.result.message.answers, { lenient: true })) {
-        if (record.type === 'A' || record.type === 'AAAA') {
-          found.push(normalizeAddress(record.address));
-          ttl = Math.min(ttl, record.ttl);
+    let ttl = Infinity;
+    // the server that answered for one family is asked first for the next. The order puts a
+    // dead server of the nameserver's zone first as often for the second question as for the
+    // first, and waiting for it twice can be all the time the walk waiting on this lookup has
+    let answered: string | undefined;
+    for (const type of types) {
+      try {
+        const { result } = await this.resolve(run, name, type, undefined, nesting + 1, answered);
+        answered = result.server;
+        for (const record of decodeRecords(result.message.answers, { lenient: true })) {
+          if (record.type === 'A' || record.type === 'AAAA') {
+            found.push(normalizeAddress(record.address));
+            ttl = Math.min(ttl, record.ttl);
+          }
         }
+      } catch (error) {
+        if (run.signal?.aborted || !(error instanceof DnsError)) throw error;
+        // this nameserver cannot be found; another may be
       }
     }
     for (const address of found) this.learnName(address, server.written ?? name);
