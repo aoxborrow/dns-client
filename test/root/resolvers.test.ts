@@ -1889,10 +1889,10 @@ describe('AuthoritativeResolver', () => {
     const asked = (prefix: string) =>
       network.queries.filter(query => query.server.startsWith(prefix)).length;
 
-    it('walks a fresh query from the root, and the next query from what it learned', async () => {
+    it('walks a fromRoot query from the root, and the next query from what it learned', async () => {
       const iterative = resolver();
-      const first = await iterative.query('example.com', 'A', { fresh: true });
-      const second = await iterative.query('example.com', 'MX', { fresh: true });
+      const first = await iterative.query('example.com', 'A', { fromRoot: true });
+      const second = await iterative.query('example.com', 'MX', { fromRoot: true });
       expect(zones(first)).toEqual(['.', 'com', 'example.com']);
       // every server on the way again, though the resolver knows the zone
       expect(zones(second)).toEqual(['.', 'com', 'example.com']);
@@ -1916,11 +1916,11 @@ describe('AuthoritativeResolver', () => {
       expect(answers.slice(1).every(answer => zones(answer)?.join() === 'example.com')).toBe(true);
     });
 
-    it('asks the root and com once per fresh query, and once for all the others', async () => {
+    it('asks the root and com once per fromRoot query, and once for all the others', async () => {
       const iterative = resolver();
       const types = ['A', 'MX', 'TXT', 'NS', 'SOA'];
       const answers = await Promise.all([
-        ...types.map(type => iterative.query('example.com', type, { fresh: true })),
+        ...types.map(type => iterative.query('example.com', type, { fromRoot: true })),
         ...Array.from({ length: 45 }, (_, index) => iterative.query(`n${index}.example.com`, 'A')),
       ]);
       expect(asked('10.0.0.')).toBe(5);
@@ -1951,7 +1951,7 @@ describe('AuthoritativeResolver', () => {
 
     it('forgets the delegations it learned on clearCache', async () => {
       const iterative = resolver();
-      await iterative.query('example.com', 'A', { fresh: true });
+      await iterative.query('example.com', 'A', { fromRoot: true });
       iterative.clearCache();
       const answer = await iterative.query('example.com', 'MX');
       expect(zones(answer)).toEqual(['.', 'com', 'example.com']);
@@ -1968,7 +1968,7 @@ describe('AuthoritativeResolver', () => {
           { timeout: 500, totalTimeout: 1000 },
           { '10.0.1.1': late(150, com), '10.0.1.2': late(150, com) }
         );
-        const first = iterative.query('example.com', 'A', { fresh: true, totalTimeout: 100 });
+        const first = iterative.query('example.com', 'A', { fromRoot: true, totalTimeout: 100 });
         first.catch(() => {});
         const second = iterative.query('deep.sub.example.com', 'TXT');
         second.catch(() => {});
@@ -1988,7 +1988,7 @@ describe('AuthoritativeResolver', () => {
           { timeout: 500, totalTimeout: 1000 },
           { '10.0.1.1': late(400, com), '10.0.1.2': late(400, com) }
         );
-        const first = iterative.query('example.com', 'A', { fresh: true });
+        const first = iterative.query('example.com', 'A', { fromRoot: true });
         first.catch(() => {});
         const second = iterative.query('deep.sub.example.com', 'TXT', { totalTimeout: 100 });
         second.catch(() => {});

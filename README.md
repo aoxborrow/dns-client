@@ -142,7 +142,7 @@ and the walk follows their referrals from there. Nameservers that come without a
 are still looked up from the root servers, and what such a walk is told is not kept for
 other queries.
 
-A query that has to show the whole path sets `fresh`: it walks from the root servers and
+A query that has to show the whole path sets `fromRoot`: it walks from the root servers and
 asks every server on the way whatever the resolver remembers, so its trace starts at the
 root. What it learns is still remembered for the other queries.
 
@@ -301,7 +301,7 @@ long as their TTLs allow and never longer than the resolver lives. A query start
 deepest zone it knows, and its trace starts there too. Queries running at the same time
 share referrals: one that needs a delegation another query is asking for right now waits
 for that answer instead of asking the same servers, no longer than its own time allows,
-and asks for itself if the other query gets nothing. A query with `fresh: true` walks from
+and asks for itself if the other query gets nothing. A query with `fromRoot: true` walks from
 the root anyway, asking every server on the way, and the others learn from it. With
 `cache: false` every query starts again from the root, so its trace is the whole path, but
 a nameserver that came without glue and was looked up by an earlier query is asked
@@ -320,7 +320,7 @@ await walker.query('example.com', 'MX');
 
 // the name's own answer with its whole path, and names under it straight from its zone
 const shared = new AuthoritativeResolver();
-await shared.query('example.com', 'A', { fresh: true });
+await shared.query('example.com', 'A', { fromRoot: true });
 await Promise.all(['www', 'mail'].map(label => shared.query(`${label}.example.com`, 'A')));
 ```
 

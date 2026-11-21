@@ -125,7 +125,7 @@ export interface AuthoritativeQueryOptions extends Omit<
   // server on the way, so the trace is the whole path. What the walk learns is still kept
   // for other queries, and other queries that need a delegation it is fetching wait for
   // it. Nameserver addresses still come from `nameserverCache`. Default false
-  fresh?: boolean;
+  fromRoot?: boolean;
 }
 
 interface Nameserver {
@@ -164,8 +164,8 @@ interface Run {
   onEvent: OnEvent | undefined;
   // the servers the walk starts at, when not the root servers
   start: Nameserver[] | undefined;
-  // the walk itself ignores the delegations already known (the query's `fresh`)
-  fresh: boolean;
+  // the walk itself ignores the delegations already known (the query's `fromRoot`)
+  fromRoot: boolean;
   // `knowledge.cuts` is the resolver's, so what this run asks may be what another needs
   shared: boolean;
   // when the whole query gives up, on the clock `now()` reads, and the time it was given
@@ -340,11 +340,11 @@ export class AuthoritativeResolver {
 
     // the chain's records are asked for as they are: no alias is followed. They go the way
     // the data query went: the same transport, port, timeouts and EDNS settings. They start
-    // from the delegations already known, `fresh` or not, since their traces are not shown
+    // from the delegations already known, `fromRoot` or not, since their traces are not shown
     const {
       checkingDisabled: _checkingDisabled,
       authenticData: _authenticData,
-      fresh: _fresh,
+      fromRoot: _fromRoot,
       ...sameWay
     } = options;
     try {
@@ -386,7 +386,7 @@ export class AuthoritativeResolver {
     follow: boolean,
     responses?: DnssecResponse[]
   ): Promise<Answer> {
-    const { signal, totalTimeout: perQuery, onEvent, startAt, fresh, ...settings } = options;
+    const { signal, totalTimeout: perQuery, onEvent, startAt, fromRoot, ...settings } = options;
     const totalTimeout = perQuery ?? this.options.totalTimeout ?? DEFAULT_TOTAL_TIMEOUT;
     const started = now();
     // the name as the caller wrote it, for the answer, and as it is compared and sent
@@ -418,7 +418,7 @@ export class AuthoritativeResolver {
       signal,
       onEvent,
       start,
-      fresh: fresh === true,
+      fromRoot: fromRoot === true,
       shared,
       deadline: started + totalTimeout,
       totalTimeout,
@@ -616,12 +616,12 @@ export class AuthoritativeResolver {
     // the name's own zone is already known (RFC 4035 §4.2)
     const owner = type === 'DS' && name !== '.' ? parentName(name) : name;
     // the walk itself starts where the caller said, when it said, and at the root when it
-    // is `fresh`; a nameserver lookup starts at the deepest zone known, or the root
-    const fresh = nesting === 0 && run.fresh;
+    // is `fromRoot`; a nameserver lookup starts at the deepest zone known, or the root
+    const fromRoot = nesting === 0 && run.fromRoot;
     let cut =
       run.start && nesting === 0
         ? { zone: '.', servers: run.start, expires: Infinity }
-        : fresh
+        : fromRoot
           ? this.rootCut()
           : this.closestCut(run, owner);
     // the zones this walk has already waited at, so it waits at each at most once
@@ -635,7 +635,7 @@ export class AuthoritativeResolver {
       // asks for itself: another run's failure or timeout is not this one's
       const down = stepDown(cut.zone, name);
       const pending =
-        run.shared && nesting === 0 && !fresh && down.deeper && !waited.has(cut.zone)
+        run.shared && nesting === 0 && !fromRoot && down.deeper && !waited.has(cut.zone)
           ? this.fetches.get(down.key)
           : undefined;
       if (pending) {
