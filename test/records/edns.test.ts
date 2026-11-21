@@ -11,7 +11,7 @@ import {
   paddingOption,
   ParseError,
 } from '../../src/index';
-import { CAPTURED, CORPUS } from '../support/corpus';
+import { CORPUS } from '../support/corpus';
 
 const ascii = (text: string) => Uint8Array.from(Buffer.from(text, 'latin1'));
 const hex = (text: string) => Uint8Array.from(Buffer.from(text, 'hex'));
@@ -19,16 +19,17 @@ const hex = (text: string) => Uint8Array.from(Buffer.from(text, 'hex'));
 describe('decoding EDNS options', () => {
   it('reads the server identifiers real nameservers sent', () => {
     const nsids = new Set<string>();
-    for (const { response } of [...CORPUS, ...CAPTURED]) {
+    for (const { response } of CORPUS) {
       for (const option of decodeEdnsOptions(decodeMessage(response).edns)) {
         // nothing in real traffic falls outside the layouts
         expect(option.name).not.toMatch(/^OPTION/);
         if (option.name === 'NSID' && option.nsid) nsids.add(option.nsid);
       }
     }
-    // a Cloudflare point of presence and a root server instance, from the recordings
-    expect(nsids.has('4m917')).toBe(true);
+    // instances of two root servers and a Cloudflare nameserver, as captured
     expect(nsids.has('a.r.ussea-4a')).toBe(true);
+    expect(nsids.has('ns1.us-mia.k.ripe.net')).toBe(true);
+    expect(nsids.has('467m170')).toBe(true);
   });
 
   it('gives an identifier that is not text as hex only', () => {
@@ -76,10 +77,10 @@ describe('decoding EDNS options', () => {
     });
     expect(decodeEdnsOption({ code: 11, data: hex('012c') })).toMatchObject({
       name: 'TCP_KEEPALIVE',
-      timeoutMs: 30000,
+      timeout: 300,
     });
     expect(decodeEdnsOption({ code: 11, data: new Uint8Array(0) })).toMatchObject({
-      timeoutMs: null,
+      timeout: null,
     });
     expect(decodeEdnsOption({ code: 12, data: new Uint8Array(468) })).toMatchObject({
       name: 'PADDING',

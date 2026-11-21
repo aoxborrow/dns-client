@@ -1,19 +1,25 @@
 import net from 'node:net';
-import { ConnectionError, DnsError, NoServerError, ProxyError, TimeoutError } from '../src/errors';
-import { exchange } from '../src/exchange';
-import type { ExchangeOptions, ExchangeResult } from '../src/exchange';
-import { createNodeConnect, createTransports } from '../src/transports/index';
-import type { Transports } from '../src/transports/index';
-import { parseProxy, scrub } from '../src/transports/proxy';
-import type { DnsEvent, TransportName } from '../src/transports/types';
-import { encodeQuery } from '../src/wire/index';
-import { answerTo } from './support/answers';
-import { startFixtureServer } from './support/fixture-server';
-import type { FixtureServer } from './support/fixture-server';
-import { startHttpConnectMock, startSocks5Mock } from './support/proxy-mocks';
-import type { ProxyMock } from './support/proxy-mocks';
-import { startDohServer, startDotServer, testCertificate } from './support/secure-servers';
-import type { DohServer, DotServer } from './support/secure-servers';
+import {
+  ConnectionError,
+  DnsError,
+  NoServerError,
+  ProxyError,
+  TimeoutError,
+} from '../../src/errors';
+import { exchange, toDig } from '../../src/exchange';
+import type { ExchangeOptions, ExchangeResult } from '../../src/exchange';
+import { createNodeConnect, createTransports } from '../../src/transports/index';
+import type { Transports } from '../../src/transports/index';
+import { parseProxy, scrub } from '../../src/transports/proxy';
+import type { DnsEvent, TransportName } from '../../src/transports/types';
+import { encodeQuery } from '../../src/wire/index';
+import { answerTo } from '../support/answers';
+import { startFixtureServer } from '../support/fixture-server';
+import type { FixtureServer } from '../support/fixture-server';
+import { startHttpConnectMock, startSocks5Mock } from '../support/proxy-mocks';
+import type { ProxyMock } from '../support/proxy-mocks';
+import { startDohServer, startDotServer, testCertificate } from '../support/secure-servers';
+import type { DohServer, DotServer } from '../support/secure-servers';
 
 // every transport through both kinds of proxy, and everything that can go wrong with
 // one. The proxies and servers are all in this process
@@ -414,7 +420,7 @@ describe('proxies', () => {
       const result = await ask('udp', { proxy: proxyUrl('http', proxy) });
       expect(result.transport).toBe('tcp');
       expect(dns.received.map(({ transport }) => transport)).toEqual(['tcp']);
-      expect(result.toDig()).toContain('+tcp');
+      expect(toDig(result)).toContain('+tcp');
     });
 
     describe('through a proxy that never answers the handshake', () => {

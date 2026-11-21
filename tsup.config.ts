@@ -11,15 +11,16 @@ export const entries = [
   'src/transports/tls.ts',
   'src/transports/doh.ts',
   'src/dnssec/index.ts',
+  'src/promises/index.ts',
 ];
 
 export default defineConfig({
   entry: entries,
-  // ESM for modern consumers, CommonJS for the rest
-  format: ['esm', 'cjs'],
-  outExtension({ format }) {
-    return { js: format === 'esm' ? '.js' : '.cjs' };
-  },
+  // ESM only: Node 22 and up loads it from `require` as well as `import`. Shared code is
+  // split into chunks, so each class (DnsError and the rest) exists once, whichever entry
+  // it is reached through
+  format: ['esm'],
+  splitting: true,
   target: 'es2022',
   // never resolve a Node built-in on the library's behalf: a core module reaching the
   // bundle is a bug in the source, not something to polyfill

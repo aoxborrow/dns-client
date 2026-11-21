@@ -1,4 +1,4 @@
-// @aoxborrow/dns-client: the whole library. The narrower entry points (`/records`, `/wire`,
+// @aoxborrow/dns: the whole library. The narrower entry points (`/records`, `/wire`,
 // `/transports/*`) carry less and run in more places.
 //
 // questions are asked through a resolver. The function both are built on (`./exchange`:

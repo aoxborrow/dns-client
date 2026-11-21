@@ -5,20 +5,26 @@ import type { DnsRecord } from './types';
 
 // working with lists of records
 
-// a record as text: the type-specific fields are one `data` string in presentation
-// format. This is the shape for showing a record in a table, writing a zone file, and
-// handing a record to the validators
+// a record as text: the envelope as it is, and the type-specific fields as one `data`
+// string in presentation format. This is a record in the shape of a zone-file line, for
+// writing one, for comparing records, and for handing a record to the validators
 export interface FlatRecord {
   name: string;
   type: string;
+  class: string;
   ttl: number;
   data: string;
 }
+
+// a flat record as a person or a provider API writes one: the class may be left out, and
+// is then IN
+export type FlatRecordInput = Omit<FlatRecord, 'class'> & { class?: string };
 
 export function flattenRecord(record: DnsRecord): FlatRecord {
   return {
     name: record.name,
     type: record.type,
+    class: record.class,
     ttl: record.ttl,
     data: formatRecordData(record),
   };

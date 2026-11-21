@@ -1,24 +1,18 @@
+import { ParseError } from '../errors';
+import { RECORD_TYPES, typeName } from '../protocol/types';
+import { decodeNsec, decodeNsec3 } from '../records/decode';
 import { toHex } from '../wire/bytes';
-import { compareNames, splitName } from '../wire/names';
 import {
-  WireRecord,
-  decodeNsec,
-  decodeNsec3,
-  nsec3Hash,
-  toNsec3Label,
   canonicalName,
+  compareNames,
   countLabels,
+  isSubdomain,
   parentName,
-  presentRecord,
-  isInZone,
-  TYPE_NSEC,
-  TYPE_NSEC3,
-  TYPE_DS,
-  TYPE_SOA,
-  TYPE_NS,
-  TYPE_CNAME,
-  recordTypeName,
-} from './wire';
+  splitName,
+} from '../wire/names';
+import { nsec3Hash, toNsec3Label } from './canonical';
+import type { WireRecord } from './canonical';
+import { presentRecord } from './present';
 import { DenialProof, ProofStep, Nsec3Params, ProofPurpose } from './types';
 import {
   PROOF_STATUSES,
@@ -72,6 +66,43 @@ function nsec3Covers(ownerHash: string, nextHash: string, hash: string): boolean
   const afterOwner = hash > ownerHash;
   const beforeNext = hash < nextHash;
   return nextHash <= ownerHash ? afterOwner || beforeNext : afterOwner && beforeNext;
+}
+
+// NSEC3 hashes already worked out, so a name is hashed once per set of parameters however
+// many records a response carries and however often a proof asks (CVE-2023-50868). The
+// oldest are dropped past the limit
+const HASH_MEMO_LIMIT = 1024;
+const hashMemo = new Map<string, string | null>();
+
+function hashOf(name: string, entry: Nsec3Entry): string | null {
+  const key = `${entry.hashAlgorithm}/${entry.iterations}/${entry.saltHex}/${name}`;
+  const known = hashMemo.get(key);
+  if (known !== undefined) return known;
+  const hash = nsec3Hash(name, entry.salt, entry.iterations, entry.hashAlgorithm);
+  if (hashMemo.size >= HASH_MEMO_LIMIT) hashMemo.delete(hashMemo.keys().next().value!);
+  hashMemo.set(key, hash);
+  return hash;
+}
+
+// an NSEC or NSEC3 at a delegation (NS without SOA) or at a DNAME speaks for its own name
+// in the zone above only: the names below it are another zone's, or rewritten, and it
+// proves nothing about them (RFC 6840 §4.1, RFC 5155 §8.3)
+function stopsAbove(types: number[]): boolean {
+  return (
+    (types.includes(RECORD_TYPES.NS) && !types.includes(RECORD_TYPES.SOA)) ||
+    types.includes(RECORD_TYPES.DNAME)
+  );
+}
+
+// whether an NSEC's range covers `name`, and may speak for it
+function nsecProvesAbsent(entry: NsecEntry, name: string): boolean {
+  if (!nsecCovers(entry.owner, entry.next, name)) return false;
+  return !(isSubdomain(name, entry.owner) && stopsAbove(entry.types));
+}
+
+// the wildcard at a closest encloser
+function wildcardAt(encloser: string): string {
+  return encloser === '.' ? '*' : `*.${encloser}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,16 +171,32 @@ interface Nsec3Entry {
   hashAlgorithm: number;
   iterations: number;
   salt: Uint8Array;
+  saltHex: string;
   optOut: boolean;
+}
+
+// a record whose data does not decode proves nothing, and is left out
+function orSkip<T>(decode: () => T): T | undefined {
+  try {
+    return decode();
+  } catch (error) {
+    if (error instanceof ParseError) return undefined;
+    throw error;
+  }
 }
 
 function collectNsec(records: WireRecord[]): NsecEntry[] {
   const out: NsecEntry[] = [];
   for (const rr of records) {
-    if (rr.type !== TYPE_NSEC) continue;
-    const decoded = decodeNsec(rr.rdata);
+    if (rr.type !== RECORD_TYPES.NSEC) continue;
+    const decoded = orSkip(() => decodeNsec(rr.rdata));
     if (!decoded) continue;
-    out.push({ record: rr, owner: rr.name, next: decoded.nextDomain, types: decoded.types });
+    out.push({
+      record: rr,
+      owner: canonicalName(rr.name),
+      next: canonicalName(decoded.nextDomain),
+      types: decoded.types,
+    });
   }
   return out;
 }
@@ -157,10 +204,10 @@ function collectNsec(records: WireRecord[]): NsecEntry[] {
 function collectNsec3(records: WireRecord[]): Nsec3Entry[] {
   const out: Nsec3Entry[] = [];
   for (const rr of records) {
-    if (rr.type !== TYPE_NSEC3) continue;
-    const decoded = decodeNsec3(rr.rdata);
+    if (rr.type !== RECORD_TYPES.NSEC3) continue;
+    const decoded = orSkip(() => decodeNsec3(rr.rdata));
     if (!decoded) continue;
-    const [ownerHash, ...zone] = splitName(rr.name);
+    const [ownerHash, ...zone] = splitName(canonicalName(rr.name));
     if (zone.length === 0) continue;
     out.push({
       record: rr,
@@ -171,6 +218,7 @@ function collectNsec3(records: WireRecord[]): Nsec3Entry[] {
       hashAlgorithm: decoded.hashAlgorithm,
       iterations: decoded.iterations,
       salt: decoded.salt,
+      saltHex: toHex(decoded.salt),
       optOut: Boolean(decoded.flags & NSEC3_FLAGS.OPT_OUT),
     });
   }
@@ -203,7 +251,7 @@ function emptyProof(
 // find the NSEC3 whose owner hash matches `name`, and the one whose range covers it
 function matchNsec3(entries: Nsec3Entry[], name: string): Nsec3Entry | undefined {
   for (const entry of entries) {
-    const hash = nsec3Hash(name, entry.salt, entry.iterations, entry.hashAlgorithm);
+    const hash = hashOf(name, entry);
     if (hash && hash === entry.ownerHash) return entry;
   }
   return undefined;
@@ -214,7 +262,7 @@ function coverNsec3(
   name: string
 ): { entry: Nsec3Entry; hash: string } | undefined {
   for (const entry of entries) {
-    const hash = nsec3Hash(name, entry.salt, entry.iterations, entry.hashAlgorithm);
+    const hash = hashOf(name, entry);
     if (hash && nsec3Covers(entry.ownerHash, entry.nextHash, hash)) return { entry, hash };
   }
   return undefined;
@@ -247,9 +295,9 @@ function verifyNoDsNsec(qname: string, entries: NsecEntry[]): DenialProof {
   // the delegation point itself has an NSEC whose bitmap carries NS but not DS
   const match = entries.find(e => e.owner === name);
   if (match) {
-    const hasDs = match.types.includes(TYPE_DS);
-    const hasSoa = match.types.includes(TYPE_SOA);
-    const hasNs = match.types.includes(TYPE_NS);
+    const hasDs = match.types.includes(RECORD_TYPES.DS);
+    const hasSoa = match.types.includes(RECORD_TYPES.SOA);
+    const hasNs = match.types.includes(RECORD_TYPES.NS);
 
     steps.push(
       step('Matching NSEC', `Owner ${match.owner} matches the delegation name exactly.`, VERIFIED)
@@ -257,7 +305,7 @@ function verifyNoDsNsec(qname: string, entries: NsecEntry[]): DenialProof {
     steps.push(
       step(
         'Type bitmap',
-        `Types present: ${match.types.map(recordTypeName).join(' ') || '(none)'}.`,
+        `Types present: ${match.types.map(typeName).join(' ') || '(none)'}.`,
         hasDs ? FAILED : VERIFIED
       )
     );
@@ -313,7 +361,7 @@ function verifyNoDsNsec(qname: string, entries: NsecEntry[]): DenialProof {
 
   // no NSEC at the name itself: the name must be covered by a range, proving it does not
   // exist at all — and therefore neither does a DS at it
-  const covering = entries.find(e => nsecCovers(e.owner, e.next, name));
+  const covering = entries.find(e => nsecProvesAbsent(e, name));
   if (covering) {
     steps.push(
       step(
@@ -384,7 +432,7 @@ function verifyNoDsNsec3(qname: string, entries: Nsec3Entry[]): DenialProof {
   // direct match: an NSEC3 for the delegation name itself, whose bitmap lacks DS
   const match = matchNsec3(entries, name);
   if (match) {
-    const hash = nsec3Hash(name, match.salt, match.iterations, match.hashAlgorithm)!;
+    const hash = hashOf(name, match)!;
     steps.push(
       step(
         'Matching NSEC3',
@@ -392,11 +440,11 @@ function verifyNoDsNsec3(qname: string, entries: Nsec3Entry[]): DenialProof {
         VERIFIED
       )
     );
-    const hasDs = match.types.includes(TYPE_DS);
+    const hasDs = match.types.includes(RECORD_TYPES.DS);
     steps.push(
       step(
         'Type bitmap',
-        `Types present: ${match.types.map(recordTypeName).join(' ') || '(none)'}.`,
+        `Types present: ${match.types.map(typeName).join(' ') || '(none)'}.`,
         hasDs ? FAILED : VERIFIED
       )
     );
@@ -525,8 +573,9 @@ function findClosestEncloser(
   const zone = entries[0].zone;
   for (;;) {
     const match = matchNsec3(entries, candidate);
-    if (match) return { name: candidate, entry: match };
-    if (candidate === '.' || candidate === zone || !isInZone(candidate, zone)) return undefined;
+    // a delegation or a DNAME cannot be the closest encloser of a name below it
+    if (match) return stopsAbove(match.types) ? undefined : { name: candidate, entry: match };
+    if (candidate === '.' || candidate === zone || !isSubdomain(candidate, zone)) return undefined;
     const next = parentName(candidate);
     if (next === candidate) return undefined;
     candidate = next;
@@ -551,7 +600,7 @@ function bitmapStep(qtype: number, present: boolean, aliased: boolean) {
   if (present) {
     return step(
       'Type bitmap',
-      `${recordTypeName(qtype)} is listed in the bitmap, contradicting the empty answer.`,
+      `${typeName(qtype)} is listed in the bitmap, contradicting the empty answer.`,
       FAILED
     );
   }
@@ -562,7 +611,7 @@ function bitmapStep(qtype: number, present: boolean, aliased: boolean) {
       FAILED
     );
   }
-  return step('Type bitmap', `${recordTypeName(qtype)} is absent from the bitmap.`, VERIFIED);
+  return step('Type bitmap', `${typeName(qtype)} is absent from the bitmap.`, VERIFIED);
 }
 
 // the zone answered with an empty answer section for a type it does not hold
@@ -582,11 +631,16 @@ export function verifyNodataProof(
       nsec3.some(e => e.optOut)
     );
     const match = matchNsec3(nsec3, name);
+    if (!match) {
+      const proven = nsec3NodataWithoutMatch(name, qtype, nsec3, params);
+      if (proven) return proven;
+    }
     const present = match?.types.includes(qtype) ?? false;
     // neither the type asked for nor CNAME may be in the bitmap (RFC 5155 §8.5): a CNAME
     // means the name is an alias, so a bare NODATA is wrong
-    const aliased = match?.types.includes(TYPE_CNAME) ?? false;
-    const ok = Boolean(match) && !present && !aliased;
+    const aliased = match?.types.includes(RECORD_TYPES.CNAME) ?? false;
+    const delegation = Boolean(match) && delegationOnly(match!.types, qtype);
+    const ok = Boolean(match) && !present && !aliased && !delegation;
     return {
       type: PROOF_TYPES.NSEC3,
       purpose: PROOF_PURPOSES.NODATA,
@@ -603,6 +657,7 @@ export function verifyNodataProof(
           match ? VERIFIED : FAILED
         ),
         bitmapStep(qtype, present, aliased),
+        ...(delegation ? [delegationStep()] : []),
       ],
       optOut: params.optOut,
       nsec3Params: params,
@@ -621,10 +676,15 @@ export function verifyNodataProof(
   }
 
   const match = nsec.find(e => e.owner === name);
+  if (!match) {
+    const proven = nsecNodataWithoutMatch(name, qtype, nsec);
+    if (proven) return proven;
+  }
   const present = match?.types.includes(qtype) ?? false;
   // a CNAME in the bitmap means the name exists as an alias, so a bare NODATA is wrong
-  const aliased = match?.types.includes(TYPE_CNAME) ?? false;
-  const ok = Boolean(match) && !present && !aliased;
+  const aliased = match?.types.includes(RECORD_TYPES.CNAME) ?? false;
+  const delegation = Boolean(match) && delegationOnly(match!.types, qtype);
+  const ok = Boolean(match) && !present && !aliased && !delegation;
 
   return {
     type: PROOF_TYPES.NSEC,
@@ -640,9 +700,156 @@ export function verifyNodataProof(
         match ? VERIFIED : FAILED
       ),
       bitmapStep(qtype, present, aliased),
+      ...(delegation ? [delegationStep()] : []),
     ],
     optOut: false,
     reason: ok ? undefined : 'The NODATA response is not fully proven.',
+  };
+}
+
+// the parent's NSEC or NSEC3 at a delegation proves only that there is no DS: every other
+// type at the name is the child's to deny (RFC 6840 §4.1)
+function delegationOnly(types: number[], qtype: number): boolean {
+  return (
+    qtype !== RECORD_TYPES.DS &&
+    types.includes(RECORD_TYPES.NS) &&
+    !types.includes(RECORD_TYPES.SOA)
+  );
+}
+
+function delegationStep(): ProofStep {
+  return step(
+    'Delegation',
+    "The record is the parent's at a delegation, which says nothing about types other than DS.",
+    FAILED
+  );
+}
+
+// NODATA with no NSEC at the name itself: the name is an empty non-terminal, shown by a
+// range that covers it and ends below it (RFC 4035 §3.1.3.2), or it was answered by a
+// wildcard that exists without the type (RFC 4035 §3.1.3.4). Undefined when neither holds
+function nsecNodataWithoutMatch(
+  name: string,
+  qtype: number,
+  nsec: NsecEntry[]
+): DenialProof | undefined {
+  const records = nsec.map(e => presentRecord(e.record));
+  const proven = (steps: ProofStep[]): DenialProof => ({
+    type: PROOF_TYPES.NSEC,
+    purpose: PROOF_PURPOSES.NODATA,
+    status: PROOF_STATUSES.VERIFIED,
+    result: VERIFIED,
+    qname: name,
+    records,
+    steps,
+    optOut: false,
+  });
+
+  const nonTerminal = nsec.find(
+    e => nsecProvesAbsent(e, name) && e.next !== name && isSubdomain(e.next, name)
+  );
+  if (nonTerminal) {
+    return proven([
+      step(
+        'Empty non-terminal',
+        `${name} falls between ${nonTerminal.owner} and ${nonTerminal.next}, which is below it, so the name exists and holds no records.`,
+        VERIFIED
+      ),
+    ]);
+  }
+
+  const covering = nsec.find(e => e.owner !== name && nsecProvesAbsent(e, name));
+  if (!covering) return undefined;
+  const wildcard = wildcardAt(closestEncloserOf(name, covering));
+  const source = nsec.find(e => e.owner === wildcard);
+  if (!source) return undefined;
+  const present = source.types.includes(qtype);
+  const aliased = source.types.includes(RECORD_TYPES.CNAME);
+  if (present || aliased) return undefined;
+  return proven([
+    step(
+      'Covering NSEC',
+      `${name} falls between ${covering.owner} and ${covering.next}, so it has no exact match.`,
+      VERIFIED
+    ),
+    step(
+      'Wildcard',
+      `${wildcard}, the wildcard at the closest encloser, has an NSEC of its own.`,
+      VERIFIED
+    ),
+    bitmapStep(qtype, present, aliased),
+  ]);
+}
+
+// NODATA with no NSEC3 matching the name: a closest encloser, the next closer name covered,
+// and either an NSEC3 for the wildcard at the closest encloser without the type (RFC 5155
+// §8.7) or an opt-out range over the next closer name, below which an unsigned delegation
+// may sit (RFC 5155 §8.6). Undefined when neither holds
+function nsec3NodataWithoutMatch(
+  name: string,
+  qtype: number,
+  nsec3: Nsec3Entry[],
+  params: Nsec3Params
+): DenialProof | undefined {
+  const closest = findClosestEncloser(nsec3, name);
+  if (!closest) return undefined;
+  const nextCloser = nextCloserName(name, closest.name);
+  const covered = coverNsec3(nsec3, nextCloser);
+  if (!covered) return undefined;
+  const steps = [
+    step('Closest encloser', `${closest.name} is proven to exist by a matching NSEC3.`, VERIFIED),
+    step(
+      'Next closer',
+      `${nextCloser} is covered by an NSEC3 range, so the queried name has no exact match.`,
+      VERIFIED
+    ),
+  ];
+  const base = {
+    type: PROOF_TYPES.NSEC3,
+    purpose: PROOF_PURPOSES.NODATA,
+    qname: name,
+    records: nsec3.map(e => presentRecord(e.record)),
+    nsec3Params: params,
+  };
+
+  const wildcard = wildcardAt(closest.name);
+  const source = matchNsec3(nsec3, wildcard);
+  if (source) {
+    const present = source.types.includes(qtype);
+    const aliased = source.types.includes(RECORD_TYPES.CNAME);
+    if (present || aliased) return undefined;
+    return {
+      ...base,
+      status: PROOF_STATUSES.VERIFIED,
+      result: VERIFIED,
+      steps: [
+        ...steps,
+        step(
+          'Wildcard',
+          `${wildcard}, the wildcard at the closest encloser, matches an NSEC3.`,
+          VERIFIED
+        ),
+        bitmapStep(qtype, present, aliased),
+      ],
+      optOut: covered.entry.optOut,
+    };
+  }
+
+  if (!covered.entry.optOut) return undefined;
+  return {
+    ...base,
+    status: PROOF_STATUSES.OPT_OUT,
+    result: UNCHECKED,
+    steps: [
+      ...steps,
+      step(
+        'Opt-out',
+        'The NSEC3 covering the next closer name has the opt-out flag set, so the empty answer is asserted but not authenticated.',
+        UNCHECKED
+      ),
+    ],
+    optOut: true,
+    reason: 'Opt-out is in effect for this name.',
   };
 }
 
@@ -674,7 +881,9 @@ export function verifyNxdomainProof(qname: string, records: WireRecord[]): Denia
     let wildcardOk = false;
     if (closest) {
       const nextCloser = nextCloserName(name, closest.name);
-      const covered = coverNsec3(nsec3, nextCloser);
+      // an NSEC3 of the name's own says it exists, an empty non-terminal at least, whatever
+      // range also seems to cover it
+      const covered = matchNsec3(nsec3, name) ? undefined : coverNsec3(nsec3, nextCloser);
       nextOk = Boolean(covered);
       steps.push(
         step(
@@ -686,7 +895,7 @@ export function verifyNxdomainProof(qname: string, records: WireRecord[]): Denia
         )
       );
 
-      const wildcard = `*.${closest.name}`;
+      const wildcard = wildcardAt(closest.name);
       const wildcardCovered = coverNsec3(nsec3, wildcard);
       const wildcardMatched = matchNsec3(nsec3, wildcard);
       wildcardOk = Boolean(wildcardCovered) && !wildcardMatched;
@@ -726,14 +935,16 @@ export function verifyNxdomainProof(qname: string, records: WireRecord[]): Denia
     );
   }
 
-  const covering = nsec.find(e => nsecCovers(e.owner, e.next, name));
+  // a range whose next name lies below the name says the name exists, as an empty
+  // non-terminal: that is a NODATA, never an NXDOMAIN
+  const below = (e: NsecEntry) => e.next !== name && isSubdomain(e.next, name);
+  const covering = nsec.find(e => nsecProvesAbsent(e, name) && !below(e));
+  const revealing = covering ? undefined : nsec.find(e => nsecProvesAbsent(e, name) && below(e));
   // the wildcard that could have synthesised an answer must be proven absent too: the one at
   // the closest encloser, which may be an empty non-terminal only the next name reveals
   const wildcardSource = covering ? closestEncloserOf(name, covering) : name;
-  const wildcard = `*.${wildcardSource}`;
-  const wildcardCovered = nsec.find(
-    e => e.owner === wildcard || nsecCovers(e.owner, e.next, wildcard)
-  );
+  const wildcard = wildcardAt(wildcardSource);
+  const wildcardCovered = nsec.find(e => e.owner === wildcard || nsecProvesAbsent(e, wildcard));
   const wildcardOk = Boolean(wildcardCovered) && wildcardCovered!.owner !== wildcard;
   const ok = Boolean(covering) && wildcardOk;
 
@@ -749,7 +960,9 @@ export function verifyNxdomainProof(qname: string, records: WireRecord[]): Denia
         'Covering NSEC',
         covering
           ? `${name} falls between ${covering.owner} and ${covering.next}.`
-          : `No NSEC record covers ${name}.`,
+          : revealing
+            ? `${revealing.next} lies below ${name}, so ${name} exists as an empty non-terminal.`
+            : `No NSEC record covers ${name}.`,
         covering ? VERIFIED : FAILED
       ),
       step(
@@ -780,7 +993,7 @@ export function verifyWildcardProof(
   const signed = canonicalName(wildcard);
   const source = parentName(signed);
   // the wildcard must sit above the queried name, and be a wildcard at all
-  const above = splitName(signed)[0] === '*' && name !== source && isInZone(name, source);
+  const above = splitName(signed)[0] === '*' && name !== source && isSubdomain(name, source);
   const nsec3 = collectNsec3(records);
 
   if (nsec3.length > 0) {
@@ -842,7 +1055,7 @@ export function verifyWildcardProof(
       'The wildcard-expanded answer came with no NSEC or NSEC3 proof that the queried name is absent.'
     );
   }
-  const covering = nsec.find(e => nsecCovers(e.owner, e.next, name) && e.owner !== name);
+  const covering = nsec.find(e => e.owner !== name && nsecProvesAbsent(e, name));
   const encloser = covering ? closestEncloserOf(name, covering) : undefined;
   const fromEncloser =
     encloser !== undefined && above && countLabels(encloser) === countLabels(source);
@@ -911,4 +1124,43 @@ function sameLabel(a: string, b: string): boolean {
   } catch {
     return a === b;
   }
+}
+
+// whether the NSEC3 covering the next closer name of `qname` sets opt-out: an unsigned
+// delegation may then sit in its range, so a proof resting on it does not authenticate
+// the answer (RFC 5155 §9.2). `encloser` is the closest encloser where it is already
+// known, as for a wildcard answer; otherwise it is found from the records. False for NSEC,
+// and when no closest encloser or covering NSEC3 is there
+export function nextCloserOptOut(qname: string, records: WireRecord[], encloser?: string): boolean {
+  const nsec3 = collectNsec3(records);
+  if (nsec3.length === 0) return false;
+  const name = canonicalName(qname);
+  const closest =
+    encloser !== undefined ? canonicalName(encloser) : findClosestEncloser(nsec3, name)?.name;
+  if (closest === undefined || closest === name || !isSubdomain(name, closest)) return false;
+  return Boolean(coverNsec3(nsec3, nextCloserName(name, closest))?.entry.optOut);
+}
+
+// ---------------------------------------------------------------------------
+// what a denial says is at a name
+// ---------------------------------------------------------------------------
+
+// the types the NSEC or NSEC3 records say exist at `name`: those of the NSEC whose owner
+// is the name, or of the NSEC3 whose hash matches it. No types when none matches, and
+// `optOut` when the name falls in an opt-out NSEC3 range instead (RFC 5155 §6). What the
+// records prove is only as good as their signatures, which are checked elsewhere
+export function denialTypesAt(
+  name: string,
+  records: WireRecord[]
+): { types?: number[]; optOut: boolean } {
+  const owner = canonicalName(name);
+  const nsec3 = collectNsec3(records);
+  if (nsec3.length > 0) {
+    const match = matchNsec3(nsec3, owner);
+    if (match) return { types: match.types, optOut: false };
+    const covered = coverNsec3(nsec3, owner);
+    return { optOut: Boolean(covered?.entry.optOut) };
+  }
+  const match = collectNsec(records).find(entry => entry.owner === owner);
+  return { types: match?.types, optOut: false };
 }

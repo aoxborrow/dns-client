@@ -1,3 +1,5 @@
+import { ParseError } from '../errors';
+
 // byte helpers on Uint8Array, so nothing in the codec needs Buffer
 
 export function readU16(bytes: Uint8Array, offset: number): number {
@@ -127,13 +129,13 @@ export function formatIpv6(bytes: Uint8Array): string {
 
 const HEX_PAIR = /^[0-9a-fA-F]{2}$/;
 
-// hex text to bytes. Throws on anything that is not pairs of hex digits
+// hex text to bytes. Throws ParseError for anything that is not pairs of hex digits
 export function fromHex(text: string): Uint8Array {
-  if (text.length % 2 !== 0) throw new Error('hex text has an odd number of digits');
+  if (text.length % 2 !== 0) throw new ParseError('Hex text has an odd number of digits');
   const out = new Uint8Array(text.length / 2);
   for (let i = 0; i < out.length; i++) {
     const pair = text.slice(i * 2, i * 2 + 2);
-    if (!HEX_PAIR.test(pair)) throw new Error('not hex text');
+    if (!HEX_PAIR.test(pair)) throw new ParseError('Not hex text');
     out[i] = Number.parseInt(pair, 16);
   }
   return out;

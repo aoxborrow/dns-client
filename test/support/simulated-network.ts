@@ -14,12 +14,16 @@ import { canonicalName, isSubdomain } from '../../src/wire/names';
 // matters is which server is asked what, and in what order
 
 // answer a query, fail it, or (undefined) never answer. A promise of one is the same,
-// later: see `late`
+// later: see `late`. `transport` is what the query came over
 type SimulatedReply = Uint8Array | Error | undefined;
-export type SimulatedServer = (query: Message) => SimulatedReply | Promise<SimulatedReply>;
+export type SimulatedServer = (
+  query: Message,
+  transport?: TransportName
+) => SimulatedReply | Promise<SimulatedReply>;
 
 export interface SimulatedQuery {
   server: string;
+  port: number;
   name: string;
   type: string;
   transport: TransportName;
@@ -44,6 +48,7 @@ export function simulateNetwork(servers: Record<string, SimulatedServer>): Simul
       const [question] = asked.questions;
       queries.push({
         server: endpoint.host,
+        port: endpoint.port,
         name: question.name,
         type: typeName(question.type),
         transport: name,
@@ -57,7 +62,7 @@ export function simulateNetwork(servers: Record<string, SimulatedServer>): Simul
         // only the caller's timeout or abort ends the wait for a server that is silent, or
         // has not answered yet
         signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
-        void Promise.resolve(server(asked)).then(reply => {
+        void Promise.resolve(server(asked, name)).then(reply => {
           if (signal?.aborted || reply === undefined) return;
           if (reply instanceof Error) return reject(reply);
           const bytes = Uint8Array.from(reply);
@@ -78,7 +83,27 @@ export function simulateNetwork(servers: Record<string, SimulatedServer>): Simul
 
 // a server that answers as `server` does, `ms` milliseconds after it is asked
 export function late(ms: number, server: SimulatedServer): SimulatedServer {
-  return query => new Promise(resolve => setTimeout(() => resolve(server(query)), ms));
+  return (query, transport) =>
+    new Promise(resolve => setTimeout(() => resolve(server(query, transport)), ms));
+}
+
+// a server that answers over UDP as `server` does but with TC set, and refuses TCP, as
+// one behind a firewall that blocks TCP:53 does. The truncated answer keeps its records,
+// or with `empty` is cut down to its header and question
+export function truncatedOverUdp(server: SimulatedServer, empty = false): SimulatedServer {
+  return async (query, transport) => {
+    if (transport !== 'udp') return new ConnectionError('connect ECONNREFUSED');
+    const reply = await server(query, transport);
+    if (!(reply instanceof Uint8Array)) return reply;
+    const message = decodeMessage(reply);
+    message.flags.tc = true;
+    if (empty) {
+      message.answers = [];
+      message.authorities = [];
+      message.additionals = [];
+    }
+    return encodeMessage(message);
+  };
 }
 
 // ---- zones
@@ -121,7 +146,7 @@ function rdata(type: string, value: string): Uint8Array {
   }
 }
 
-function soaRecord(zone: string, ttl: number, minimum: number): ResourceRecord {
+export function soaRecord(zone: string, ttl: number, minimum: number): ResourceRecord {
   const suffix = zone === '.' ? '' : `.${zone}`;
   const numbers = new Uint8Array(20);
   [1, 7200, 3600, 1_209_600, minimum].forEach((value, index) =>
@@ -181,14 +206,15 @@ export function zoneServer(spec: ZoneSpec): SimulatedServer {
       .filter(delegated => isSubdomain(name, delegated))
       .sort((a, b) => b.length - a.length)[0];
     if (child !== undefined) {
-      const nameservers = Object.entries(spec.delegations ?? {}).find(
+      // the child's name as the delegation wrote it, letter case and all
+      const [written, nameservers] = Object.entries(spec.delegations ?? {}).find(
         ([delegated]) => canonicalName(delegated) === child
-      )?.[1];
+      ) ?? [child, {}];
       return reply({
-        authorities: Object.keys(nameservers ?? {}).map(ns =>
-          record([child, 'NS', ns, 172_800], 'authority')
+        authorities: Object.keys(nameservers).map(ns =>
+          record([written, 'NS', ns, 172_800], 'authority')
         ),
-        additionals: Object.entries(nameservers ?? {}).flatMap(([ns, addresses]) =>
+        additionals: Object.entries(nameservers).flatMap(([ns, addresses]) =>
           addresses.map(address =>
             record([ns, address.includes(':') ? 'AAAA' : 'A', address, 172_800], 'additional')
           )

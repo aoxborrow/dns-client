@@ -5,21 +5,25 @@ import {
   InvalidResponseError,
   NoServerError,
   TimeoutError,
-} from '../src/errors';
-import { exchange } from '../src/exchange';
-import { createCloudflareConnect } from '../src/transports/cloudflare';
-import type { CloudflareSocket } from '../src/transports/cloudflare';
-import { toBase64Url } from '../src/transports/doh';
-import { normalizeAddress, toEndpoint } from '../src/transports/endpoint';
-import { createTcpTransport, createTransports, createUdpTransport } from '../src/transports/index';
-import type { Transports } from '../src/transports/index';
-import type { FetchLike, Transport } from '../src/transports/types';
-import { decodeMessage, encodeQuery } from '../src/wire/index';
-import { answerTo, askedName } from './support/answers';
-import { startFixtureServer } from './support/fixture-server';
-import type { FixtureServer } from './support/fixture-server';
-import { startDohServer, startDotServer, testCertificate } from './support/secure-servers';
-import type { DohServer, DotServer } from './support/secure-servers';
+} from '../../src/errors';
+import { exchange, toDig } from '../../src/exchange';
+import { createCloudflareConnect } from '../../src/transports/cloudflare';
+import type { CloudflareSocket } from '../../src/transports/cloudflare';
+import { toBase64Url } from '../../src/transports/doh';
+import { normalizeAddress, toEndpoint } from '../../src/transports/endpoint';
+import {
+  createTcpTransport,
+  createTransports,
+  createUdpTransport,
+} from '../../src/transports/index';
+import type { Transports } from '../../src/transports/index';
+import type { FetchLike, Transport } from '../../src/transports/types';
+import { decodeMessage, encodeQuery } from '../../src/wire/index';
+import { answerTo, askedName } from '../support/answers';
+import { startFixtureServer } from '../support/fixture-server';
+import type { FixtureServer } from '../support/fixture-server';
+import { startDohServer, startDotServer, testCertificate } from '../support/secure-servers';
+import type { DohServer, DotServer } from '../support/secure-servers';
 
 // the transports apart from the proxies: server addresses, DoH, DoT, and the corners of
 // UDP and TCP that `exchange` cannot reach on its own
@@ -233,7 +237,7 @@ describe('DNS over TLS', () => {
     expect(second.message.answers).toHaveLength(1);
     expect(server.received).toHaveLength(2);
     expect(server.connections).toBe(1);
-    expect(first.toDig()).toBe(`dig +tls -p ${server.port} @127.0.0.1 example.com A`);
+    expect(toDig(first)).toBe(`dig +tls -p ${server.port} @127.0.0.1 example.com A`);
   });
 
   it('checks the certificate against the server name', async () => {
@@ -292,7 +296,9 @@ describe('DNS over HTTPS', () => {
     // ID 0, so HTTP caches can share the answer
     expect(result.query.id).toBe(0);
     expect(decodeMessage(request.query).id).toBe(0);
-    expect(result.toDig()).toBe(`dig +https -p ${server.port} @127.0.0.1 example.com A`);
+    expect(toDig(result)).toBe(`dig +https -p ${server.port} @127.0.0.1 example.com A`);
+    // the URL the query went to, which toDig reads the path from
+    expect(result.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/dns-query$/);
   });
 
   it('sends the query as the body of a POST when asked to', async () => {
@@ -468,7 +474,7 @@ describe('the Cloudflare connector', () => {
   it('carries DNS over TCP through a connect function the caller supplies', async () => {
     const server = await startFixtureServer(({ query }) => ({ response: answerTo(query) }));
     // a custom connect, built here on the Node connector, stands in for the runtime's
-    const { createNodeConnect } = await import('../src/transports/index');
+    const { createNodeConnect } = await import('../../src/transports/index');
     const targets: string[] = [];
     const node = createNodeConnect();
     try {

@@ -1,5 +1,6 @@
 import { rcodeName } from './protocol/header';
 import type { ExtendedErrorOption } from './records/edns';
+import type { RecordProblem } from './records/problems';
 import type { TraceHop } from './resolvers/answer';
 import type { TransportName } from './transports/types';
 
@@ -34,6 +35,13 @@ export interface ErrorData {
   extendedErrors?: ExtendedErrorOption[];
 }
 
+// one server's part in a query that failed: the address it was asked at, and why it gave
+// nothing usable
+export interface ServerFailure {
+  server: string;
+  error: DnsError;
+}
+
 export class DnsError extends Error {
   // whether repeating the operation could succeed
   readonly retryable: boolean = false;
@@ -46,6 +54,9 @@ export class DnsError extends Error {
   extendedErrors?: ExtendedErrorOption[];
   // from the authoritative resolver: the servers asked before the query failed
   trace?: TraceHop[];
+  // from a resolver that asked more than one server: what went wrong at each, in the order
+  // they were asked. This error is among them
+  failures?: ServerFailure[];
 
   constructor(message: string, options: DnsErrorOptions = {}) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
@@ -56,6 +67,32 @@ export class DnsError extends Error {
       this.rcodeName = rcodeName(options.rcode);
     }
     if (options.extendedErrors?.length) this.extendedErrors = options.extendedErrors;
+  }
+
+  // plain data for JSON. `failures` holds this error too, so each failure is written as
+  // its server, name and message, and the result has no cycle
+  toJSON(): ErrorData &
+    Pick<DnsErrorOptions, 'server' | 'query' | 'type' | 'transport'> & {
+      failures?: { server: string; name: string; message: string; rcode?: number }[];
+    } {
+    return {
+      name: this.name,
+      message: this.message,
+      retryable: this.retryable,
+      server: this.server,
+      query: this.query,
+      type: this.type,
+      transport: this.transport,
+      rcode: this.rcode,
+      rcodeName: this.rcodeName,
+      extendedErrors: this.extendedErrors,
+      failures: this.failures?.map(({ server, error }) => ({
+        server,
+        name: error.name,
+        message: error.message,
+        rcode: error.rcode,
+      })),
+    };
   }
 
   // fill in whatever is not already known about the exchange the error came from. A layer
@@ -86,11 +123,15 @@ export class InvalidQueryError extends DnsError {
 }
 
 // record text that is not valid for its type. The message is written to be shown to the
-// person who typed the record
+// person who typed the record. `problems` says the same as data: one entry for each thing
+// found wrong, each with a code and the values behind it
 export class RecordSyntaxError extends DnsError {
-  constructor(message: string, options?: DnsErrorOptions) {
+  readonly problems: RecordProblem[];
+
+  constructor(message: string, options: DnsErrorOptions & { problems: RecordProblem[] }) {
     super(message, options);
     this.name = 'RecordSyntaxError';
+    this.problems = options.problems;
   }
 }
 

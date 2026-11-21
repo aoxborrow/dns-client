@@ -1,10 +1,11 @@
-import { ParseError, RecordSyntaxError } from '../errors';
+import { ParseError } from '../errors';
 import { typeCode, typeName } from '../protocol/types';
 import { formatIpv4, formatIpv6, toHex, utf8Decode } from '../wire/bytes';
 import { endsWithRootDot, nameToLabels } from '../wire/names';
 import { parseIpv4, parseIpv6 } from './addresses';
 import { decodeRecord, isKnownRecordType } from './decode';
 import { formatSignatureTime } from './format';
+import { recordError } from './problems';
 import type { DnsRecord, KnownRecordType, RecordOf, ServiceParams, UnknownRecord } from './types';
 
 // reading presentation format: the text of a record's data, as a zone file or `dig`
@@ -75,14 +76,19 @@ function tokenize(data: string, { innerQuotes = false } = {}): Token[] {
       if (current === '\\') {
         const digits = data.slice(i + 1, i + 4);
         if (/^\d{3}$/.test(digits)) {
-          if (Number(digits) > 255) throw new RecordSyntaxError(`Invalid escape \\${digits}`);
+          if (Number(digits) > 255)
+            throw recordError(
+              'invalid-escape',
+              { escape: `\\${digits}` },
+              `Invalid escape \\${digits}`
+            );
           bytes.push(Number(digits));
           i += 4;
         } else if (i + 1 < data.length) {
           bytes.push(...encoder.encode(data[i + 1]));
           i += 2;
         } else {
-          throw new RecordSyntaxError('Record data ends with a backslash');
+          throw recordError('trailing-backslash', {}, 'Record data ends with a backslash');
         }
         continue;
       }
@@ -91,7 +97,7 @@ function tokenize(data: string, { innerQuotes = false } = {}): Token[] {
       bytes.push(...encoder.encode(point));
       i += point.length;
     }
-    if (!closed || inner) throw new RecordSyntaxError('A quoted string is not closed');
+    if (!closed || inner) throw recordError('unclosed-quote', {}, 'A quoted string is not closed');
     tokens.push({ bytes, raw: data.slice(start, i), quoted });
   }
   return tokens;
@@ -111,27 +117,40 @@ class Fields {
     private readonly readName?: (written: string) => string
   ) {}
 
+  private missing(what: string) {
+    return recordError(
+      'missing-field',
+      { field: what },
+      `${this.type} record is missing its ${what}`
+    );
+  }
+
   get remaining(): number {
     return this.tokens.length - this.index;
   }
 
   private next(what: string): Token {
     const token = this.tokens[this.index++];
-    if (!token) throw new RecordSyntaxError(`${this.type} record is missing its ${what}`);
+    if (!token) throw this.missing(what);
     return token;
   }
 
   // an unquoted word, as written
   word(what: string): string {
     const token = this.next(what);
-    if (token.quoted) throw new RecordSyntaxError(`${what} must not be in quotes`);
+    if (token.quoted)
+      throw recordError('quoted-field', { field: what }, `${what} must not be in quotes`);
     return token.raw;
   }
 
   uint(what: string, max: number): number {
     const text = this.word(what);
     if (!/^\d+$/.test(text) || Number(text) > max) {
-      throw new RecordSyntaxError(`${what} must be a whole number from 0 to ${max}, not "${text}"`);
+      throw recordError(
+        'number-out-of-range',
+        { field: what, max, text },
+        `${what} must be a whole number from 0 to ${max}, not "${text}"`
+      );
     }
     return Number(text);
   }
@@ -150,9 +169,12 @@ class Fields {
       return name;
     } catch (error) {
       if (error instanceof ParseError) {
-        throw new RecordSyntaxError(`${what} is not a valid name: ${error.message}`, {
-          cause: error,
-        });
+        throw recordError(
+          'invalid-name',
+          { field: what, reason: error.message },
+          `${what} is not a valid name: ${error.message}`,
+          { cause: error }
+        );
       }
       throw error;
     }
@@ -161,7 +183,9 @@ class Fields {
   // a <character-string>, quoted or not: at most 255 bytes
   text(what: string): string {
     const token = this.next(what);
-    if (token.bytes.length > 255) throw new RecordSyntaxError(`${what} is longer than 255 bytes`);
+    if (token.bytes.length > 255) {
+      throw recordError('string-too-long', { field: what }, `${what} is longer than 255 bytes`);
+    }
     return utf8Decode(Uint8Array.from(token.bytes));
   }
 
@@ -172,8 +196,7 @@ class Fields {
 
   // every remaining token joined: how zone files write long hex and base64 fields
   private restJoined(what: string): string {
-    if (this.remaining === 0)
-      throw new RecordSyntaxError(`${this.type} record is missing its ${what}`);
+    if (this.remaining === 0) throw this.missing(what);
     let out = '';
     while (this.remaining > 0) out += this.word(what);
     return out;
@@ -181,7 +204,9 @@ class Fields {
 
   hexRest(what: string): string {
     const text = this.restJoined(what);
-    if (!/^([0-9a-fA-F]{2})+$/.test(text)) throw new RecordSyntaxError(`${what} is not valid hex`);
+    if (!/^([0-9a-fA-F]{2})+$/.test(text)) {
+      throw recordError('invalid-hex', { field: what }, `${what} is not valid hex`);
+    }
     return text.toLowerCase();
   }
 
@@ -198,8 +223,11 @@ class Fields {
 
   end(): void {
     if (this.remaining > 0) {
-      throw new RecordSyntaxError(
-        `${this.type} record has unexpected extra data: ${this.tokens[this.index].raw}`
+      const text = this.tokens[this.index].raw;
+      throw recordError(
+        'extra-data',
+        { text },
+        `${this.type} record has unexpected extra data: ${text}`
       );
     }
   }
@@ -207,7 +235,7 @@ class Fields {
 
 function base64(text: string, what: string): string {
   if (text.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(text)) {
-    throw new RecordSyntaxError(`${what} is not valid base64`);
+    throw recordError('invalid-base64', { field: what }, `${what} is not valid base64`);
   }
   return text;
 }
@@ -257,7 +285,9 @@ function numberOrMnemonic(
   const text = fields.word(what);
   if (/^\d+$/.test(text) && Number(text) <= max) return Number(text);
   const known = table[text.toUpperCase()];
-  if (known === undefined) throw new RecordSyntaxError(`Unknown ${what}: "${text}"`);
+  if (known === undefined) {
+    throw recordError('unknown-mnemonic', { field: what, text }, `Unknown ${what}: "${text}"`);
+  }
   return known;
 }
 
@@ -268,7 +298,7 @@ function typeMnemonic(text: string): string {
   try {
     return typeName(typeCode(text));
   } catch {
-    throw new RecordSyntaxError(`Unknown record type: "${text}"`);
+    throw recordError('unknown-type', { type: text }, `Unknown record type: "${text}"`);
   }
 }
 
@@ -282,10 +312,16 @@ function signatureTime(fields: Fields, what: string): number {
     // a date like February 30th would otherwise be accepted as March 2nd
     if (seconds >= 0 && seconds <= 0xffffffff && formatSignatureTime(seconds) === text)
       return seconds;
-    throw new RecordSyntaxError(`${what} is not a valid time: "${text}"`);
+    throw recordError(
+      'invalid-value',
+      { field: what, text },
+      `${what} is not a valid time: "${text}"`
+    );
   }
   if (/^\d{1,10}$/.test(text) && Number(text) <= 0xffffffff) return Number(text);
-  throw new RecordSyntaxError(
+  throw recordError(
+    'invalid-value',
+    { field: what, text },
     `${what} must be YYYYMMDDHHmmSS or seconds since 1970, not "${text}"`
   );
 }
@@ -294,7 +330,7 @@ const salt = (fields: Fields) => {
   const text = fields.word('salt');
   if (text === '-') return '';
   if (!/^([0-9a-fA-F]{2})+$/.test(text) || text.length > 510)
-    throw new RecordSyntaxError('salt is not valid hex');
+    throw recordError('invalid-hex', { field: 'salt' }, 'salt is not valid hex');
   return text.toLowerCase();
 };
 
@@ -343,11 +379,13 @@ function coordinate(
     const text = fields.word(what);
     const upper = text.toUpperCase();
     if (upper === positive || upper === negative) {
-      if (parts.length === 0) throw new RecordSyntaxError(`${what} has no degrees`);
+      if (parts.length === 0) {
+        throw recordError('invalid-value', { field: what, text }, `${what} has no degrees`);
+      }
       const [degrees, minutes = 0, seconds = 0] = parts;
       const value = degrees + minutes / 60 + seconds / 3600;
       if (value > limit || minutes >= 60 || seconds >= 60) {
-        throw new RecordSyntaxError(`${what} is out of range`);
+        throw recordError('invalid-value', { field: what, text }, `${what} is out of range`);
       }
       // to the thousandth of an arc second, the precision of the wire format
       const rounded = Math.round(value * 3_600_000) / 3_600_000;
@@ -356,7 +394,7 @@ function coordinate(
     // seconds may have up to three decimal places; degrees and minutes are whole
     const pattern = parts.length === 2 ? /^\d+(\.\d{1,3})?$/ : /^\d+$/;
     if (parts.length >= 3 || !pattern.test(text)) {
-      throw new RecordSyntaxError(`${what} is not valid: "${text}"`);
+      throw recordError('invalid-value', { field: what, text }, `${what} is not valid: "${text}"`);
     }
     parts.push(Number(text));
   }
@@ -366,11 +404,15 @@ function coordinate(
 // of ten centimetres
 function locMetres(text: string, what: string): number {
   const match = /^(\d+(?:\.\d{1,2})?)m?$/.exec(text);
-  if (!match) throw new RecordSyntaxError(`${what} is not valid: "${text}"`);
+  if (!match) {
+    throw recordError('invalid-value', { field: what, text }, `${what} is not valid: "${text}"`);
+  }
   const centimetres = Math.round(Number(match[1]) * 100);
   const digits = String(centimetres);
   if (centimetres > 0 && (!/^[1-9]0*$/.test(digits) || digits.length > 10)) {
-    throw new RecordSyntaxError(
+    throw recordError(
+      'invalid-value',
+      { field: what, text },
       `${what} must be a single digit followed by zeros, in centimetres: "${text}"`
     );
   }
@@ -385,7 +427,11 @@ function location(fields: Fields) {
     ? Number(altitudeText.replace(/m$/, ''))
     : NaN;
   if (Number.isNaN(altitude) || altitude < -100000 || altitude > 42849672.95) {
-    throw new RecordSyntaxError(`altitude is not valid: "${altitudeText}"`);
+    throw recordError(
+      'invalid-value',
+      { field: 'altitude', text: altitudeText },
+      `altitude is not valid: "${altitudeText}"`
+    );
   }
   // the three sizes are optional, with the defaults RFC 1876 gives
   const optional = (what: string, fallback: number) =>
@@ -422,7 +468,11 @@ function serviceParamKey(text: string): number {
   if (known !== undefined) return known;
   const generic = /^key(\d{1,5})$/.exec(text);
   if (generic && Number(generic[1]) <= 0xffff) return Number(generic[1]);
-  throw new RecordSyntaxError(`Unknown service parameter: "${text}"`);
+  throw recordError(
+    'unknown-service-parameter',
+    { key: text },
+    `Unknown service parameter: "${text}"`
+  );
 }
 
 // split a list value on its commas, honouring `\,` and `\\`
@@ -456,17 +506,29 @@ function serviceBinding(fields: Fields, data: string) {
     const equals = raw.indexOf('=');
     const keyText = equals < 0 ? raw : raw.slice(0, equals);
     const key = serviceParamKey(keyText);
-    if (seen.has(key)) throw new RecordSyntaxError(`Service parameter "${keyText}" appears twice`);
+    if (seen.has(key)) {
+      throw recordError(
+        'repeated-service-parameter',
+        { key: keyText },
+        `Service parameter "${keyText}" appears twice`
+      );
+    }
     seen.add(key);
     const [valueToken] = equals < 0 ? [] : tokenize(raw.slice(equals + 1));
     const bytes = Uint8Array.from(valueToken?.bytes ?? []);
     const value = utf8Decode(bytes);
     const needsValue = () => {
       if (!valueToken || bytes.length === 0)
-        throw new RecordSyntaxError(`${keyText} needs a value`);
+        throw recordError('missing-parameter-value', { key: keyText }, `${keyText} needs a value`);
     };
     const noValue = () => {
-      if (valueToken) throw new RecordSyntaxError(`${keyText} takes no value`);
+      if (valueToken) {
+        throw recordError(
+          'unexpected-parameter-value',
+          { key: keyText },
+          `${keyText} takes no value`
+        );
+      }
     };
 
     switch (key) {
@@ -481,7 +543,11 @@ function serviceBinding(fields: Fields, data: string) {
         needsValue();
         params.alpn = listItems(value);
         if (params.alpn.some(id => id.length === 0 || encoder.encode(id).length > 255)) {
-          throw new RecordSyntaxError('alpn has an empty or over-long protocol name');
+          throw recordError(
+            'invalid-value',
+            { field: 'alpn', text: value },
+            'alpn has an empty or over-long protocol name'
+          );
         }
         break;
       case 2:
@@ -491,14 +557,24 @@ function serviceBinding(fields: Fields, data: string) {
       case 3:
         needsValue();
         if (!/^\d+$/.test(value) || Number(value) > 0xffff)
-          throw new RecordSyntaxError(`port is not valid: "${value}"`);
+          throw recordError(
+            'invalid-value',
+            { field: 'port', text: value },
+            `port is not valid: "${value}"`
+          );
         params.port = Number(value);
         break;
       case 4:
         needsValue();
         params.ipv4Hint = listItems(value).map(item => {
           const address = parseIpv4(item);
-          if (!address) throw new RecordSyntaxError(`ipv4hint has an invalid address: "${item}"`);
+          if (!address) {
+            throw recordError(
+              'invalid-address',
+              { field: 'ipv4hint', text: item },
+              `ipv4hint has an invalid address: "${item}"`
+            );
+          }
           return formatIpv4(address);
         });
         break;
@@ -510,7 +586,13 @@ function serviceBinding(fields: Fields, data: string) {
         needsValue();
         params.ipv6Hint = listItems(value).map(item => {
           const address = parseIpv6(item);
-          if (!address) throw new RecordSyntaxError(`ipv6hint has an invalid address: "${item}"`);
+          if (!address) {
+            throw recordError(
+              'invalid-address',
+              { field: 'ipv6hint', text: item },
+              `ipv6hint has an invalid address: "${item}"`
+            );
+          }
           return formatIpv6(address);
         });
         break;
@@ -539,13 +621,25 @@ const PARSERS: Record<KnownRecordType, Parser> = {
   A: fields => {
     const text = fields.word('address');
     const address = parseIpv4(text);
-    if (!address) throw new RecordSyntaxError(`"${text}" is not an IPv4 address`);
+    if (!address) {
+      throw recordError(
+        'invalid-address',
+        { field: 'address', text },
+        `"${text}" is not an IPv4 address`
+      );
+    }
     return { address: formatIpv4(address) };
   },
   AAAA: fields => {
     const text = fields.word('address');
     const address = parseIpv6(text);
-    if (!address) throw new RecordSyntaxError(`"${text}" is not an IPv6 address`);
+    if (!address) {
+      throw recordError(
+        'invalid-address',
+        { field: 'address', text },
+        `"${text}" is not an IPv6 address`
+      );
+    }
     return { address: formatIpv6(address) };
   },
   NS: target,
@@ -565,7 +659,9 @@ const PARSERS: Record<KnownRecordType, Parser> = {
   TXT: fields => {
     const strings: string[] = [];
     while (fields.remaining > 0) strings.push(fields.text('text'));
-    if (strings.length === 0) throw new RecordSyntaxError('TXT record is missing its text');
+    if (strings.length === 0) {
+      throw recordError('missing-field', { field: 'text' }, 'TXT record is missing its text');
+    }
     return { strings };
   },
   CAA: fields => ({
@@ -599,7 +695,11 @@ const PARSERS: Record<KnownRecordType, Parser> = {
     };
     const next = fields.word('next hashed name');
     if (!/^[0-9A-Va-v]+$/.test(next))
-      throw new RecordSyntaxError('next hashed name is not valid base32hex');
+      throw recordError(
+        'invalid-base32hex',
+        { field: 'next hashed name' },
+        'next hashed name is not valid base32hex'
+      );
     return { ...head, nextDomain: next.toUpperCase(), types: fields.words().map(typeMnemonic) };
   },
   NSEC3PARAM: fields => ({
@@ -671,7 +771,11 @@ function genericData(data: string): Uint8Array | undefined {
   if (!match) return undefined;
   const hex = match[2].replace(/\s+/g, '');
   if (hex.length % 2 !== 0 || hex.length / 2 !== Number(match[1])) {
-    throw new RecordSyntaxError('Generic record data does not match its stated length');
+    throw recordError(
+      'generic-length-mismatch',
+      {},
+      'Generic record data does not match its stated length'
+    );
   }
   const out = new Uint8Array(hex.length / 2);
   for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
@@ -712,10 +816,10 @@ export function parseRecordData(
   try {
     code = typeCode(type);
   } catch {
-    throw new RecordSyntaxError(`Unknown record type: "${type}"`);
+    throw recordError('unknown-type', { type }, `Unknown record type: "${type}"`);
   }
   const mnemonic = typeName(code);
-  if (data.trim() === '') throw new RecordSyntaxError(`${mnemonic} record has no data`);
+  if (data.trim() === '') throw recordError('no-data', {}, `${mnemonic} record has no data`);
 
   const generic = genericData(data);
   if (generic) {
@@ -738,14 +842,19 @@ export function parseRecordData(
       return fields;
     } catch (error) {
       if (!(error instanceof ParseError)) throw error;
-      throw new RecordSyntaxError(`Generic data is not a valid ${mnemonic} record`, {
-        cause: error,
-      });
+      throw recordError(
+        'invalid-generic-data',
+        { type: mnemonic },
+        `Generic data is not a valid ${mnemonic} record`,
+        { cause: error }
+      );
     }
   }
 
   if (!hasRecordParser(mnemonic)) {
-    throw new RecordSyntaxError(
+    throw recordError(
+      'generic-form-only',
+      { type: mnemonic },
       `${mnemonic} records can only be given in the generic form: \\# <length> <hex>`
     );
   }

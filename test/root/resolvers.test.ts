@@ -6,24 +6,37 @@ import {
   NoServerError,
   ParseError,
   TimeoutError,
-} from '../src/errors';
-import { AuthoritativeResolver, createLruCache, Resolver } from '../src/resolvers/index';
+} from '../../src/errors';
+import { AuthoritativeResolver, createLruCache, Resolver, toDig } from '../../src/resolvers/index';
 import type {
   AuthoritativeResolverOptions,
+  CachedResponse,
   ResolverOptions,
   TraceHop,
-} from '../src/resolvers/index';
-import { aliasTarget } from '../src/resolvers/answer';
-import { cacheLifetime } from '../src/resolvers/resolver';
-import { toEndpoint } from '../src/transports/endpoint';
-import { isNode } from '../src/transports/runtime';
-import type { DnsEvent } from '../src/transports/types';
-import { decodeMessage, encodeMessage, encodeName } from '../src/wire/index';
-import { late, recursiveServer, simulateNetwork, zoneServer } from './support/simulated-network';
-import type { SimulatedNetwork, SimulatedServer } from './support/simulated-network';
+} from '../../src/resolvers/index';
+import { aliasTarget } from '../../src/resolvers/answer';
+import { cacheLifetime } from '../../src/resolvers/resolver';
+import { toEndpoint } from '../../src/transports/endpoint';
+import { isNode } from '../../src/transports/runtime';
+import type { DnsEvent } from '../../src/transports/types';
+import { decodeMessage, encodeMessage, encodeName } from '../../src/wire/index';
+import {
+  late,
+  recursiveServer,
+  simulateNetwork,
+  soaRecord,
+  truncatedOverUdp,
+  zoneServer,
+} from '../support/simulated-network';
+import type { SimulatedNetwork, SimulatedServer } from '../support/simulated-network';
 
 // UDP where there is UDP, which is Node; TCP elsewhere
 const DEFAULT_TRANSPORT = isNode() ? 'udp' : 'tcp';
+
+// what Math.random is made to return for the authoritative resolver's shuffle to leave
+// every list as it came: the root servers as given, a zone's nameservers and one
+// nameserver's addresses in the order the referral listed them
+const AS_GIVEN = 1 - Number.EPSILON;
 
 // the two resolvers, against a network that exists only in memory. What is being tested
 // is which server gets asked what, and what is made of the answers
@@ -61,6 +74,7 @@ describe('Resolver', () => {
     expect(network.queries).toEqual([
       {
         server: '10.0.0.1',
+        port: 53,
         name: 'example.com',
         type: 'MX',
         transport: DEFAULT_TRANSPORT,
@@ -88,7 +102,7 @@ describe('Resolver', () => {
     // and the raw response is there too
     expect(decodeMessage(answer.bytes).answers).toHaveLength(1);
     expect(answer.message.answers[0].rdata).toBeInstanceOf(Uint8Array);
-    expect(answer.toDig()).toBe(
+    expect(toDig(answer)).toBe(
       DEFAULT_TRANSPORT === 'udp'
         ? 'dig @10.0.0.1 example.com MX'
         : 'dig +tcp @10.0.0.1 example.com MX'
@@ -195,6 +209,73 @@ describe('Resolver', () => {
       expect(cacheLifetime(bare)).toBe(0);
       const cut = decodeMessage(encodeMessage({ id: 1, flags: { qr: true, tc: true } }));
       expect(cacheLifetime(cut)).toBe(0);
+    });
+
+    it('keeps an empty answer reached through an alias for the negative lifetime', () => {
+      const alias = {
+        name: 'www.example.com',
+        type: 5,
+        class: 1,
+        ttl: 3600,
+        rdata: encodeName('host.example.com'),
+        section: 'answer' as const,
+      };
+      const address = {
+        name: 'host.example.com',
+        type: 1,
+        class: 1,
+        ttl: 1800,
+        rdata: Uint8Array.of(192, 0, 2, 1),
+        section: 'answer' as const,
+      };
+      const lifetime = (parts: Parameters<typeof encodeMessage>[0]) =>
+        cacheLifetime(
+          decodeMessage(
+            encodeMessage({ questions: [{ name: 'www.example.com', type: 1, class: 1 }], ...parts })
+          )
+        );
+      const header = { id: 1, flags: { qr: true } };
+      // the alias and its target's address: the shortest TTL
+      expect(lifetime({ ...header, answers: [alias, address] })).toBe(1800);
+      // the alias, and the target has no address: the SOA's minimum, not the alias's TTL
+      expect(
+        lifetime({
+          ...header,
+          answers: [alias],
+          authorities: [soaRecord('example.com', 3600, 300)],
+        })
+      ).toBe(300);
+      // nor longer than the alias lives
+      expect(
+        lifetime({
+          ...header,
+          answers: [{ ...alias, ttl: 60 }],
+          authorities: [soaRecord('example.com', 3600, 300)],
+        })
+      ).toBe(60);
+      // the target does not exist
+      expect(
+        lifetime({
+          ...header,
+          rcode: 3,
+          answers: [alias],
+          authorities: [soaRecord('example.com', 3600, 300)],
+        })
+      ).toBe(300);
+      // with no SOA, nothing says how long the empty part lives
+      expect(lifetime({ ...header, answers: [alias] })).toBe(0);
+      // a question for the alias itself is answered by it
+      expect(
+        cacheLifetime(
+          decodeMessage(
+            encodeMessage({
+              ...header,
+              questions: [{ name: 'www.example.com', type: 5, class: 1 }],
+              answers: [alias],
+            })
+          )
+        )
+      ).toBe(3600);
     });
 
     it('keeps questions with different settings apart', async () => {
@@ -453,6 +534,162 @@ describe('Resolver', () => {
     controller.abort(reason);
     await expect(pending).rejects.toBe(reason);
   });
+
+  it('hands back the name with no trailing dot, in the case it was written', async () => {
+    const answer = await resolver().query('Example.COM.', 'A');
+    expect(answer.name).toBe('Example.COM');
+    expect(answer.query.name).toBe('Example.COM');
+    expect(answer.records).toHaveLength(2);
+  });
+
+  it('returns plain data, which toDig reads', async () => {
+    const answer = await resolver().query('example.com', 'A', {
+      dnssecOk: true,
+      checkingDisabled: true,
+    });
+    expect(answer.query).toEqual({
+      name: 'example.com',
+      type: 'A',
+      class: 'IN',
+      flags: { rd: true, cd: true, ad: false },
+      edns: { udpPayloadSize: 1232, dnssecOk: true },
+    });
+    // nothing in it is a function: it survives a structured clone whole
+    const copy = structuredClone(answer);
+    expect(copy).toEqual(answer);
+    expect(toDig(copy)).toBe(toDig(answer));
+    // `+tcp` where the runtime has no UDP and TCP is the default, as on Workers
+    expect(toDig(answer)).toMatch(/\+dnssec \+cd (\+tcp )?@10\.0\.0\.1 example\.com A/);
+  });
+
+  it('keeps when a cached response arrived as a Date', async () => {
+    const stored: CachedResponse[] = [];
+    const spying = resolver(undefined, {
+      cache: {
+        get: () => undefined,
+        set: (_key, value) => stored.push(value),
+        delete: () => undefined,
+        clear: () => undefined,
+      },
+    });
+    await spying.query('example.com', 'A');
+    expect(stored[0].receivedAt).toBeInstanceOf(Date);
+  });
+
+  it('holds back queries to one server past serverConcurrency', async () => {
+    let inFlight = 0;
+    let most = 0;
+    const answer = recursiveServer(RECORDS);
+    const counted: SimulatedServer = async query => {
+      inFlight++;
+      most = Math.max(most, inFlight);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      inFlight--;
+      return answer(query);
+    };
+    const limited = resolver({ '10.0.0.1': counted }, { cache: false, serverConcurrency: 2 });
+    const names = Array.from({ length: 6 }, (_, index) => `n${index}.example.com`);
+    await Promise.all(names.map(name => limited.query(name, 'A')));
+    expect(most).toBe(2);
+
+    most = 0;
+    const open = resolver({ '10.0.0.1': counted }, { cache: false, serverConcurrency: Infinity });
+    await Promise.all(names.map(name => open.query(name, 'A')));
+    expect(most).toBe(6);
+  });
+
+  it('limits queries to 16 at once to one server by default', async () => {
+    let inFlight = 0;
+    let most = 0;
+    const answer = recursiveServer(RECORDS);
+    const counted: SimulatedServer = async query => {
+      inFlight++;
+      most = Math.max(most, inFlight);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      inFlight--;
+      return answer(query);
+    };
+    const names = Array.from({ length: 20 }, (_, index) => `n${index}.example.com`);
+    const stub = resolver({ '10.0.0.1': counted }, { cache: false });
+    await Promise.all(names.map(name => stub.query(name, 'A')));
+    expect(most).toBe(16);
+  });
+
+  it('lists what went wrong at every server on the error it throws', async () => {
+    const error = await resolver({ '10.0.0.8': () => undefined, '10.0.0.9': () => undefined })
+      .query('example.com', 'A')
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(TimeoutError);
+    const { failures } = error as TimeoutError;
+    expect(failures?.map(failure => failure.server)).toEqual(['10.0.0.8', '10.0.0.9']);
+    expect(failures?.every(failure => failure.error instanceof TimeoutError)).toBe(true);
+    // the error thrown is the last server's, and is among them
+    expect(failures?.at(-1)?.error).toBe(error);
+  });
+
+  describe('a truncated answer whose TCP retry fails', () => {
+    it('comes back as it came, TC set, saying why, and is not cached', async () => {
+      const events: DnsEvent[] = [];
+      const stub = resolver(
+        { '10.0.0.1': truncatedOverUdp(recursiveServer(RECORDS)) },
+        { transport: 'udp', retries: 0, onEvent: event => events.push(event) }
+      );
+      const answer = await stub.query('example.com', 'A');
+      expect(answer.flags.tc).toBe(true);
+      expect(answer.transport).toBe('udp');
+      expect(answer.records.map(record => record.address)).toEqual(['192.0.2.1', '192.0.2.2']);
+      expect(answer.tcpFallbackError).toMatchObject({ name: 'ConnectionError' });
+      expect(events.map(({ event }) => event)).toEqual([
+        'query',
+        'tcp-fallback',
+        'query',
+        'tcp-fallback-failed',
+      ]);
+      expect(network.queries.map(query => query.transport)).toEqual(['udp', 'tcp']);
+
+      // a truncated answer is not the whole answer, and is asked again next time
+      const again = await stub.query('example.com', 'A');
+      expect(again.cached).toBe(false);
+      expect(network.queries).toHaveLength(4);
+    });
+
+    it('comes back empty when the truncated answer was', async () => {
+      const answer = await resolver(
+        { '10.0.0.1': truncatedOverUdp(recursiveServer(RECORDS), true) },
+        { transport: 'udp' }
+      ).query('example.com', 'A');
+      expect(answer.flags.tc).toBe(true);
+      expect(answer.records).toEqual([]);
+      expect(answer.tcpFallbackError?.name).toBe('ConnectionError');
+    });
+
+    it('is the answer: the next server is not asked', async () => {
+      const answer = await resolver(
+        {
+          '10.0.0.1': truncatedOverUdp(recursiveServer(RECORDS)),
+          '10.0.0.2': recursiveServer(RECORDS),
+        },
+        { transport: 'udp', retries: 0 }
+      ).query('example.com', 'A');
+      expect(answer.server).toBe('10.0.0.1');
+      expect(answer.flags.tc).toBe(true);
+      expect(network.queries.map(query => query.server)).toEqual(['10.0.0.1', '10.0.0.1']);
+    });
+
+    it('still rejects with the reason when the caller aborts', async () => {
+      const controller = new AbortController();
+      const reason = new Error('never mind');
+      const hanging: SimulatedServer = (query, transport) =>
+        transport === 'udp' ? truncatedOverUdp(recursiveServer(RECORDS))(query, 'udp') : undefined;
+      const pending = resolver({ '10.0.0.1': hanging }, { transport: 'udp', timeout: 5000 }).query(
+        'example.com',
+        'A',
+        { signal: controller.signal }
+      );
+      setTimeout(() => controller.abort(reason), 20);
+      await expect(pending).rejects.toBe(reason);
+    });
+  });
 });
 
 describe('aliasTarget', () => {
@@ -579,6 +816,15 @@ describe('AuthoritativeResolver', () => {
 
   let network: SimulatedNetwork;
 
+  // the same servers in the same order on every run. The default order has cases of its own
+  beforeEach(() => {
+    vi.spyOn(Math, 'random').mockReturnValue(AS_GIVEN);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   function resolver(
     options: AuthoritativeResolverOptions = {},
     overrides: Record<string, SimulatedServer | undefined> = {}
@@ -594,6 +840,9 @@ describe('AuthoritativeResolver', () => {
       transports: network.transports,
       timeout: 100,
       retries: 0,
+      // IPv4 only, which most of these cases are written against. The defaults have cases
+      // of their own
+      addressFamily: 'ipv4',
       ...options,
     });
   }
@@ -640,7 +889,7 @@ describe('AuthoritativeResolver', () => {
     // the answering hop is in the trace, and is not a referral
     expect(answer.trace?.[2]).not.toHaveProperty('referral');
     expect(answer.trace?.[2].bytes).toBe(answer.bytes.length);
-    expect(answer.toDig()).toBe(
+    expect(toDig(answer)).toBe(
       DEFAULT_TRANSPORT === 'udp'
         ? 'dig +norecurse @10.1.0.1 example.com A'
         : 'dig +norecurse +tcp @10.1.0.1 example.com A'
@@ -682,6 +931,34 @@ describe('AuthoritativeResolver', () => {
     expect(answer.attempts).toBe(6);
   });
 
+  it('starts where the query says, and still looks nameservers up from the root', async () => {
+    const iterative = resolver();
+    const answer = await iterative.query('glueless.com', 'A', {
+      startAt: [{ name: 'b.gtld.test', ipv4: '10.0.1.2' }],
+    });
+    expect(answer.records.map(record => record.address)).toEqual(['192.0.2.77']);
+    expect(network.log()).toEqual([
+      '10.0.1.2 glueless.com A',
+      '10.0.0.1 ns1.dnshost.net A',
+      '10.0.2.1 ns1.dnshost.net A',
+      '10.2.0.1 ns1.dnshost.net A',
+      '10.2.0.53 glueless.com A',
+    ]);
+    expect(answer.trace?.map(hop => [hop.server, hop.serverName])).toEqual([
+      ['10.0.1.2', 'b.gtld.test'],
+      ['10.2.0.53', 'ns1.dnshost.net'],
+    ]);
+
+    // what that walk was told is not kept for a query from the root
+    network.queries.length = 0;
+    await iterative.query('glueless.com', 'A');
+    expect(network.log()).toEqual([
+      '10.0.0.1 glueless.com A',
+      '10.0.1.1 glueless.com A',
+      '10.2.0.53 glueless.com A',
+    ]);
+  });
+
   it('takes a nameserver address from the host map before looking it up', async () => {
     const answer = await resolver({ hosts: { 'NS1.dnshost.net.': '10.2.0.53' } }).query(
       'glueless.com',
@@ -695,104 +972,37 @@ describe('AuthoritativeResolver', () => {
     expect(answer.serverName).toBe('ns1.dnshost.net');
   });
 
-  it('asks a caller-supplied lookup for a nameserver address before resolving it', async () => {
-    const asked: string[] = [];
-    const answer = await resolver({
-      resolveNameserver: name => {
-        asked.push(name);
-        return name === 'ns1.dnshost.net' ? ['10.2.0.53'] : undefined;
-      },
-    }).query('glueless.com', 'A');
-    expect(asked).toEqual(['ns1.dnshost.net']);
-    // no walk from the root for the nameserver's own name
-    expect(network.log()).toEqual([
-      '10.0.0.1 glueless.com A',
-      '10.0.1.1 glueless.com A',
-      '10.2.0.53 glueless.com A',
-    ]);
-    expect(answer.serverName).toBe('ns1.dnshost.net');
-  });
-
   it('gives a nameserver lookup what is left of the total timeout, and names it when that runs out', async () => {
-    let given = Infinity;
-    const error = await resolver({
-      totalTimeout: 100,
-      resolveNameserver: async (_name, { timeout }) => {
-        given = timeout;
-        // a lookup that takes all the time there is, and a little over
-        await new Promise(resolve => setTimeout(resolve, timeout + 20));
-        return undefined;
-      },
-    })
+    // dnshost.net's server says nothing, so ns1.dnshost.net cannot be found in time
+    const error = await resolver({ totalTimeout: 100 }, { '10.2.0.1': () => undefined })
       .query('glueless.com', 'A')
       .catch(caught => caught);
-    expect(given).toBeLessThanOrEqual(100);
     expect(error).toBeInstanceOf(TimeoutError);
     expect(error.server).toBe('ns1.dnshost.net');
   });
 
-  it('names the nameserver when its lookup ends a moment before the clock reaches the deadline', async () => {
-    // a clock that runs slow, so the lookup's timer for the rest of the time fires with the
-    // clock still short of the deadline, as a timer firing a few milliseconds early does
-    const real = performance.now.bind(performance);
-    const origin = real();
-    const clock = vi
-      .spyOn(performance, 'now')
-      .mockImplementation(() => origin + (real() - origin) * 0.8);
-    try {
-      const error = await resolver({
-        totalTimeout: 100,
-        resolveNameserver: async (_name, { timeout }) => {
-          // a lookup that is given the rest of the time, runs it out and finds nothing
-          await new Promise(resolve => setTimeout(resolve, timeout));
-          return undefined;
-        },
-      })
-        .query('glueless.com', 'A')
-        .catch(caught => caught);
-      expect(error).toBeInstanceOf(TimeoutError);
-      expect(error.server).toBe('ns1.dnshost.net');
-      // the time is gone, so the nameserver is not looked for from the root as well
-      expect(network.queries.some(query => query.name === 'ns1.dnshost.net')).toBe(false);
-    } finally {
-      clock.mockRestore();
-    }
-  });
-
-  it('falls back to resolving from the root when the lookup has nothing', async () => {
-    const answer = await resolver({ resolveNameserver: () => undefined }).query(
-      'glueless.com',
-      'A'
-    );
-    expect(answer.records).toHaveLength(1);
-    expect(network.queries.some(query => query.name === 'ns1.dnshost.net')).toBe(true);
-  });
-
-  it('falls back to resolving from the root when the lookup has nothing usable', async () => {
-    // an IPv6 address, with only IPv4 asked for, is as good as no address: it is neither
-    // kept nor allowed to stand in for the nameserver's own A record
-    const asked: string[] = [];
-    const lookup = resolver({
-      resolveNameserver: name => {
-        asked.push(name);
-        return ['2001:db8::53'];
+  it("asks for a nameserver's IPv6 address where its IPv4 address came from", async () => {
+    // dnshost.net's first server says nothing. Asked for A and then AAAA in the zone's order,
+    // the lookup waited for it twice, which is more than the walk had
+    const net = zoneServer({
+      zone: 'net',
+      delegations: {
+        'dnshost.net': { 'ns0.dnshost.net': ['10.2.0.9'], 'ns.dnshost.net': ['10.2.0.1'] },
       },
     });
-    const answer = await lookup.query('glueless.com', 'A');
+    const answer = await resolver(
+      { addressFamily: 'both', totalTimeout: 170 },
+      { '10.0.2.1': net, '10.2.0.9': () => undefined }
+    ).query('glueless.com', 'A');
     expect(answer.records.map(record => record.address)).toEqual(['192.0.2.77']);
-    expect(answer).toMatchObject({ server: '10.2.0.53', serverName: 'ns1.dnshost.net' });
-    expect(asked).toEqual(['ns1.dnshost.net']);
-    expect(network.queries.some(query => query.name === 'ns1.dnshost.net')).toBe(true);
-  });
-
-  it('tries nameservers in the order it is given', async () => {
-    // reverse order: ns2 before ns1
-    const answer = await resolver({ nameserverOrder: (a, b) => b.localeCompare(a) }).query(
-      'example.com',
-      'A'
-    );
-    expect(answer.server).toBe('10.1.0.2');
-    expect(answer.serverName).toBe('ns2.example.com');
+    const lookups = network.log().filter(line => line.includes('ns1.dnshost.net'));
+    expect(lookups).toEqual([
+      '10.0.0.1 ns1.dnshost.net A',
+      '10.0.2.1 ns1.dnshost.net A',
+      '10.2.0.9 ns1.dnshost.net A',
+      '10.2.0.1 ns1.dnshost.net A',
+      '10.2.0.1 ns1.dnshost.net AAAA',
+    ]);
   });
 
   it('names the answering server as the nameserver it asked, when two share an address', async () => {
@@ -829,9 +1039,8 @@ describe('AuthoritativeResolver', () => {
     expect(answer.trace?.at(-1)?.serverName).toBe('NS1.Cased.COM');
   });
 
-  it('tries the addresses of one nameserver in the same order on every run', async () => {
-    // glue arrives in whatever order the parent sends it: lowest address first, or the
-    // order the caller gives
+  it('tries the addresses of one nameserver in the order the shuffle leaves them', async () => {
+    // glue arrives in whatever order the parent sends it, and the shuffle starts from that
     const parent = (addresses: string[]) =>
       zoneServer({ zone: 'com', delegations: { 'glued.com': { 'ns1.glued.com': addresses } } });
     const zone = zoneServer({ zone: 'glued.com', records: [['glued.com', 'A', '192.0.2.6']] });
@@ -845,22 +1054,17 @@ describe('AuthoritativeResolver', () => {
         'glued.com',
         'A'
       );
-      expect(answer.server).toBe('10.6.0.9');
+      expect(answer.server).toBe(glue[0]);
     }
 
-    const answer = await resolver(
-      { addressOrder: (a, b) => b.localeCompare(a) },
-      { '10.0.1.1': parent(['10.6.0.100', '10.6.0.9', '10.6.0.20']), ...servers }
-    ).query('glued.com', 'A');
+    // with the draw always at the bottom, the shuffle turns 100, 9, 20 into 9, 20, 100
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const glued = parent(['10.6.0.100', '10.6.0.9', '10.6.0.20']);
+    const answer = await resolver({}, { '10.0.1.1': glued, '10.0.1.2': glued, ...servers }).query(
+      'glued.com',
+      'A'
+    );
     expect(answer.server).toBe('10.6.0.9');
-    expect(
-      (
-        await resolver(
-          { addressOrder: (a, b) => a.localeCompare(b) },
-          { '10.0.1.1': parent(['10.6.0.100', '10.6.0.9', '10.6.0.20']), ...servers }
-        ).query('glued.com', 'A')
-      ).server
-    ).toBe('10.6.0.100');
   });
 
   it('uses nothing but addresses as nameserver addresses', async () => {
@@ -878,7 +1082,7 @@ describe('AuthoritativeResolver', () => {
 
     await resolver({
       addressFamily: 'both',
-      resolveNameserver: () => ['10.2.0.53:6379', '10.2.0.53'],
+      hosts: { 'ns1.dnshost.net': ['10.2.0.53:6379', '10.2.0.53'] },
     }).query('glueless.com', 'A');
     expect(network.queries.map(query => query.server)).toEqual([
       '10.0.0.1',
@@ -959,6 +1163,92 @@ describe('AuthoritativeResolver', () => {
         ['10.1.0.1', 'ConnectionError'],
         ['10.1.0.2', undefined],
       ]);
+    });
+
+    describe('a truncated answer whose TCP retry fails', () => {
+      it("returns the zone's own answer as it came, TC set", async () => {
+        const answer = await resolver({}, { '10.1.0.1': truncatedOverUdp(example) }).query(
+          'example.com',
+          'A'
+        );
+        expect(answer.server).toBe('10.1.0.1');
+        expect(answer.flags).toMatchObject({ aa: true, tc: true });
+        expect(answer.records.map(record => record.address)).toEqual(['192.0.2.1']);
+        expect(answer.tcpFallbackError).toMatchObject({ name: 'ConnectionError' });
+        expect(answer.trace?.at(-1)).toMatchObject({
+          server: '10.1.0.1',
+          transport: 'udp',
+          tcpFallbackError: { name: 'ConnectionError' },
+        });
+        expect(answer.trace?.at(-1)?.error).toBeUndefined();
+      });
+
+      it('returns an empty authoritative answer too, TC set', async () => {
+        const answer = await resolver({}, { '10.1.0.1': truncatedOverUdp(example, true) }).query(
+          'example.com',
+          'A'
+        );
+        expect(answer.server).toBe('10.1.0.1');
+        expect(answer.flags.tc).toBe(true);
+        expect(answer.records).toEqual([]);
+      });
+
+      it('follows the delegation a truncated referral still carries', async () => {
+        const events: DnsEvent[] = [];
+        const answer = await resolver(
+          { onEvent: event => events.push(event) },
+          { '10.0.1.1': truncatedOverUdp(com) }
+        ).query('example.com', 'A');
+        expect(network.log()).toEqual([
+          '10.0.0.1 example.com A',
+          '10.0.1.1 example.com A',
+          '10.0.1.1 example.com A',
+          '10.1.0.1 example.com A',
+        ]);
+        expect(answer.server).toBe('10.1.0.1');
+        expect(answer.flags.tc).toBe(false);
+        expect(answer.tcpFallbackError).toBeUndefined();
+        expect(answer.trace?.[1]).toMatchObject({
+          server: '10.0.1.1',
+          referral: 'example.com',
+          tcpFallbackError: { name: 'ConnectionError' },
+        });
+        expect(events.filter(({ event }) => event === 'tcp-fallback-failed')).toMatchObject([
+          { server: '10.0.1.1', query: 'example.com', error: { name: 'ConnectionError' } },
+        ]);
+      });
+
+      it("moves on to the zone's next server from a truncated referral with nothing in it", async () => {
+        const answer = await resolver({}, { '10.0.1.1': truncatedOverUdp(com, true) }).query(
+          'example.com',
+          'A'
+        );
+        expect(answer.server).toBe('10.1.0.1');
+        expect(answer.flags.tc).toBe(false);
+        expect(answer.trace?.map(hop => [hop.server, hop.error?.name])).toEqual([
+          ['10.0.0.1', undefined],
+          ['10.0.1.1', 'ConnectionError'],
+          ['10.0.1.2', undefined],
+          ['10.1.0.1', undefined],
+        ]);
+      });
+
+      it('throws the TCP failure when every server of the zone sends an empty truncated referral', async () => {
+        const error = await resolver(
+          {},
+          {
+            '10.0.1.1': truncatedOverUdp(com, true),
+            '10.0.1.2': truncatedOverUdp(com, true),
+          }
+        )
+          .query('example.com', 'A')
+          .catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect((error as ConnectionError).failures?.map(failure => failure.server)).toEqual([
+          '10.0.1.1',
+          '10.0.1.2',
+        ]);
+      });
     });
 
     it('moves on from one that refuses the zone', async () => {
@@ -1438,6 +1728,539 @@ describe('AuthoritativeResolver', () => {
       const answer = await iterative.query('glueless.com', 'A');
       expect(answer.records.map(record => record.address)).toEqual(['192.0.2.77']);
     });
+
+    it('lists the failures of a nameserver lookup, shared or not, on the error', async () => {
+      const down: SimulatedServer = () => new ConnectionError('Cannot reach 10.2.0.1');
+      const failed = async (options: AuthoritativeResolverOptions) => {
+        const error = (await resolver(options, { '10.2.0.1': down })
+          .query('glueless.com', 'A')
+          .catch(e => e)) as ConnectionError;
+        return error.failures?.map(failure => [failure.server, failure.error.name]);
+      };
+      const alone = await failed({ nameserverCache: false });
+      expect(alone).toContainEqual(['10.2.0.1', 'ConnectionError']);
+      expect(await failed({})).toEqual(alone);
+
+      // a query that joined the lookup another started hears of the same failures
+      const shared = resolver({}, { '10.2.0.1': down });
+      const errors = (await Promise.all(
+        ['A', 'MX'].map(type => shared.query('glueless.com', type).catch(e => e))
+      )) as ConnectionError[];
+      for (const error of errors) {
+        expect(error.failures?.map(failure => [failure.server, failure.error.name])).toContainEqual(
+          ['10.2.0.1', 'ConnectionError']
+        );
+      }
+    });
+
+    it('keeps nameserver addresses when told to remember no delegations', async () => {
+      const iterative = resolver({ cache: false });
+      await iterative.query('glueless.com', 'A');
+      const second = await iterative.query('glueless.com', 'A');
+      // the second walk starts at the root again, and asks ns1.dnshost.net straight away
+      expect(network.log().slice(6)).toEqual([
+        '10.0.0.1 glueless.com A',
+        '10.0.1.1 glueless.com A',
+        '10.2.0.53 glueless.com A',
+      ]);
+      expect(second.trace?.map(hop => hop.zone)).toEqual(['.', 'com', 'glueless.com']);
+      expect(second.serverName).toBe('ns1.dnshost.net');
+      expect(network.queries.filter(query => query.name === 'ns1.dnshost.net')).toHaveLength(3);
+    });
+
+    it('looks a nameserver up for every query when told to remember no addresses', async () => {
+      const iterative = resolver({ cache: false, nameserverCache: false });
+      await iterative.query('glueless.com', 'A');
+      await iterative.query('glueless.com', 'A');
+      expect(network.queries.filter(query => query.name === 'ns1.dnshost.net')).toHaveLength(6);
+    });
+
+    it('forgets nameserver addresses on clearCache', async () => {
+      const iterative = resolver({ cache: false });
+      await iterative.query('glueless.com', 'A');
+      iterative.clearCache();
+      await iterative.query('glueless.com', 'A');
+      expect(network.queries.filter(query => query.name === 'ns1.dnshost.net')).toHaveLength(6);
+    });
+
+    it('shares one lookup of a nameserver among queries asked at the same time', async () => {
+      const slow =
+        (server: SimulatedServer): SimulatedServer =>
+        async query => {
+          await new Promise(resolve => setTimeout(resolve, 5));
+          return server(query);
+        };
+      const iterative = resolver({ cache: false }, { '10.2.0.1': slow(dnshost) });
+      const answers = await Promise.all(
+        ['A', 'MX', 'TXT'].map(type => iterative.query('glueless.com', type))
+      );
+      expect(answers.map(answer => answer.serverName)).toEqual([
+        'ns1.dnshost.net',
+        'ns1.dnshost.net',
+        'ns1.dnshost.net',
+      ]);
+      expect(network.log().filter(line => line.includes('ns1.dnshost.net'))).toEqual([
+        '10.0.0.1 ns1.dnshost.net A',
+        '10.0.2.1 ns1.dnshost.net A',
+        '10.2.0.1 ns1.dnshost.net A',
+      ]);
+    });
+
+    it('tells each query only of the queries it sent', async () => {
+      const iterative = resolver({ cache: false });
+      const seen: Record<string, string[]> = { A: [], MX: [] };
+      await Promise.all(
+        (['A', 'MX'] as const).map(type =>
+          iterative.query('glueless.com', type, {
+            onEvent: event => {
+              if (event.event === 'query')
+                seen[type].push(`${event.server} ${event.query} ${event.type}`);
+            },
+          })
+        )
+      );
+      // A met ns1.dnshost.net first and looked it up; MX waited for that lookup
+      expect(seen.A).toEqual([
+        '10.0.0.1 glueless.com A',
+        '10.0.1.1 glueless.com A',
+        '10.0.0.1 ns1.dnshost.net A',
+        '10.0.2.1 ns1.dnshost.net A',
+        '10.2.0.1 ns1.dnshost.net A',
+        '10.2.0.53 glueless.com A',
+      ]);
+      expect(seen.MX).toEqual([
+        '10.0.0.1 glueless.com MX',
+        '10.0.1.1 glueless.com MX',
+        '10.2.0.53 glueless.com MX',
+      ]);
+    });
+
+    describe('a lookup shared by queries with different time left', () => {
+      // on a fake clock, so the timers and the clock the walk reads agree
+      beforeEach(() => vi.useFakeTimers());
+      afterEach(() => vi.useRealTimers());
+
+      it('keeps looking for a query with time left after the one that started it gives up', async () => {
+        // dnshost.net's server takes 150 ms. A starts the lookup with 100 ms to live; B
+        // joins it 50 ms later with plenty left
+        const iterative = resolver(
+          { cache: false, timeout: 500, totalTimeout: 1000 },
+          { '10.2.0.1': late(150, dnshost) }
+        );
+        const first = iterative.query('glueless.com', 'A', { totalTimeout: 100 });
+        first.catch(() => {});
+        await vi.advanceTimersByTimeAsync(50);
+        const second = iterative.query('glueless.com', 'MX');
+        second.catch(() => {});
+        await vi.advanceTimersByTimeAsync(1000);
+
+        await expect(first).rejects.toBeInstanceOf(TimeoutError);
+        const answer = await second;
+        expect(answer.serverName).toBe('ns1.dnshost.net');
+        // still one lookup between them
+        expect(network.log().filter(line => line.includes('ns1.dnshost.net'))).toEqual([
+          '10.0.0.1 ns1.dnshost.net A',
+          '10.0.2.1 ns1.dnshost.net A',
+          '10.2.0.1 ns1.dnshost.net A',
+        ]);
+      });
+
+      it('looks a nameserver up again for a query with time left when the shared lookup ran out of its own', async () => {
+        // the lookup has the resolver's 200 ms. B joins it with 1000 ms of its own, sees it
+        // run out, and looks the nameserver up itself, by when dnshost.net answers
+        let silent = true;
+        const iterative = resolver(
+          { cache: false, timeout: 500, totalTimeout: 200 },
+          { '10.2.0.1': query => (silent ? undefined : dnshost(query)) }
+        );
+        const first = iterative.query('glueless.com', 'A');
+        first.catch(() => {});
+        await vi.advanceTimersByTimeAsync(150);
+        const second = iterative.query('glueless.com', 'MX', { totalTimeout: 1000 });
+        second.catch(() => {});
+        await vi.advanceTimersByTimeAsync(40);
+        silent = false;
+        await vi.advanceTimersByTimeAsync(1000);
+
+        await expect(first).rejects.toBeInstanceOf(TimeoutError);
+        const answer = await second;
+        expect(answer.serverName).toBe('ns1.dnshost.net');
+      });
+
+      it('stops a shared lookup once every query waiting on it has given up', async () => {
+        const iterative = resolver(
+          { cache: false, timeout: 5000, totalTimeout: 10_000 },
+          { '10.2.0.1': late(1000, dnshost) }
+        );
+        const pending = iterative.query('glueless.com', 'A', { totalTimeout: 100 });
+        pending.catch(() => {});
+        await vi.advanceTimersByTimeAsync(100);
+        await expect(pending).rejects.toBeInstanceOf(TimeoutError);
+        // a later query does not join the abandoned lookup; it starts its own
+        await vi.advanceTimersByTimeAsync(10);
+        const later = iterative.query('glueless.com', 'MX');
+        later.catch(() => {});
+        await vi.advanceTimersByTimeAsync(2000);
+        expect((await later).serverName).toBe('ns1.dnshost.net');
+        expect(network.log().filter(line => line === '10.2.0.1 ns1.dnshost.net A')).toHaveLength(2);
+      });
+    });
+  });
+
+  describe('delegations shared between queries', () => {
+    const zones = (answer: { trace?: readonly { zone: string }[] }) =>
+      answer.trace?.map(hop => hop.zone);
+    const asked = (prefix: string) =>
+      network.queries.filter(query => query.server.startsWith(prefix)).length;
+
+    it('walks a fromRoot query from the root, and the next query from what it learned', async () => {
+      const iterative = resolver();
+      const first = await iterative.query('example.com', 'A', { fromRoot: true });
+      const second = await iterative.query('example.com', 'MX', { fromRoot: true });
+      expect(zones(first)).toEqual(['.', 'com', 'example.com']);
+      // every server on the way again, though the resolver knows the zone
+      expect(zones(second)).toEqual(['.', 'com', 'example.com']);
+      network.queries.length = 0;
+      const later = await iterative.query('deep.sub.example.com', 'TXT');
+      expect(network.log()).toEqual(['10.1.0.1 deep.sub.example.com TXT']);
+      expect(zones(later)).toEqual(['example.com']);
+    });
+
+    it('asks the root and com once for 50 names under one zone asked at the same time', async () => {
+      const iterative = resolver();
+      const answers = await Promise.all(
+        Array.from({ length: 50 }, (_, index) => iterative.query(`n${index}.example.com`, 'A'))
+      );
+      expect(asked('10.0.0.')).toBe(1);
+      expect(asked('10.0.1.')).toBe(1);
+      expect(asked('10.1.0.')).toBe(50);
+      expect(answers.every(answer => answer.rcodeName === 'NXDOMAIN')).toBe(true);
+      // the first walked the whole way; the others waited for it and asked only the zone
+      expect(zones(answers[0])).toEqual(['.', 'com', 'example.com']);
+      expect(answers.slice(1).every(answer => zones(answer)?.join() === 'example.com')).toBe(true);
+    });
+
+    it('asks the root and com once per fromRoot query, and once for all the others', async () => {
+      const iterative = resolver();
+      const types = ['A', 'MX', 'TXT', 'NS', 'SOA'];
+      const answers = await Promise.all([
+        ...types.map(type => iterative.query('example.com', type, { fromRoot: true })),
+        ...Array.from({ length: 45 }, (_, index) => iterative.query(`n${index}.example.com`, 'A')),
+      ]);
+      expect(asked('10.0.0.')).toBe(5);
+      expect(asked('10.0.1.')).toBe(5);
+      expect(answers.slice(0, 5).every(answer => zones(answer)?.[0] === '.')).toBe(true);
+      expect(answers.slice(5).every(answer => zones(answer)?.join() === 'example.com')).toBe(true);
+    });
+
+    it('does not wait at the zone above a name for another question about the same name', async () => {
+      // com may answer for example.com itself, so each type asks it
+      const iterative = resolver();
+      await Promise.all(['A', 'MX'].map(type => iterative.query('example.com', type)));
+      expect(asked('10.0.0.')).toBe(1);
+      expect(asked('10.0.1.')).toBe(2);
+    });
+
+    it('keeps the delegations a walk from somewhere else finds to itself', async () => {
+      const iterative = resolver();
+      await iterative.query('example.com', 'A', { startAt: [{ ipv4: '10.0.1.1' }] });
+      network.queries.length = 0;
+      await iterative.query('example.com', 'MX');
+      expect(network.log()).toEqual([
+        '10.0.0.1 example.com MX',
+        '10.0.1.1 example.com MX',
+        '10.1.0.1 example.com MX',
+      ]);
+    });
+
+    it('follows a truncated referral but does not keep it for later queries', async () => {
+      // com's servers send many.com's delegation truncated, with one of its four
+      // nameservers, and TCP is blocked
+      const oneOfFour: SimulatedServer = async (query, transport) => {
+        if (transport !== 'udp') return new ConnectionError('connect ECONNREFUSED');
+        const reply = await com(query, transport);
+        if (!(reply instanceof Uint8Array)) return reply;
+        const message = decodeMessage(reply);
+        message.flags.tc = true;
+        message.authorities = message.authorities.slice(0, 1);
+        message.additionals = message.additionals.slice(0, 1);
+        return encodeMessage(message);
+      };
+      const many = zoneServer({ zone: 'many.com', records: [['many.com', 'A', '192.0.2.44']] });
+      const iterative = resolver(
+        {},
+        {
+          '10.0.1.1': oneOfFour,
+          '10.0.1.2': oneOfFour,
+          '10.4.0.1': many,
+          '10.4.0.2': many,
+          '10.4.0.3': many,
+          '10.4.0.4': many,
+        }
+      );
+      const first = await iterative.query('many.com', 'A');
+      expect(first.server).toBe('10.4.0.1');
+      expect(zones(first)).toEqual(['.', 'com', 'many.com']);
+      // the next query asks com again rather than start from the one nameserver it was told of
+      const second = await iterative.query('many.com', 'TXT');
+      expect(zones(second)).toEqual(['com', 'many.com']);
+      // queries waiting on a walk that brings back only such a delegation ask com themselves
+      iterative.clearCache();
+      const together = await Promise.all(
+        ['a.many.com', 'b.many.com'].map(name => iterative.query(name, 'A'))
+      );
+      expect(together.map(answer => answer.rcodeName)).toEqual(['NXDOMAIN', 'NXDOMAIN']);
+      expect(together.map(answer => zones(answer)?.join())).toEqual([
+        '.,com,many.com',
+        'com,many.com',
+      ]);
+    });
+
+    it('forgets the delegations it learned on clearCache', async () => {
+      const iterative = resolver();
+      await iterative.query('example.com', 'A', { fromRoot: true });
+      iterative.clearCache();
+      const answer = await iterative.query('example.com', 'MX');
+      expect(zones(answer)).toEqual(['.', 'com', 'example.com']);
+    });
+
+    describe('a waiter with more time than the query it waits on', () => {
+      beforeEach(() => vi.useFakeTimers());
+      afterEach(() => vi.useRealTimers());
+
+      it('asks for itself once the other query gives up', async () => {
+        // com's servers take 150 ms. The first query has 100 ms; the second waits for it at
+        // com, sees it give up, and asks com itself
+        const iterative = resolver(
+          { timeout: 500, totalTimeout: 1000 },
+          { '10.0.1.1': late(150, com), '10.0.1.2': late(150, com) }
+        );
+        const first = iterative.query('example.com', 'A', { fromRoot: true, totalTimeout: 100 });
+        first.catch(() => {});
+        const second = iterative.query('deep.sub.example.com', 'TXT');
+        second.catch(() => {});
+        await vi.advanceTimersByTimeAsync(1000);
+
+        await expect(first).rejects.toBeInstanceOf(TimeoutError);
+        const answer = await second;
+        expect(answer.records.map(record => record.strings)).toEqual([['hello']]);
+        // it waited at the root, which answered the first query at once, and asked from com
+        expect(zones(answer)).toEqual(['com', 'example.com']);
+        expect(asked('10.0.0.')).toBe(1);
+        expect(asked('10.0.1.')).toBe(2);
+      });
+
+      it('gives up when its own time runs out while it waits', async () => {
+        const iterative = resolver(
+          { timeout: 500, totalTimeout: 1000 },
+          { '10.0.1.1': late(400, com), '10.0.1.2': late(400, com) }
+        );
+        const first = iterative.query('example.com', 'A', { fromRoot: true });
+        first.catch(() => {});
+        const second = iterative.query('deep.sub.example.com', 'TXT', { totalTimeout: 100 });
+        second.catch(() => {});
+        await vi.advanceTimersByTimeAsync(1000);
+
+        await expect(second).rejects.toBeInstanceOf(TimeoutError);
+        expect((await first).records.map(record => record.address)).toEqual(['192.0.2.1']);
+        // it never asked com itself
+        expect(asked('10.0.1.')).toBe(1);
+      });
+    });
+
+    describe('names two labels below a zone that answers for them itself', () => {
+      beforeEach(() => vi.useFakeTimers());
+      afterEach(() => vi.useRealTimers());
+
+      const selectors = ['sel1', 'sel2', 'sel3'].map(label => `${label}._domainkey.example.com`);
+      const dkim = zoneServer({
+        zone: 'example.com',
+        records: selectors.map((name): [string, string, string] => [name, 'TXT', 'v=DKIM1']),
+      });
+
+      it('does not wait on another question under the same empty name', async () => {
+        // ns1 never answers, so each query spends 100 ms on it before ns2. Had the later
+        // two waited for the first, they would have had too little left for ns2
+        const iterative = resolver(
+          { timeout: 100, totalTimeout: 150 },
+          { '10.1.0.1': () => undefined, '10.1.0.2': dkim }
+        );
+        const pending = selectors.map(name => iterative.query(name, 'TXT'));
+        for (const query of pending) query.catch(() => {});
+        await vi.advanceTimersByTimeAsync(200);
+
+        const answers = await Promise.all(pending);
+        expect(answers.map(answer => answer.records.map(record => record.strings))).toEqual([
+          [['v=DKIM1']],
+          [['v=DKIM1']],
+          [['v=DKIM1']],
+        ]);
+        // each asked both of the zone's servers itself
+        expect(asked('10.1.0.1')).toBe(3);
+        expect(asked('10.1.0.2')).toBe(3);
+      });
+
+      it('waits at a zone that has given a referral before', async () => {
+        // example.com delegates a.example.com and b.example.com. A query under a teaches
+        // the resolver that example.com refers; two queries under b then share its referral
+        const parent = zoneServer({
+          zone: 'example.com',
+          delegations: {
+            'a.example.com': { 'ns.a.example.com': ['10.6.0.1'] },
+            'b.example.com': { 'ns.b.example.com': ['10.6.0.2'] },
+          },
+        });
+        const iterative = resolver(
+          {},
+          {
+            '10.1.0.1': late(50, parent),
+            '10.1.0.2': late(50, parent),
+            '10.6.0.1': zoneServer({ zone: 'a.example.com' }),
+            '10.6.0.2': zoneServer({ zone: 'b.example.com' }),
+          }
+        );
+        const taught = iterative.query('x.a.example.com', 'A');
+        await vi.advanceTimersByTimeAsync(100);
+        await taught;
+        network.queries.length = 0;
+
+        const pending = ['x.b.example.com', 'y.b.example.com'].map(name =>
+          iterative.query(name, 'A')
+        );
+        await vi.advanceTimersByTimeAsync(100);
+        const answers = await Promise.all(pending);
+        expect(answers.map(answer => answer.rcodeName)).toEqual(['NXDOMAIN', 'NXDOMAIN']);
+        expect(asked('10.1.0.')).toBe(1);
+        expect(answers.map(answer => zones(answer)?.join())).toEqual([
+          'example.com,b.example.com',
+          'b.example.com',
+        ]);
+      });
+
+      it('still waits at a zone after it says a name under it does not exist', async () => {
+        // an NXDOMAIN for x.missing.example.com only says that missing.example.com does not
+        // exist; example.com still refers, and two queries under b still share its referral
+        const parent = zoneServer({
+          zone: 'example.com',
+          delegations: {
+            'a.example.com': { 'ns.a.example.com': ['10.6.0.1'] },
+            'b.example.com': { 'ns.b.example.com': ['10.6.0.2'] },
+          },
+        });
+        const iterative = resolver(
+          {},
+          {
+            '10.1.0.1': late(50, parent),
+            '10.1.0.2': late(50, parent),
+            '10.6.0.1': zoneServer({ zone: 'a.example.com' }),
+            '10.6.0.2': zoneServer({ zone: 'b.example.com' }),
+          }
+        );
+        for (const name of ['x.a.example.com', 'x.missing.example.com']) {
+          const taught = iterative.query(name, 'A');
+          await vi.advanceTimersByTimeAsync(100);
+          await taught;
+        }
+        network.queries.length = 0;
+
+        const pending = ['x.b.example.com', 'y.b.example.com'].map(name =>
+          iterative.query(name, 'A')
+        );
+        await vi.advanceTimersByTimeAsync(100);
+        await Promise.all(pending);
+        expect(asked('10.1.0.')).toBe(1);
+      });
+
+      it('forgets that a zone refers once its delegation runs out', async () => {
+        const parent = zoneServer({
+          zone: 'example.com',
+          delegations: {
+            'a.example.com': { 'ns.a.example.com': ['10.6.0.1'] },
+            'b.example.com': { 'ns.b.example.com': ['10.6.0.2'] },
+          },
+        });
+        const iterative = resolver(
+          {},
+          {
+            '10.1.0.1': late(50, parent),
+            '10.1.0.2': late(50, parent),
+            '10.6.0.1': zoneServer({ zone: 'a.example.com' }),
+            '10.6.0.2': zoneServer({ zone: 'b.example.com' }),
+          }
+        );
+        const taught = iterative.query('x.a.example.com', 'A');
+        await vi.advanceTimersByTimeAsync(100);
+        await taught;
+        // past every TTL the simulated zones give: the delegations and what was learned of
+        // example.com are gone, so the two queries no longer wait for each other there
+        vi.setSystemTime(Date.now() + 30 * 24 * 3600 * 1000);
+        network.queries.length = 0;
+
+        const pending = ['x.b.example.com', 'y.b.example.com'].map(name =>
+          iterative.query(name, 'A')
+        );
+        await vi.advanceTimersByTimeAsync(200);
+        await Promise.all(pending);
+        expect(asked('10.1.0.')).toBe(2);
+      });
+
+      it('does not wait at a zone that has answered for such a name, though it refers too', async () => {
+        // example.com delegates a.example.com and answers for the selectors itself. Once it
+        // has done both, the selectors do not wait on each other there
+        const both = zoneServer({
+          zone: 'example.com',
+          records: selectors.map((name): [string, string, string] => [name, 'TXT', 'v=DKIM1']),
+          delegations: { 'a.example.com': { 'ns.a.example.com': ['10.6.0.1'] } },
+        });
+        const iterative = resolver(
+          { timeout: 100, totalTimeout: 150 },
+          {
+            '10.1.0.1': () => undefined,
+            '10.1.0.2': both,
+            '10.6.0.1': zoneServer({ zone: 'a.example.com' }),
+          }
+        );
+        for (const name of ['x.a.example.com', selectors[0]]) {
+          const taught = iterative.query(name, name === selectors[0] ? 'TXT' : 'A');
+          await vi.advanceTimersByTimeAsync(200);
+          await taught;
+        }
+        network.queries.length = 0;
+
+        const pending = selectors.slice(1).map(name => iterative.query(name, 'TXT'));
+        for (const query of pending) query.catch(() => {});
+        await vi.advanceTimersByTimeAsync(200);
+        const answers = await Promise.all(pending);
+        expect(answers.map(answer => answer.records.map(record => record.strings))).toEqual([
+          [['v=DKIM1']],
+          [['v=DKIM1']],
+        ]);
+        expect(asked('10.1.0.2')).toBe(2);
+      });
+
+      it('does not wait at a zone it has not seen give a referral', async () => {
+        // the same two queries on a fresh resolver each ask example.com
+        const parent = zoneServer({
+          zone: 'example.com',
+          delegations: { 'b.example.com': { 'ns.b.example.com': ['10.6.0.2'] } },
+        });
+        const iterative = resolver(
+          {},
+          {
+            '10.1.0.1': late(50, parent),
+            '10.1.0.2': late(50, parent),
+            '10.6.0.2': zoneServer({ zone: 'b.example.com' }),
+          }
+        );
+        const pending = ['x.b.example.com', 'y.b.example.com'].map(name =>
+          iterative.query(name, 'A')
+        );
+        await vi.advanceTimersByTimeAsync(200);
+        const answers = await Promise.all(pending);
+        expect(answers.map(answer => answer.rcodeName)).toEqual(['NXDOMAIN', 'NXDOMAIN']);
+        expect(asked('10.1.0.')).toBe(2);
+      });
+    });
   });
 
   describe('addresses', () => {
@@ -1534,5 +2357,152 @@ describe('AuthoritativeResolver', () => {
   it('rejects a question that cannot be asked', async () => {
     await expect(resolver().query('example.com', 'NOPE')).rejects.toBeInstanceOf(InvalidQueryError);
     expect(network.queries).toHaveLength(0);
+  });
+  describe('defaults', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('tries servers in a random order', async () => {
+      // with the draw always at the bottom, the shuffle reverses two servers; at the top it
+      // leaves them as they are
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      await resolver().query('example.com', 'A');
+      expect(network.log()).toEqual([
+        '10.0.0.2 example.com A',
+        '10.0.1.2 example.com A',
+        '10.1.0.2 example.com A',
+      ]);
+
+      vi.spyOn(Math, 'random').mockReturnValue(0.999);
+      await resolver().query('example.com', 'A');
+      expect(network.log()).toEqual([
+        '10.0.0.1 example.com A',
+        '10.0.1.1 example.com A',
+        '10.1.0.1 example.com A',
+      ]);
+    });
+
+    it('puts IPv4 first whatever the shuffle draws', async () => {
+      // with the draw always at the bottom, every list of two is reversed: ns2 before ns1,
+      // and ns1's IPv6 address before its IPv4 one, until IPv4 is put first
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      const answer = await resolver(
+        { addressFamily: 'both' },
+        { '10.1.0.1': undefined, '10.1.0.2': undefined }
+      ).query('example.com', 'A');
+      expect(network.log().slice(2)).toEqual([
+        '10.1.0.2 example.com A',
+        '10.1.0.1 example.com A',
+        '2001:db8::1 example.com A',
+      ]);
+      expect(answer.server).toBe('2001:db8::1');
+    });
+
+    it('uses both address families, IPv4 first', async () => {
+      const answer = await resolver(
+        { addressFamily: undefined },
+        { '10.1.0.1': undefined, '10.1.0.2': undefined }
+      ).query('example.com', 'A');
+      expect(answer.server).toBe('2001:db8::1');
+      expect(network.log().slice(2)).toEqual([
+        '10.1.0.1 example.com A',
+        '10.1.0.2 example.com A',
+        '2001:db8::1 example.com A',
+      ]);
+    });
+
+    it('lists what went wrong at every server on the error a failed walk throws', async () => {
+      const error = await resolver(
+        {},
+        { '10.1.0.1': undefined, '10.1.0.2': () => new ConnectionError('reset') }
+      )
+        .query('example.com', 'A')
+        .catch((caught: unknown) => caught);
+      // the first failure is thrown, as its own class
+      expect(error).toBeInstanceOf(ConnectionError);
+      const { failures } = error as ConnectionError;
+      expect(failures?.map(failure => [failure.server, failure.error.name])).toEqual([
+        ['10.1.0.1', 'ConnectionError'],
+        ['10.1.0.2', 'ConnectionError'],
+      ]);
+      expect(failures?.[0].error).toBe(error);
+    });
+
+    it('lists a server that refused among the failures', async () => {
+      const refusing = () => encodeMessage({ id: 0, flags: { qr: true }, rcode: 5 });
+      const reset = () => new ConnectionError('reset');
+      const error = await resolver(
+        {},
+        { '10.0.0.1': refusing, '10.0.1.1': reset, '10.0.1.2': reset }
+      )
+        .query('example.com', 'A')
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ConnectionError);
+      const { failures } = error as ConnectionError;
+      expect(failures?.map(failure => [failure.server, failure.error.name])).toEqual([
+        ['10.0.0.1', 'InvalidResponseError'],
+        ['10.0.1.1', 'ConnectionError'],
+        ['10.0.1.2', 'ConnectionError'],
+      ]);
+      expect(failures?.[0].error).toMatchObject({ rcode: 5, rcodeName: 'REFUSED' });
+    });
+
+    it('hands back names with no trailing dot, in the case the server sent', async () => {
+      const parent = zoneServer({
+        zone: 'com',
+        delegations: { 'Cased.COM': { 'ns1.cased.com': ['10.7.0.1'] } },
+      });
+      const zone = zoneServer({ zone: 'cased.com', records: [['cased.com', 'A', '192.0.2.7']] });
+      const answer = await resolver({}, { '10.0.1.1': parent, '10.7.0.1': zone }).query(
+        'Cased.Com.',
+        'A'
+      );
+      expect(answer.name).toBe('Cased.Com');
+      expect(answer.trace?.map(hop => [hop.zone, hop.referral])).toEqual([
+        ['.', 'com'],
+        ['com', 'Cased.COM'],
+        ['Cased.COM', undefined],
+      ]);
+    });
+
+    it('limits queries to 8 at once to one server address', async () => {
+      let inFlight = 0;
+      let most = 0;
+      const counted: SimulatedServer = async query => {
+        inFlight++;
+        most = Math.max(most, inFlight);
+        await new Promise(resolve => setTimeout(resolve, 5));
+        inFlight--;
+        return root(query);
+      };
+      const shared = resolver({ cache: false }, { '10.0.0.1': counted });
+      const names = Array.from({ length: 12 }, (_, index) => `n${index}.example.com`);
+      await Promise.all(names.map(name => shared.query(name, 'A')));
+      expect(most).toBe(8);
+
+      most = 0;
+      const open = resolver({ cache: false, serverConcurrency: 0 }, { '10.0.0.1': counted });
+      await Promise.all(names.map(name => open.query(name, 'A')));
+      expect(most).toBe(12);
+    });
+
+    it('forgets the names it learned on clearCache, and keeps no more than its bound', async () => {
+      const iterative = resolver();
+      await iterative.query('example.com', 'A');
+      const names = (iterative as unknown as { names: Map<string, string> }).names;
+      expect(names.get('10.1.0.1')).toBe('ns1.example.com');
+      iterative.clearCache();
+      expect(names.size).toBe(0);
+
+      const learn = (
+        iterative as unknown as { learnName(address: string, name: string): void }
+      ).learnName.bind(iterative);
+      for (let index = 0; index < 10_005; index++) learn(`10.${index}`, `ns${index}.test`);
+      expect(names.size).toBe(10_000);
+      // the oldest went first
+      expect(names.has('10.0')).toBe(false);
+      expect(names.get('10.10004')).toBe('ns10004.test');
+    });
   });
 });

@@ -4,19 +4,17 @@ import {
   verifyNodataProof,
   verifyNxdomainProof,
   verifyWildcardProof,
+  nextCloserOptOut,
   assessNsec3Params,
 } from '../../src/dnssec/nsec';
-import {
-  encodeName,
-  nsec3Hash,
-  WireRecord,
-  TYPE_NSEC,
-  TYPE_NSEC3,
-  TYPE_A,
-} from '../../src/dnssec/wire';
+import { nsec3Hash } from '../../src/dnssec/canonical';
+import type { WireRecord } from '../../src/dnssec/canonical';
+import { RECORD_TYPES } from '../../src/protocol/types';
+import { encodeName } from '../../src/wire/names';
 import { PROOF_STATUSES, VERIFICATION_RESULTS } from '../../src/dnssec/constants';
 
 const { VERIFIED, FAILED, UNCHECKED } = VERIFICATION_RESULTS;
+const { A: TYPE_A, NSEC: TYPE_NSEC, NSEC3: TYPE_NSEC3 } = RECORD_TYPES;
 
 // ---------------------------------------------------------------------------
 // builders
@@ -94,6 +92,7 @@ const TYPE_NS = 2;
 const TYPE_CNAME = 5;
 const TYPE_SOA = 6;
 const TYPE_MX = 15;
+const TYPE_DNAME = 39;
 const TYPE_DS = 43;
 const TYPE_RRSIG = 46;
 
@@ -347,6 +346,34 @@ describe('verifyNxdomainProof', () => {
     expect(proof.steps[1].detail).toContain('*.b.example.com');
   });
 
+  it('rejects an NSEC whose next name lies below the name: the name is an empty non-terminal', () => {
+    // a.example.com -> x.b.example.com proves b.example.com exists, with nothing of its own;
+    // a NODATA for it turned into NXDOMAIN must not pass
+    const proof = verifyNxdomainProof('b.example.com', [
+      nsecRecord('a.example.com', 'x.b.example.com', [TYPE_A]),
+      nsecRecord('example.com', 'a.example.com', [TYPE_SOA, TYPE_NS]),
+    ]);
+    expect(proof.result).toBe(FAILED);
+    expect(proof.steps[0].result).toBe(FAILED);
+  });
+
+  it('rejects an NSEC3 proof when an NSEC3 matches the name itself', () => {
+    // an empty non-terminal has an NSEC3 of its own: it exists, so NXDOMAIN is wrong
+    const salt = Buffer.alloc(0);
+    const apex = nsec3Hash('example', salt, 0)!;
+    const self = nsec3Hash('ent.example', salt, 0)!;
+    const wildcard = nsec3Hash('*.example', salt, 0)!;
+    const proof = verifyNxdomainProof('ent.example', [
+      nsec3Record(apex, 'example', incrementHash(apex), [TYPE_SOA]),
+      nsec3Record(self, 'example', incrementHash(self), []),
+      // a range over the next closer name (the name itself) and the wildcard, from a chain
+      // that no longer matches the zone
+      nsec3Record(decrementHash(self), 'example', incrementHash(self), []),
+      nsec3Record(decrementHash(wildcard), 'example', incrementHash(wildcard), []),
+    ]);
+    expect(proof.result).toBe(FAILED);
+  });
+
   it('accepts the proof once *.example is shown absent', () => {
     const proof = verifyNxdomainProof('x.b.example', [
       nsecRecord('example', 'a\\.b.example', [TYPE_SOA, TYPE_NS]),
@@ -538,5 +565,137 @@ describe('verifyWildcardProof', () => {
     const nsec = [nsecRecord('example', 'www.example', [TYPE_A])];
     expect(verifyWildcardProof('foo.example', nsec, '*.other').result).toBe(FAILED);
     expect(verifyWildcardProof('foo.example', nsec, '*.foo.example').result).toBe(FAILED);
+  });
+});
+
+describe('verifyNodataProof — names without an NSEC of their own', () => {
+  it('accepts an empty non-terminal: a range that covers it and ends below it', () => {
+    // b.example exists only because a.b.example does
+    const proof = verifyNodataProof('b.example', TYPE_A, [
+      nsecRecord('a.example', 'a.b.example', [TYPE_A]),
+    ]);
+    expect(proof.result).toBe(VERIFIED);
+    expect(proof.steps[0].label).toBe('Empty non-terminal');
+  });
+
+  it('accepts a wildcard without the type, at the closest encloser', () => {
+    const proof = verifyNodataProof('foo.example', TYPE_A, [
+      nsecRecord('example', '*.example', [TYPE_SOA, TYPE_NS]),
+      nsecRecord('*.example', 'www.example', [TYPE_MX]),
+    ]);
+    expect(proof.result).toBe(VERIFIED);
+    expect(proof.steps.map(step => step.label)).toEqual([
+      'Covering NSEC',
+      'Wildcard',
+      'Type bitmap',
+    ]);
+  });
+
+  it('rejects a wildcard that holds the type, or CNAME', () => {
+    for (const types of [[TYPE_A], [TYPE_CNAME]]) {
+      const proof = verifyNodataProof('foo.example', TYPE_A, [
+        nsecRecord('*.example', 'www.example', types),
+      ]);
+      expect(proof.result).toBe(FAILED);
+    }
+  });
+
+  it('rejects a wildcard that is not at the closest encloser', () => {
+    // sub.example exists, so foo.sub.example could only come from *.sub.example
+    const proof = verifyNodataProof('foo.sub.example', TYPE_A, [
+      nsecRecord('*.example', 'sub.example', [TYPE_MX]),
+      nsecRecord('sub.example', 'www.example', [TYPE_A]),
+    ]);
+    expect(proof.result).toBe(FAILED);
+  });
+
+  it('accepts an NSEC3 wildcard NODATA proof (RFC 5155 §8.7)', () => {
+    const encloser = nsec3Hash('example', Buffer.alloc(0), 0)!;
+    const nextCloser = nsec3Hash('foo.example', Buffer.alloc(0), 0)!;
+    const wildcard = nsec3Hash('*.example', Buffer.alloc(0), 0)!;
+    const records = [
+      nsec3Record(encloser, 'example', incrementHash(encloser), [TYPE_SOA, TYPE_NS]),
+      nsec3Record(decrementHash(nextCloser), 'example', incrementHash(nextCloser), []),
+      nsec3Record(wildcard, 'example', incrementHash(wildcard), [TYPE_MX]),
+    ];
+    expect(verifyNodataProof('foo.example', TYPE_A, records).result).toBe(VERIFIED);
+    expect(verifyNodataProof('foo.example', TYPE_MX, records).result).toBe(FAILED);
+  });
+
+  it('calls a next closer name in an opt-out range opt-out, not proven (RFC 5155 §8.6)', () => {
+    const encloser = nsec3Hash('example', Buffer.alloc(0), 0)!;
+    const nextCloser = nsec3Hash('foo.example', Buffer.alloc(0), 0)!;
+    const range = (optOut: boolean) => [
+      nsec3Record(encloser, 'example', incrementHash(encloser), [TYPE_SOA, TYPE_NS]),
+      nsec3Record(decrementHash(nextCloser), 'example', incrementHash(nextCloser), [], {
+        optOut,
+      }),
+    ];
+    expect(verifyNodataProof('foo.example', TYPE_A, range(true)).status).toBe(
+      PROOF_STATUSES.OPT_OUT
+    );
+    expect(verifyNodataProof('foo.example', TYPE_A, range(false)).result).toBe(FAILED);
+  });
+});
+
+describe('records at a delegation or a DNAME (RFC 6840 §4.1)', () => {
+  const delegation = nsecRecord('child.example', 'zzz.example', [TYPE_NS, TYPE_RRSIG]);
+
+  it('does not let the parent deny names below a delegation', () => {
+    const proof = verifyNxdomainProof('www.child.example', [
+      delegation,
+      nsecRecord('example', 'child.example', [TYPE_SOA, TYPE_NS]),
+    ]);
+    expect(proof.result).toBe(FAILED);
+  });
+
+  it('does not let a DNAME deny names below it', () => {
+    const proof = verifyNxdomainProof('www.moved.example', [
+      nsecRecord('moved.example', 'zzz.example', [TYPE_DNAME, TYPE_RRSIG]),
+      nsecRecord('example', 'moved.example', [TYPE_SOA, TYPE_NS]),
+    ]);
+    expect(proof.result).toBe(FAILED);
+  });
+
+  it('lets the parent deny a DS at the delegation, and nothing else there', () => {
+    expect(verifyNodataProof('child.example', TYPE_DS, [delegation]).result).toBe(VERIFIED);
+    const proof = verifyNodataProof('child.example', TYPE_A, [delegation]);
+    expect(proof.result).toBe(FAILED);
+    expect(proof.steps.at(-1)?.label).toBe('Delegation');
+  });
+
+  it('does not take an NSEC3 delegation as the closest encloser', () => {
+    const cut = nsec3Hash('child.example', Buffer.alloc(0), 0)!;
+    const nextCloser = nsec3Hash('www.child.example', Buffer.alloc(0), 0)!;
+    const wildcard = nsec3Hash('*.child.example', Buffer.alloc(0), 0)!;
+    const proof = verifyNxdomainProof('www.child.example', [
+      nsec3Record(cut, 'example', incrementHash(cut), [TYPE_NS]),
+      nsec3Record(decrementHash(nextCloser), 'example', incrementHash(nextCloser), []),
+      nsec3Record(decrementHash(wildcard), 'example', incrementHash(wildcard), []),
+    ]);
+    expect(proof.result).toBe(FAILED);
+  });
+});
+
+describe('nextCloserOptOut', () => {
+  const encloser = nsec3Hash('example', Buffer.alloc(0), 0)!;
+  const nextCloser = nsec3Hash('foo.example', Buffer.alloc(0), 0)!;
+  const records = (closest: boolean, covering: boolean) => [
+    nsec3Record(encloser, 'example', incrementHash(encloser), [TYPE_SOA, TYPE_NS], {
+      optOut: closest,
+    }),
+    nsec3Record(decrementHash(nextCloser), 'example', incrementHash(nextCloser), [], {
+      optOut: covering,
+    }),
+  ];
+
+  it('looks only at the NSEC3 covering the next closer name', () => {
+    expect(nextCloserOptOut('foo.example', records(true, false))).toBe(false);
+    expect(nextCloserOptOut('foo.example', records(false, true))).toBe(true);
+    expect(nextCloserOptOut('a.foo.example', records(false, true), 'example')).toBe(true);
+  });
+
+  it('is false for NSEC', () => {
+    expect(nextCloserOptOut('foo.example', [nsecRecord('example', 'www.example', [])])).toBe(false);
   });
 });

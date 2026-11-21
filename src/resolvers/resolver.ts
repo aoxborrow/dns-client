@@ -1,10 +1,11 @@
 import { DnsError, InvalidQueryError, NoServerError } from '../errors';
+import type { ServerFailure } from '../errors';
 import { exchange, hasTransportOptions } from '../exchange';
 import type { ExchangeResult } from '../exchange';
 import { classCode, RECORD_CLASSES } from '../protocol/classes';
 import { DEFAULT_UDP_PAYLOAD_SIZE } from '../protocol/edns';
 import { RCODES } from '../protocol/header';
-import { typeCode } from '../protocol/types';
+import { typeCode, typeName } from '../protocol/types';
 import { decodeRecords } from '../records/decode';
 import type { DnsRecord, KnownRecordType, RecordOf } from '../records/types';
 import { createTransports, defaultTransports } from '../transports/index';
@@ -15,12 +16,14 @@ import type { OnEvent, Server, TransportOptions } from '../transports/types';
 import { toHex } from '../wire/bytes';
 import type { Message } from '../wire/message';
 import { comparableName, toAsciiName } from '../wire/names';
-import { buildAnswer } from './answer';
+import { dnssecResponse, Validator } from '../dnssec/validate';
+import type { TrustAnchor } from '../dnssec/types';
+import { buildAnswer, matchingRecords } from './answer';
 import type { Answer, QuerySettings } from './answer';
 import { resolveCache } from './cache';
 import type { Cache, CacheOption } from './cache';
-import { createLimiter } from './limiter';
-import type { Limiter } from './limiter';
+import { createKeyedLimiter, createLimiter } from './limiter';
+import type { KeyedLimiter, Limiter } from './limiter';
 
 // the ordinary resolver: it asks recursive resolvers, the way `dig` and `node:dns` do.
 // On top of a single query it adds what a program that resolves names all day wants:
@@ -36,8 +39,11 @@ export interface ResolverOptions extends TransportOptions, QuerySettings {
   cache?: CacheOption<CachedResponse>;
   // the longest an answer is kept, in seconds, whatever its TTL says. Default one day
   maxTtl?: number;
-  // how many queries may be in flight at once. Default: no limit
+  // how many queries may be in flight at once, to all servers together. Default: no limit
   concurrency?: number;
+  // how many queries may be in flight to one server at once. Default 16; Infinity for no
+  // limit
+  serverConcurrency?: number;
   // malformed record data is an error. By default such a record comes back in the
   // generic form
   strict?: boolean;
@@ -45,6 +51,12 @@ export interface ResolverOptions extends TransportOptions, QuerySettings {
   // sockets and connections to share with other resolvers. The resolver does not close
   // a set it was given
   transports?: Transports;
+  // check each answer's DNSSEC chain from the trust anchors down, and say what came of it
+  // in `answer.security`. Queries are then sent with DO and CD set, so the answer's
+  // `answers` holds its signatures too. Default false
+  validate?: boolean;
+  // the trust anchors validation starts from. Default: IANA's root trust anchors
+  trustAnchors?: readonly TrustAnchor[];
 }
 
 export interface ResolverQueryOptions extends QuerySettings {
@@ -58,48 +70,68 @@ export interface ResolverQueryOptions extends QuerySettings {
 export interface CachedResponse {
   result: ExchangeResult;
   attempts: number;
-  // milliseconds since the epoch
-  receivedAt: number;
+  receivedAt: Date;
 }
 
 const DEFAULT_MAX_TTL = 86_400;
+// queries in flight to one server at once
+const DEFAULT_SERVER_CONCURRENCY = 16;
 // a response that says the server could not or would not do the work: another may
 const TRY_NEXT = new Set<number>([RCODES.SERVFAIL, RCODES.NOTIMP, RCODES.REFUSED]);
 
 // how long a response may be cached, in seconds. Zero for one that should not be
 export function cacheLifetime(message: Message): number {
   if (message.flags.tc) return 0;
+  if (message.rcode !== RCODES.NOERROR && message.rcode !== RCODES.NXDOMAIN) return 0;
+  const answerTtl = Math.min(...message.answers.map(record => record.ttl));
+  const [question] = message.questions;
   if (message.rcode === RCODES.NOERROR && message.answers.length > 0) {
-    return Math.min(...message.answers.map(record => record.ttl));
+    // records that answer the question: they live as long as the shortest TTL. Only an
+    // alias chain, with nothing of the type at its end, is a negative answer as well
+    const answered =
+      !question ||
+      matchingRecords(
+        question.name,
+        typeName(question.type),
+        decodeRecords(message.answers, { lenient: true })
+      ).length > 0;
+    if (answered) return answerTtl;
   }
-  if (message.rcode === RCODES.NOERROR || message.rcode === RCODES.NXDOMAIN) {
-    // a negative answer lives for the smaller of the SOA's TTL and its minimum field
-    // (RFC 2308 §5); with no SOA there is nothing to say how long
-    const soa = decodeRecords(
-      message.authorities.filter(record => record.type === 6),
-      { lenient: true }
-    ).find((record): record is Extract<DnsRecord, { type: 'SOA' }> => record.type === 'SOA');
-    return soa ? Math.min(soa.ttl, soa.minimum) : 0;
-  }
-  return 0;
+  // a negative answer lives for the smaller of the SOA's TTL and its minimum field
+  // (RFC 2308 §5), and no longer than an alias that led to it; with no SOA there is
+  // nothing to say how long
+  const soa = decodeRecords(
+    message.authorities.filter(record => record.type === 6),
+    { lenient: true }
+  ).find((record): record is Extract<DnsRecord, { type: 'SOA' }> => record.type === 'SOA');
+  return soa ? Math.min(soa.ttl, soa.minimum, answerTtl) : 0;
 }
 
 export class Resolver {
   private readonly options: ResolverOptions;
   private readonly cache: Cache<CachedResponse> | undefined;
   private readonly limit: Limiter;
+  private readonly limitServer: KeyedLimiter;
   private readonly transports: Transports;
   private readonly ownsTransports: boolean;
   private readonly inFlight = new Map<string, Promise<CachedResponse>>();
   private system: Promise<string[]> | undefined;
+  private readonly validator: Validator | undefined;
 
   constructor(options: ResolverOptions = {}) {
     this.options = options;
     this.cache = resolveCache(options.cache);
     this.limit = createLimiter(options.concurrency ?? Infinity);
+    this.limitServer = createKeyedLimiter(options.serverConcurrency ?? DEFAULT_SERVER_CONCURRENCY);
     this.ownsTransports = !options.transports && hasTransportOptions(options);
     this.transports =
       options.transports ?? (this.ownsTransports ? createTransports(options) : defaultTransports());
+    if (options.validate) {
+      this.validator = new Validator({
+        trustAnchors: options.trustAnchors,
+        ...(options.cache === false && { maxZones: 0 }),
+      });
+    }
   }
 
   // ask a question. The answer carries the response code, so a name that does not exist
@@ -115,6 +147,41 @@ export class Resolver {
     name: string,
     type: string | number,
     options: ResolverQueryOptions = {}
+  ): Promise<Answer> {
+    if (!this.validator) return this.lookup(name, type, options);
+    // the data and every record of the chain are asked for with their signatures, and with
+    // Checking Disabled, so a validating resolver upstream hands over what is broken
+    // instead of answering SERVFAIL
+    const dnssec = { dnssecOk: true, checkingDisabled: true };
+    const answer = await this.lookup(name, type, { ...options, ...dnssec });
+    // a server asked to recurse owes the whole answer, the target of every alias included
+    const recursive = (options.recursionDesired ?? this.options.recursionDesired) !== false;
+    // the chain goes where the data query went, the same way: the same server, transport,
+    // port, timeouts and EDNS settings, with header flags of its own
+    const {
+      recursionDesired: _recursionDesired,
+      authenticData: _authenticData,
+      ...sameWay
+    } = options;
+    answer.security = await this.validator.validate(
+      [{ ...dnssecResponse(answer.message, answer.query.name, typeCode(type)), recursive }],
+      async (chainName, chainType) =>
+        (await this.lookup(chainName, chainType, { ...sameWay, ...dnssec })).message,
+      options.signal
+    );
+    return answer;
+  }
+
+  // forget every cached answer and every zone validation has judged
+  clearCache(): void {
+    this.cache?.clear();
+    this.validator?.clear();
+  }
+
+  private async lookup(
+    name: string,
+    type: string | number,
+    options: ResolverQueryOptions
   ): Promise<Answer> {
     const { strict } = this.options;
     const { server, signal, ...settings } = options;
@@ -135,7 +202,7 @@ export class Resolver {
       return buildAnswer(cached.result, {
         strict,
         cached: true,
-        age: Math.floor((Date.now() - cached.receivedAt) / 1000),
+        age: Math.floor((Date.now() - cached.receivedAt.getTime()) / 1000),
         elapsed: 0,
         attempts: 0,
         timestamp: new Date(cached.receivedAt),
@@ -180,7 +247,7 @@ export class Resolver {
   // close the sockets and connections this resolver opened, and empty its cache. A
   // resolver that shares the process-wide set, or was given one, leaves it open
   close(): void {
-    this.cache?.clear();
+    this.clearCache();
     if (this.ownsTransports) this.transports.close();
   }
 
@@ -244,32 +311,35 @@ export class Resolver {
     let attempts = 0;
     let lastResult: ExchangeResult | undefined;
     let lastError: DnsError | undefined;
+    const failures: ServerFailure[] = [];
 
     for (const [index, server] of servers.entries()) {
       const isLast = index === servers.length - 1;
       try {
         const result = await this.limit(() =>
-          exchange({ name, type }, server, {
-            transport: merged.transport,
-            port: merged.port,
-            recursionDesired: merged.recursionDesired,
-            checkingDisabled: merged.checkingDisabled,
-            authenticData: merged.authenticData,
-            dnssecOk: merged.dnssecOk,
-            udpPayloadSize: merged.udpPayloadSize,
-            ednsOptions: merged.ednsOptions,
-            edns: merged.edns,
-            timeout: merged.timeout,
-            tcpFallback: merged.tcpFallback,
-            ...(retries !== undefined && { retries }),
-            transports: this.transports,
-            onEvent: this.options.onEvent,
-            signal,
-          })
+          this.limitServer(serverKey(server), () =>
+            exchange({ name, type }, server, {
+              transport: merged.transport,
+              port: merged.port,
+              recursionDesired: merged.recursionDesired,
+              checkingDisabled: merged.checkingDisabled,
+              authenticData: merged.authenticData,
+              dnssecOk: merged.dnssecOk,
+              udpPayloadSize: merged.udpPayloadSize,
+              ednsOptions: merged.ednsOptions,
+              edns: merged.edns,
+              timeout: merged.timeout,
+              tcpFallback: merged.tcpFallback,
+              ...(retries !== undefined && { retries }),
+              transports: this.transports,
+              onEvent: this.options.onEvent,
+              signal,
+            })
+          )
         );
         attempts += result.attempts;
         if (!TRY_NEXT.has(result.message.rcode) || isLast) {
-          return { result, attempts, receivedAt: Date.now() };
+          return { result, attempts, receivedAt: new Date() };
         }
         lastResult = result;
       } catch (error) {
@@ -278,11 +348,24 @@ export class Resolver {
         if (signal?.aborted || !(error instanceof DnsError) || error instanceof InvalidQueryError) {
           throw error;
         }
+        failures.push({ server: error.server ?? serverKey(server), error });
         lastError = error;
       }
     }
     // every server failed: the last response says more than the last error does
-    if (lastResult) return { result: lastResult, attempts, receivedAt: Date.now() };
-    throw lastError ?? new NoServerError('No DNS servers to ask');
+    if (lastResult) return { result: lastResult, attempts, receivedAt: new Date() };
+    if (lastError) {
+      lastError.failures ??= failures;
+      throw lastError;
+    }
+    throw new NoServerError('No DNS servers to ask');
   }
+}
+
+// a server as the key its queries are counted under
+function serverKey(server: string | Server): string {
+  if (typeof server === 'string') return server;
+  return (
+    server.url ?? (server.port === undefined ? server.address : `${server.address}#${server.port}`)
+  );
 }

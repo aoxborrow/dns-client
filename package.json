@@ -1,22 +1,21 @@
 {
-  "name": "@aoxborrow/dns-client",
+  "name": "@aoxborrow/dns",
   "version": "1.0.0-dev",
   "private": true,
   "description": "DNS client for TypeScript with no dependencies: wire codec, typed records, resolvers, record validation and DNSSEC primitives",
   "author": "Aaron Oxborrow <aaron@oxborrow.com>",
   "license": "MIT",
-  "homepage": "https://github.com/aoxborrow/dns-client",
+  "homepage": "https://github.com/aoxborrow/dns",
   "funding": "https://github.com/sponsors/aoxborrow",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aoxborrow/dns-client.git"
+    "url": "git+https://github.com/aoxborrow/dns.git"
   },
   "bugs": {
-    "url": "https://github.com/aoxborrow/dns-client/issues"
+    "url": "https://github.com/aoxborrow/dns/issues"
   },
   "keywords": [
     "dns",
-    "dns-client",
     "dns-resolver",
     "resolver",
     "dnssec",
@@ -34,7 +33,7 @@
   "type": "module",
   "sideEffects": false,
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "exports": {
     ".": "./src/index.ts",
@@ -44,7 +43,8 @@
     "./transports/tcp": "./src/transports/tcp.ts",
     "./transports/tls": "./src/transports/tls.ts",
     "./transports/doh": "./src/transports/doh.ts",
-    "./dnssec": "./src/dnssec/index.ts"
+    "./dnssec": "./src/dnssec/index.ts",
+    "./promises": "./src/promises/index.ts"
   },
   "files": [
     "dist",
@@ -54,89 +54,43 @@
   ],
   "publishConfig": {
     "access": "public",
-    "main": "./dist/index.cjs",
-    "module": "./dist/index.js",
     "types": "./dist/index.d.ts",
     "exports": {
       ".": {
-        "import": {
-          "types": "./dist/index.d.ts",
-          "default": "./dist/index.js"
-        },
-        "require": {
-          "types": "./dist/index.d.cts",
-          "default": "./dist/index.cjs"
-        }
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
       },
       "./records": {
-        "import": {
-          "types": "./dist/records/index.d.ts",
-          "default": "./dist/records/index.js"
-        },
-        "require": {
-          "types": "./dist/records/index.d.cts",
-          "default": "./dist/records/index.cjs"
-        }
+        "types": "./dist/records/index.d.ts",
+        "default": "./dist/records/index.js"
       },
       "./wire": {
-        "import": {
-          "types": "./dist/wire/index.d.ts",
-          "default": "./dist/wire/index.js"
-        },
-        "require": {
-          "types": "./dist/wire/index.d.cts",
-          "default": "./dist/wire/index.cjs"
-        }
+        "types": "./dist/wire/index.d.ts",
+        "default": "./dist/wire/index.js"
       },
       "./transports/udp": {
-        "import": {
-          "types": "./dist/transports/udp.d.ts",
-          "default": "./dist/transports/udp.js"
-        },
-        "require": {
-          "types": "./dist/transports/udp.d.cts",
-          "default": "./dist/transports/udp.cjs"
-        }
+        "types": "./dist/transports/udp.d.ts",
+        "default": "./dist/transports/udp.js"
       },
       "./transports/tcp": {
-        "import": {
-          "types": "./dist/transports/tcp.d.ts",
-          "default": "./dist/transports/tcp.js"
-        },
-        "require": {
-          "types": "./dist/transports/tcp.d.cts",
-          "default": "./dist/transports/tcp.cjs"
-        }
+        "types": "./dist/transports/tcp.d.ts",
+        "default": "./dist/transports/tcp.js"
       },
       "./transports/tls": {
-        "import": {
-          "types": "./dist/transports/tls.d.ts",
-          "default": "./dist/transports/tls.js"
-        },
-        "require": {
-          "types": "./dist/transports/tls.d.cts",
-          "default": "./dist/transports/tls.cjs"
-        }
+        "types": "./dist/transports/tls.d.ts",
+        "default": "./dist/transports/tls.js"
       },
       "./transports/doh": {
-        "import": {
-          "types": "./dist/transports/doh.d.ts",
-          "default": "./dist/transports/doh.js"
-        },
-        "require": {
-          "types": "./dist/transports/doh.d.cts",
-          "default": "./dist/transports/doh.cjs"
-        }
+        "types": "./dist/transports/doh.d.ts",
+        "default": "./dist/transports/doh.js"
       },
       "./dnssec": {
-        "import": {
-          "types": "./dist/dnssec/index.d.ts",
-          "default": "./dist/dnssec/index.js"
-        },
-        "require": {
-          "types": "./dist/dnssec/index.d.cts",
-          "default": "./dist/dnssec/index.cjs"
-        }
+        "types": "./dist/dnssec/index.d.ts",
+        "default": "./dist/dnssec/index.js"
+      },
+      "./promises": {
+        "types": "./dist/promises/index.d.ts",
+        "default": "./dist/promises/index.js"
       }
     }
   },
@@ -144,21 +98,26 @@
     "build": "tsup",
     "typecheck": "yarn run -T tsc --noEmit",
     "test": "yarn run -T vitest run",
+    "test:live": "yarn run -T vitest run --config vitest.live.config.ts --reporter=verbose",
     "check:browser": "node scripts/browser-check.mjs",
     "check:pack": "node scripts/pack-check.mjs",
     "capture": "yarn run -T tsx scripts/capture-messages.ts",
-    "bench": "yarn run -T tsx bench/local.ts",
+    "refresh-anchors": "yarn run -T tsx scripts/refresh-anchors.ts",
+    "bench": "yarn run -T tsx bench/run.ts",
     "lint": "yarn typecheck && yarn eslint && yarn format",
     "lint:fix": "yarn eslint:fix && yarn format:fix",
     "eslint": "yarn run -T eslint --cache --cache-location .eslintcache --max-warnings 0 .",
     "eslint:fix": "yarn run -T eslint --cache --cache-location .eslintcache --max-warnings 0 . --fix",
-    "format": "yarn run -T prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"bench/**/*.ts\" \"scripts/**/*.mjs\" eslint.config.mjs tsup.config.ts vitest.config.ts",
-    "format:fix": "yarn run -T prettier --write --list-different \"src/**/*.ts\" \"test/**/*.ts\" \"bench/**/*.ts\" \"scripts/**/*.mjs\" eslint.config.mjs tsup.config.ts vitest.config.ts"
+    "format": "yarn run -T prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"test/fixtures/*.json\" \"bench/**/*.ts\" \"scripts/**/*.{ts,mjs}\" eslint.config.mjs tsup.config.ts vitest.config.ts vitest.live.config.ts",
+    "format:fix": "yarn run -T prettier --write --list-different \"src/**/*.ts\" \"test/**/*.ts\" \"test/fixtures/*.json\" \"bench/**/*.ts\" \"scripts/**/*.{ts,mjs}\" eslint.config.mjs tsup.config.ts vitest.config.ts vitest.live.config.ts"
   },
   "devDependencies": {
     "@types/dns-packet": "^5.6.5",
     "dns-packet": "^5.6.1",
+    "dns2": "3.1.1",
     "esbuild": "0.28.2",
-    "tsup": "^8.5.1"
+    "tangerine": "2.1.3",
+    "tsup": "^8.5.1",
+    "undici": "^8.12.4"
   }
 }
