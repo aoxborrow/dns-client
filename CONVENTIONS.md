@@ -13,8 +13,7 @@ The shapes every entry point of `@aoxborrow/dns` hands back, and what it accepts
 - **A response code** is `rcode`, a number, with its mnemonic beside it in `rcodeName`
   (`'NXDOMAIN'`).
 - **A point in time** is a `Date` (`timestamp`, `receivedAt`). **A duration** is in
-  milliseconds (`elapsed`, `timeout`, `totalTimeout`, `idleTimeout`). The one exception is
-  `maxTtl`, which caps a TTL and so is in seconds, like the TTLs it caps.
+  milliseconds (`elapsed`, `timeout`, `totalTimeout`, `idleTimeout`).
 - **A field inside a record** stays as the wire defines it: a TTL in seconds, an RRSIG's
   inception and expiration in seconds since 1970, DNSKEY flags as a number, an EDNS TCP
   keepalive `timeout` in units of 100 milliseconds.

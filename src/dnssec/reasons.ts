@@ -15,8 +15,9 @@ export const SECURITY_STATUSES = {
 
 export type SecurityStatus = (typeof SECURITY_STATUSES)[keyof typeof SECURITY_STATUSES];
 
-// RFC 8914 §4, the codes a judgement can carry
-export const EXTENDED_DNS_ERRORS = {
+// the extended DNS error codes a judgement can carry, by name (RFC 8914 §4). Every code,
+// with its description, is `EXTENDED_DNS_ERRORS` in `/records`
+export const EDE_CODES = {
   OTHER: 0,
   UNSUPPORTED_DNSKEY_ALGORITHM: 1,
   UNSUPPORTED_DS_DIGEST_TYPE: 2,
@@ -32,7 +33,7 @@ export const EXTENDED_DNS_ERRORS = {
   UNSUPPORTED_NSEC3_ITERATIONS: 27,
 } as const;
 
-const E = EXTENDED_DNS_ERRORS;
+const E = EDE_CODES;
 
 // why a link came out as it did. Each code names one rule; the extended DNS error beside
 // it is what RFC 8914 has for that rule, or none where RFC 8914 has nothing that fits

@@ -180,12 +180,17 @@ describe('Resolver', () => {
       expect(third.cached).toBe(false);
     });
 
-    it('caps how long an answer is kept', async () => {
+    it('keeps no answer for more than a day, whatever its TTL says', async () => {
       vi.useFakeTimers({ toFake: ['Date'] });
-      const stub = resolver(undefined, { maxTtl: 60 });
-      await stub.query('example.com', 'A');
-      vi.setSystemTime(Date.now() + 61_000);
-      await stub.query('example.com', 'A');
+      const twoDays = 172_800;
+      const stub = resolver({
+        '10.0.0.1': recursiveServer([['long.example.com', 'A', '192.0.2.8', twoDays]]),
+      });
+      await stub.query('long.example.com', 'A');
+      vi.setSystemTime(Date.now() + 86_399_000);
+      expect((await stub.query('long.example.com', 'A')).cached).toBe(true);
+      vi.setSystemTime(Date.now() + 2000);
+      expect((await stub.query('long.example.com', 'A')).cached).toBe(false);
       expect(network.queries).toHaveLength(2);
     });
 
@@ -596,6 +601,31 @@ describe('Resolver', () => {
     most = 0;
     const open = resolver({ '10.0.0.1': counted }, { cache: false, serverConcurrency: Infinity });
     await Promise.all(names.map(name => open.query(name, 'A')));
+    expect(most).toBe(6);
+  });
+
+  it('holds back queries to all servers together past concurrency', async () => {
+    let inFlight = 0;
+    let most = 0;
+    const answer = recursiveServer(RECORDS);
+    const counted: SimulatedServer = async query => {
+      inFlight++;
+      most = Math.max(most, inFlight);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      inFlight--;
+      return answer(query);
+    };
+    // each query goes to a server of its own, so the limit for one server holds none back
+    const addresses = Array.from({ length: 6 }, (_, index) => `10.0.0.${index + 1}`);
+    const servers = Object.fromEntries(addresses.map(address => [address, counted]));
+    const askEach = (stub: Resolver) =>
+      Promise.all(addresses.map(server => stub.query('example.com', 'A', { server })));
+
+    await askEach(resolver(servers, { cache: false, concurrency: 2 }));
+    expect(most).toBe(2);
+
+    most = 0;
+    await askEach(resolver(servers, { cache: false }));
     expect(most).toBe(6);
   });
 
@@ -2486,6 +2516,35 @@ describe('AuthoritativeResolver', () => {
       const open = resolver({ cache: false, serverConcurrency: 0 }, { '10.0.0.1': counted });
       await Promise.all(names.map(name => open.query(name, 'A')));
       expect(most).toBe(12);
+    });
+
+    it('holds back queries to all servers together past concurrency', async () => {
+      let inFlight = 0;
+      let most = 0;
+      const counted =
+        (server: SimulatedServer): SimulatedServer =>
+        async query => {
+          inFlight++;
+          most = Math.max(most, inFlight);
+          await new Promise(resolve => setTimeout(resolve, 5));
+          inFlight--;
+          return server(query);
+        };
+      // every server counts, so a walk's queries are counted wherever they go
+      const everywhere = Object.fromEntries(
+        Object.entries(INTERNET).map(([address, server]) => [address, counted(server)])
+      );
+      const names = Array.from({ length: 6 }, (_, index) => `n${index}.example.com`);
+
+      const limited = resolver({ cache: false, concurrency: 2 }, everywhere);
+      await Promise.all(names.map(name => limited.query(name, 'A')));
+      expect(most).toBe(2);
+
+      // without it the six walks all ask a root server at the same moment
+      most = 0;
+      const open = resolver({ cache: false }, everywhere);
+      await Promise.all(names.map(name => open.query(name, 'A')));
+      expect(most).toBe(6);
     });
 
     it('forgets the names it learned on clearCache, and keeps no more than its bound', async () => {

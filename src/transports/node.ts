@@ -1,4 +1,5 @@
 import type { Socket } from 'node:net';
+import { DnsError } from '../errors';
 import { isIp } from './endpoint';
 import type { Connect, Connection, TlsOptions } from './types';
 
@@ -8,6 +9,25 @@ import type { Connect, Connection, TlsOptions } from './types';
 //
 // Node's modules are imported when a connection is first opened, never at load, so
 // importing the library costs nothing on a runtime that does not have them
+
+// each of Node's modules is loaded inside a `try`. A runtime without the module gets an
+// error that says so, and a bundler building for a browser leaves an import it cannot
+// resolve for the runtime to make, where an import outside a `try` fails the build
+export async function loadNet(): Promise<typeof import('node:net')> {
+  try {
+    return await import('node:net');
+  } catch (cause) {
+    throw new DnsError('TCP is not available in this runtime', { cause });
+  }
+}
+
+export async function loadTls(): Promise<typeof import('node:tls')> {
+  try {
+    return await import('node:tls');
+  } catch (cause) {
+    throw new DnsError('TLS is not available in this runtime', { cause });
+  }
+}
 
 // the options `tls.connect` takes from ours
 export function nodeTlsOptions(options: TlsOptions | undefined, hostname: string) {
@@ -99,7 +119,7 @@ function wrapSocket(
       socket.destroy();
     },
     async startTls(hostname) {
-      const tls = await import('node:tls');
+      const tls = await loadTls();
       detach();
       // the TLS socket reports the raw socket's errors; this keeps one from being
       // thrown as unhandled in the moment between the two
@@ -127,7 +147,7 @@ function wrapSocket(
 
 export function createNodeConnect(tlsOptions?: TlsOptions): Connect {
   return async target => {
-    const net = await import('node:net');
+    const net = await loadNet();
     const socket = net.connect({ host: target.hostname, port: target.port });
     socket.setNoDelay(true);
     try {

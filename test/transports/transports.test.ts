@@ -9,7 +9,6 @@ import {
 import { exchange, toDig } from '../../src/exchange';
 import { createCloudflareConnect } from '../../src/transports/cloudflare';
 import type { CloudflareSocket } from '../../src/transports/cloudflare';
-import { toBase64Url } from '../../src/transports/doh';
 import { normalizeAddress, toEndpoint } from '../../src/transports/endpoint';
 import {
   createTcpTransport,
@@ -18,6 +17,7 @@ import {
 } from '../../src/transports/index';
 import type { Transports } from '../../src/transports/index';
 import type { FetchLike, Transport } from '../../src/transports/types';
+import { toBase64Url } from '../../src/wire/bytes';
 import { decodeMessage, encodeQuery } from '../../src/wire/index';
 import { answerTo, askedName } from '../support/answers';
 import { startFixtureServer } from '../support/fixture-server';

@@ -2,7 +2,7 @@ import type { Socket } from 'node:net';
 import { ConnectionError, DnsError, EmptyResponseError } from '../errors';
 import { concatBytes } from '../wire/bytes';
 import { formatHostPort, isIp } from './endpoint';
-import { whenReady } from './node';
+import { loadNet, loadTls, whenReady } from './node';
 import { openTunnel, resolveProxy } from './proxy';
 import type { Proxy } from './proxy';
 import { defaultConnect, isNode } from './runtime';
@@ -157,7 +157,7 @@ export function createTcpTransport(options: TcpTransportOptions = {}): Transport
     const { host, port, serverName } = channel.endpoint;
     let socket: Socket;
     if (options.secure) {
-      const tls = await import('node:tls');
+      const tls = await loadTls();
       const name = serverName ?? host;
       socket = tls.connect({
         host,
@@ -170,7 +170,7 @@ export function createTcpTransport(options: TcpTransportOptions = {}): Transport
         }),
       });
     } else {
-      const net = await import('node:net');
+      const net = await loadNet();
       socket = net.connect({ host, port });
     }
     socket.setNoDelay(true);

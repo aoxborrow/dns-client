@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { entries } from '../tsup.config';
 
 // every ```ts block in the README typechecks against the package as a user would import
 // it (`@aoxborrow/dns`, `@aoxborrow/dns/records` and so on), so an example cannot drift
@@ -68,4 +69,19 @@ describe('README', () => {
   it('typechecks every TypeScript example', () => {
     expect(diagnostics()).toEqual([]);
   }, 60_000);
+
+  // nothing is public without a word about what it is. Types are left out: the examples
+  // and the option tables are where those are shown
+  it('names every value the entries export', async () => {
+    const unnamed: string[] = [];
+    for (const entry of entries) {
+      const exported = (await import(path.join(root, entry))) as Record<string, unknown>;
+      for (const name of Object.keys(exported)) {
+        // as a word of its own: `ENODATA` does not name `NODATA`
+        const named = new RegExp(`(?<![A-Za-z0-9_$])${name}(?![A-Za-z0-9_$])`).test(readme);
+        if (!named) unnamed.push(`${entry}: ${name}`);
+      }
+    }
+    expect(unnamed).toEqual([]);
+  });
 });

@@ -29,16 +29,22 @@ type Modules = {
 
 let modules: Promise<Modules | undefined> | undefined;
 
-// undefined where the runtime has no `node:http2`
+// undefined where the runtime has no `node:http2`. As in node.ts, each import is awaited
+// inside a `try`, so that a bundler building for a browser leaves it for the runtime. An
+// import handed on as a promise, to `Promise.all` say, fails such a build even inside a `try`
+async function importModules(): Promise<Modules | undefined> {
+  try {
+    const http2 = await import('node:http2');
+    const tls = await import('node:tls');
+    const { Duplex } = await import('node:stream');
+    return { http2, tls, Duplex };
+  } catch {
+    return undefined;
+  }
+}
+
 function loadModules(): Promise<Modules | undefined> {
-  return (modules ??= Promise.all([
-    import('node:http2'),
-    import('node:tls'),
-    import('node:stream'),
-  ]).then(
-    ([http2, tls, stream]) => ({ http2, tls, Duplex: stream.Duplex }),
-    () => undefined
-  ));
+  return (modules ??= importModules());
 }
 
 export interface Http2ClientOptions {

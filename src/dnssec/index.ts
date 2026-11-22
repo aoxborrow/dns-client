@@ -87,13 +87,7 @@ export type {
   KeysEntry,
   ZoneKeysJudgement,
 } from './judge';
-export {
-  EXTENDED_DNS_ERRORS,
-  REASON_CODES,
-  REASON_EDE,
-  SECURITY_STATUSES,
-  securityReason,
-} from './reasons';
+export { EDE_CODES, REASON_CODES, REASON_EDE, SECURITY_STATUSES, securityReason } from './reasons';
 export type { ReasonCode, SecurityReason, SecurityStatus } from './reasons';
 export { denialTypesAt, nextCloserOptOut } from './nsec';
 export { presentRecord } from './present';

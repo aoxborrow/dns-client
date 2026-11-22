@@ -37,7 +37,7 @@ const inMonorepo = manifest.publishConfig.exports !== undefined;
 const published = (manifest.publishConfig.exports ?? manifest.exports) as Record<string, Target>;
 
 // a build entry and the subpath it is published at: 'src/index.ts' -> '.',
-// 'src/records/index.ts' -> './records', 'src/transports/udp.ts' -> './transports/udp'
+// 'src/records/index.ts' -> './records', 'src/transports/doh.ts' -> './transports/doh'
 const subpathOf = (entry: string) => {
   const base = entry
     .replace(/^src\//, '')

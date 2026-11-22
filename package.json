@@ -39,9 +39,7 @@
     ".": "./src/index.ts",
     "./records": "./src/records/index.ts",
     "./wire": "./src/wire/index.ts",
-    "./transports/udp": "./src/transports/udp.ts",
-    "./transports/tcp": "./src/transports/tcp.ts",
-    "./transports/tls": "./src/transports/tls.ts",
+    "./transports": "./src/transports/index.ts",
     "./transports/doh": "./src/transports/doh.ts",
     "./dnssec": "./src/dnssec/index.ts",
     "./promises": "./src/promises/index.ts"
@@ -68,17 +66,9 @@
         "types": "./dist/wire/index.d.ts",
         "default": "./dist/wire/index.js"
       },
-      "./transports/udp": {
-        "types": "./dist/transports/udp.d.ts",
-        "default": "./dist/transports/udp.js"
-      },
-      "./transports/tcp": {
-        "types": "./dist/transports/tcp.d.ts",
-        "default": "./dist/transports/tcp.js"
-      },
-      "./transports/tls": {
-        "types": "./dist/transports/tls.d.ts",
-        "default": "./dist/transports/tls.js"
+      "./transports": {
+        "types": "./dist/transports/index.d.ts",
+        "default": "./dist/transports/index.js"
       },
       "./transports/doh": {
         "types": "./dist/transports/doh.d.ts",

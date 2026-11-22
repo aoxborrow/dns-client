@@ -51,7 +51,7 @@ The tests follow the entry points, one directory each:
 | `test/wire` | `/wire`: names, messages, the byte helpers |
 | `test/records` | `/records`: the tables, decoding, formatting, parsing, validation, EDNS options |
 | `test/dnssec` | `/dnssec` |
-| `test/transports` | `/transports/*`: UDP, TCP, TLS, HTTPS, the proxies, the connectors |
+| `test/transports` | `/transports` and `/transports/doh`: UDP, TCP, TLS, HTTPS, the proxies, the connectors |
 | `test/promises` | `/promises` |
 | `test/support` | the servers, mocks and fixture loaders the others share, and their own tests |
 | `test/fixtures` | recorded messages and the IANA root files |

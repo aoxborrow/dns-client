@@ -4,7 +4,7 @@ import { concatBytes } from '../wire/bytes';
 import { formatHostPort, isIp, normalizeAddress } from './endpoint';
 import { resolveProxy, scrub } from './proxy';
 import type { Proxy } from './proxy';
-import { defaultConnect } from './runtime';
+import { defaultConnect, isWorkers } from './runtime';
 import {
   readSocks5Address,
   socks5Address,
@@ -102,6 +102,9 @@ export function createUdpTransport(options: UdpTransportOptions = {}): Transport
   const tcp = () => options.tcp?.() ?? (ownTcp ??= createTcpTransport(options));
 
   async function loadDgram() {
+    // Workers has a `node:dgram` that loads and then does nothing, so there the import
+    // going through says nothing about UDP
+    if (isWorkers()) throw new DnsError('UDP is not available in this runtime');
     try {
       return (dgram ??= await import('node:dgram'));
     } catch (cause) {

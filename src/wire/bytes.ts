@@ -68,6 +68,11 @@ export function toBase64(bytes: Uint8Array): string {
   return btoa(latin1Decode(bytes));
 }
 
+// base64url without padding, as RFC 8484 §4.1 wants a query in a DoH URL
+export function toBase64Url(bytes: Uint8Array): string {
+  return toBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 const BASE32HEX = '0123456789ABCDEFGHIJKLMNOPQRSTUV';
 
 // base32 with the extended hex alphabet and no padding (RFC 4648 §7), as NSEC3 uses it

@@ -12,8 +12,8 @@ import { DEFAULT_UDP_PAYLOAD_SIZE } from './protocol/edns';
 import { rcodeName } from './protocol/header';
 import { typeCode, typeName } from './protocol/types';
 import { DEFAULT_PORTS, toEndpoint } from './transports/endpoint';
-import { createTransports, defaultTransports } from './transports/index';
-import type { Transports } from './transports/index';
+import { createTransports, defaultTransports } from './transports/set';
+import type { Transports } from './transports/set';
 import { isNode, now } from './transports/runtime';
 import type {
   Endpoint,

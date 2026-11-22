@@ -17,7 +17,7 @@ out as type 0 and came back empty).
 | `npm install @aoxborrow/dns-client` | `npm install @aoxborrow/dns` |
 | ES modules only | ES modules only, unchanged |
 | Node 18 or later | Node 22 or later |
-| one entry point | the root, plus `/records`, `/wire`, `/dnssec`, `/transports/udp`, `/transports/tcp`, `/transports/tls`, `/transports/doh` and `/promises`. The root holds everything in `/records` and `/wire` too |
+| one entry point | the root, plus `/records`, `/wire`, `/dnssec`, `/transports`, `/transports/doh` and `/promises`. The root holds everything in `/records` and `/wire` too |
 | `dns-packet` and `buffer` as dependencies | no dependencies. Bytes are `Uint8Array`, never `Buffer` |
 
 If all you used was a lookup by type, the [`/promises`](README.md#promises) facade may be

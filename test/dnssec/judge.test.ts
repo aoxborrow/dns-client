@@ -3,7 +3,7 @@ import {
   checkAnchors,
   checkDsSet,
   computeDsDigest,
-  EXTENDED_DNS_ERRORS,
+  EDE_CODES,
   judgeChain,
   readKeys,
   REASON_CODES,
@@ -129,7 +129,7 @@ describe('judgeChain', () => {
 
 describe('reasons', () => {
   it('maps each failure to its extended DNS error where RFC 8914 has one', () => {
-    expect(REASON_EDE[REASON_CODES.SIGNATURE_EXPIRED]).toBe(EXTENDED_DNS_ERRORS.SIGNATURE_EXPIRED);
+    expect(REASON_EDE[REASON_CODES.SIGNATURE_EXPIRED]).toBe(EDE_CODES.SIGNATURE_EXPIRED);
     expect(REASON_EDE[REASON_CODES.DNSKEY_MISSING]).toBe(9);
     expect(REASON_EDE[REASON_CODES.RRSIGS_MISSING]).toBe(10);
     expect(REASON_EDE[REASON_CODES.UNSUPPORTED_ALGORITHM]).toBe(1);

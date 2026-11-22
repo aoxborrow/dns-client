@@ -17,7 +17,7 @@ compatible with it; see [UPGRADING.md](UPGRADING.md).
 - [`/records`](#records)
 - [`/wire`](#wire)
 - [`/dnssec`](#dnssec)
-- [`/transports/*`](#transports)
+- [`/transports`](#transports)
 - [`/promises`](#promises)
 - [Where it runs](#where-it-runs)
 - [Benchmarks](#benchmarks)
@@ -94,10 +94,8 @@ This is a DNS client. It asks questions and reads answers.
 | `@aoxborrow/dns/records` | typed records, protocol tables, record decoding, formatting, parsing and validation | anywhere |
 | `@aoxborrow/dns/wire` | encoding queries, decoding messages, names, byte helpers | anywhere |
 | `@aoxborrow/dns/dnssec` | the judging core, signature verification, DS digests, NSEC/NSEC3 proofs, trust anchors | anywhere |
-| `@aoxborrow/dns/transports/udp` | DNS over UDP, a fresh socket per query | Node |
-| `@aoxborrow/dns/transports/tcp` | DNS over TCP, optionally pipelined | Node, Cloudflare Workers |
-| `@aoxborrow/dns/transports/tls` | DNS over TLS | Node, Cloudflare Workers |
-| `@aoxborrow/dns/transports/doh` | DNS over HTTPS: HTTP/2 on Node, `fetch` elsewhere | anywhere with `fetch` |
+| `@aoxborrow/dns/transports` | the four transports (UDP, TCP, TLS, HTTPS) and `createTransports`, the set of them that resolvers share | Node; Cloudflare Workers, without UDP |
+| `@aoxborrow/dns/transports/doh` | DNS over HTTPS alone: HTTP/2 on Node, `fetch` elsewhere | anywhere with `fetch` |
 | `@aoxborrow/dns/promises` | a `node:dns/promises`-compatible facade, with `connectLookup` | Node |
 
 Error classes are one set across every entry: a `ParseError` thrown by `/wire` is
@@ -240,7 +238,7 @@ These can be set on a resolver for every query, or passed to one `query()`:
 | `authenticData` | `false` | the AD flag in the query: ask to be told whether the answer validated |
 | `udpPayloadSize` | `1232` | the largest UDP answer this client will accept |
 | `ednsOptions` | none | EDNS options to send: `nsidOption()`, `clientSubnetOption()`, `cookieOption()`, `paddingOption()` |
-| `edns` | on | `false` sends a plain RFC 1035 query, with no EDNS record. `dnssecOk`, `udpPayloadSize` and `ednsOptions` travel in that record, so setting one of them together with `edns: false` is a `DnsError`. The exception is `edns: false` passed to one `query()`: that query goes out plain, without whichever of them the resolver was made with |
+| `edns` | on | `false` sends a plain RFC 1035 query, with no EDNS record. `dnssecOk`, `udpPayloadSize` and `ednsOptions` travel in that record, so setting one of them together with `edns: false` is a `DnsError`. One exception: `edns: false` passed to a single `query()` sends that query plain, dropping any of the three that were set on the resolver |
 | `signal` | none | an `AbortSignal`, per query. An aborted query rejects with the signal's reason |
 
 `Resolver` also takes:
@@ -249,7 +247,6 @@ These can be set on a resolver for every query, or passed to one `query()`:
 | --- | --- | --- |
 | `servers` | this machine's | addresses, names, `host:port`, URLs, or `{ address, port, serverName, url }` |
 | `cache` | 1000 entries | `false`, `{ max }` for the built-in cache, or a cache of your own |
-| `maxTtl` | `86400` | the longest an answer is kept, in seconds, whatever its TTL says |
 | `concurrency` | no limit | queries in flight at once, to all servers together |
 | `serverConcurrency` | `16` | queries in flight to one server at once; `Infinity` for no limit |
 | `strict` | `false` | malformed record data is an error, not a record in the generic form |
@@ -272,8 +269,21 @@ These can be set on a resolver for every query, or passed to one `query()`:
 | `nameserverCache` | `true` | remember the addresses of nameservers that came without glue between queries, even with `cache: false` |
 | `strict`, `validate`, `trustAnchors` | | as for `Resolver` |
 
+The default `rootServers` is `ROOT_HINTS`, taken from IANA's root hints file
+(`ROOT_HINTS_SOURCE`). `ROOT_HINTS_DATA_VERSION` is the version of that file the list was
+taken from, and `ROOT_HINTS_REFRESHED` the date the list was last compared with it.
+
+One `query()` also takes, for that query alone:
+
+| Option | On | |
+| --- | --- | --- |
+| `server` | `Resolver` | ask this server and no other: an address, a name, `host:port`, a URL, or `{ address, port, serverName, url }`. The answer is not taken from the cache or put in it |
+| `startAt` | `AuthoritativeResolver` | where the walk starts, in place of the root servers: `{ name, ipv4, ipv6 }[]`. Nameservers that come without an address are still looked up from the root servers, and the delegations found on the way are not kept for other queries |
+| `fromRoot` | `AuthoritativeResolver` | `true` walks from the root servers whatever delegations the resolver remembers, so that `trace` is the whole path. What the walk learns is kept for other queries. Default `false` |
+| `totalTimeout`, `onEvent` | `AuthoritativeResolver` | as on the resolver, for this query. This `onEvent` is told only of the queries this one sends, nameserver lookups included, and the resolver's own is told as well |
+
 Both take the transport options (`proxy`, `fetch`, `connect`, `tls`, `pipeline`,
-`idleTimeout`, `dohMethod`; see [`/transports/*`](#transports)), `onEvent`, and
+`idleTimeout`, `dohMethod`; see [`/transports`](#transports)), `onEvent`, and
 `transports`, a set of sockets to share with other resolvers. The set is made with
 `createTransports(options)` and takes its transport options there: a resolver given both
 `transports` and a transport option throws a `DnsError`.
@@ -281,9 +291,9 @@ Both take the transport options (`proxy`, `fetch`, `connect`, `tls`, `pipeline`,
 ### Caching
 
 `Resolver` keeps each response for its TTL (the smallest in the answer section; for a
-negative answer, the SOA's, as above), capped by `maxTtl`. A cached answer comes back with
-`cached: true` and its TTLs reduced by the time it has spent in the cache. A query with a
-`server` of its own neither reads nor fills the cache.
+negative answer, the SOA's, as above), and for no more than a day. A cached answer comes
+back with `cached: true` and its TTLs reduced by the time it has spent in the cache. A query
+with a `server` of its own neither reads nor fills the cache.
 
 ```ts
 import { createLruCache, Resolver } from '@aoxborrow/dns';
@@ -408,7 +418,9 @@ Every `DnsError` carries `retryable`, and what is known of the exchange: `server
 and `extendedErrors`. When a resolver asked more than one server, `failures` lists each
 server and what went wrong there, in the order asked, the thrown error among them; an
 error from `AuthoritativeResolver` also carries `trace`. `toJSON()` gives the same as plain
-data. An aborted query rejects with the signal's reason, not a `DnsError`.
+data, and `errorData(error)` gives any error as the plain data events and results carry:
+`name`, `message`, `retryable`, and what a `DnsError` knows of the response code. An
+aborted query rejects with the signal's reason, not a `DnsError`.
 
 Classes are one set across entries, so `instanceof` holds whichever entry threw:
 
@@ -455,6 +467,21 @@ protocol tables (`RECORD_TYPES`, `RECORD_CLASSES`, `RCODES`, `OPCODES`, `EDNS_OP
 `EXTENDED_DNS_ERRORS`), the EDNS option builders and decoders, and the DNSSEC record-data
 decoders (`decodeRrsig`, `decodeDnskey`, `decodeDs`, `decodeNsec`, `decodeNsec3`,
 `decodeNsec3Param`, `decodeTypeBitmap`), which throw `ParseError` for malformed data.
+
+The rest of the entry:
+
+| Name | |
+| --- | --- |
+| `flattenRecord` | one record, as `flattenRecords` gives each record of a list |
+| `parseRecordData`, `hasRecordParser` | a record's data alone, from presentation format to typed fields; and whether a type has a presentation format of its own. Any type can be written in the RFC 3597 generic form (`\# 4 c0000201`) |
+| `isKnownRecordType` | whether a type code is one the library decodes into fields of its own |
+| `classCode`, `className` | a class's code and its mnemonic, as `typeCode` and `typeName` are for a type |
+| `parseIpv4`, `parseIpv6` | the bytes of an address written as text, or `null` when the text is not one |
+| `formatSignatureTime` | an RRSIG time, in seconds since 1970, as a zone file writes it: `YYYYMMDDHHmmSS` |
+| `serviceParamName` | the name of an SVCB or HTTPS parameter key: its mnemonic, or `key<n>` |
+| `decodeEdnsOptions`, `decodeEdnsOption` | a message's EDNS options, or one of them, typed. An option that does not fit its layout comes back as unknown, with its bytes |
+| `HEADER_FLAGS` | the bits of the header's flags word |
+| `DEFAULT_UDP_PAYLOAD_SIZE` | 1232, the UDP payload size a query advertises unless told otherwise |
 
 ### Validating records
 
@@ -524,7 +551,7 @@ relativize({ name: 'www.example.com', type: 'CNAME', ttl: 300, data: 'example.co
 ## `/wire`
 
 ```ts
-import { createUdpTransport } from '@aoxborrow/dns/transports/udp';
+import { createUdpTransport } from '@aoxborrow/dns/transports';
 import { decodeMessage, encodeQuery } from '@aoxborrow/dns/wire';
 
 const query = encodeQuery({ id: 1234, name: 'example.com', type: 'A', recursionDesired: true });
@@ -540,10 +567,13 @@ message.answers; // [{ name: 'example.com', type: 1, class: 1, ttl: 300, rdata: 
 
 `Uint8Array` in and out, no `Buffer`. Record data stays as bytes; `decodeRecords` in
 `/records` types it. Names are accepted in Unicode or punycode and returned in ASCII.
-Also here: `encodeMessage`, the name helpers (`canonicalName`, `compareNames`,
-`isSubdomain`, `parentName`, `countLabels`, `encodeName`, `toAsciiName` and others), and
-byte helpers (`toHex`, `fromHex`, `toBase64`, `fromBase64`, `toBase32Hex`, `concatBytes`,
-`compareBytes`, `readU16`/`writeU16`, `readU32`/`writeU32`).
+Also here: `encodeMessage`, and the name helpers `canonicalName`, `compareNames`,
+`isSubdomain`, `parentName`, `countLabels`, `encodeName` and `toAsciiName`. `splitName`
+gives a name's labels as text, `nameToLabels` gives them as bytes and `labelsToName` turns
+those back into a name, and `readName` reads a name out of a message, following
+compression pointers. The byte helpers are `toHex`, `fromHex`, `toBase64`, `fromBase64`,
+`toBase32Hex`, `concatBytes`, `compareBytes`, `readU16`/`writeU16` and
+`readU32`/`writeU32`.
 
 ## `/dnssec`
 
@@ -695,21 +725,64 @@ SHA-1, SHA-256 and SHA-384. Owner names in `toWireMessage`'s records keep the ca
 server wrote them in; record data is in the canonical form signatures are computed over.
 The record-data decoders (`decodeRrsig`, `decodeDnskey` and the rest) are in `/records`.
 
-## `/transports/*`
+### Codes, registries and helpers
 
-Each transport is its own entry, so a program that only needs one carries only that one.
-The resolvers make the ones they need; use these directly to send a message you encoded
-yourself, as in the [`/wire`](#wire) example.
+What the judgements and the checks return is spelled out as constants:
 
-| Entry | Function | Notes |
-| --- | --- | --- |
-| `/transports/udp` | `createUdpTransport()` | a fresh socket and source port for every query, kept for its retransmissions (RFC 5452) |
-| `/transports/tcp` | `createTcpTransport()` | a connection per query by default; `pipeline: true` keeps connections open and sends several queries down each (RFC 7766) |
-| `/transports/tls` | `createTlsTransport()` | DNS over TLS, pipelined by default |
-| `/transports/doh` | `createDohTransport()` | DNS over HTTPS, GET by default (`dohMethod: 'POST'`) |
+| Name | |
+| --- | --- |
+| `SECURITY_STATUSES` | the four statuses: `secure`, `insecure`, `bogus`, `indeterminate` |
+| `REASON_CODES`, `REASON_EDE`, `EDE_CODES` | every reason code a link can carry; the extended DNS error (RFC 8914) for each code that has one; and those error codes by name |
+| `securityReason()` | a reason made from a code and a zone, with its extended DNS error filled in |
+| `DS_CODES`, `KEY_SET_CODES`, `RRSET_CODES`, `SIGNATURE_CODES` | the codes `checkDsSet`, `checkKeySet`, `checkRrset` and `checkSignature` return |
+| `CHECK_LIMITS`, `checkBudget()` | the default limits on signature checking (128 verifications in all, 4 keys tried per signature, 8 signatures per RRset), and a budget made from them to pass to `checkRrset` |
+| `VERIFICATION_RESULTS` | what a signature or digest check came to: `verified`, `failed` or `unchecked` |
+| `PROOF_TYPES`, `PROOF_PURPOSES`, `PROOF_STATUSES` | a denial proof's kind (NSEC or NSEC3), what it was asked to show, and how it came out |
 
-To share sockets and connections between resolvers, make one set with `createTransports`
-from the root entry and pass it to each. A resolver does not close a set it was given.
+The registries the checks read:
+
+| Name | |
+| --- | --- |
+| `DNSSEC_ALGORITHMS`, `ALGORITHM_STANDINGS`, `ALGORITHM_REGISTRY_REFRESHED` | each signing algorithm's name, whether the library verifies it, and its standing in IANA's registry (RFC 9904); the standings themselves, which are `recommended`, `supported`, `deprecated`, `prohibited` and `regional`; and the date they were last checked against IANA |
+| `DS_DIGEST_TYPES` | each DS digest type's name, standing and strength. Strength picks among several digests published for one key (RFC 4509 §3) |
+| `NSEC3_HASH_ALGORITHMS` | the NSEC3 hash algorithms, which is SHA-1 alone |
+| `SIGNATURE_LENGTHS` | the signature length in bytes of each fixed-width algorithm |
+| `DNSKEY_FLAGS`, `DNSKEY_PROTOCOL`, `NSEC3_FLAGS` | the flag bits of a DNSKEY, the one protocol value it may carry (3), and the flag bits of an NSEC3 |
+| `NSEC3_ITERATIONS_INSECURE_THRESHOLD`, `NSEC3_ITERATIONS_SERVFAIL_THRESHOLD` | 100 and 500: the iteration counts past which validators commonly treat a zone as insecure, and answer SERVFAIL (RFC 9276) |
+| `ROOT_TRUST_ANCHOR_SOURCE` | the URL of the IANA file `ROOT_TRUST_ANCHORS` is taken from |
+
+And the smaller functions:
+
+| Name | |
+| --- | --- |
+| `algorithmName()`, `isAlgorithmVerifiable()`, `keySizeBits()` | an algorithm's mnemonic; whether the library has code to verify it, which `isAlgorithmSupported` goes on to check against the runtime; and the size of a public key in bits |
+| `isDigestDeprecated()` | whether a DS digest type is deprecated (SHA-1) |
+| `readKeys()`, `readRrsig()`, `keyAlgorithms()` | the DNSKEYs among some records, decoded, leaving out any that do not decode; an RRSIG's fields, or `undefined`; and the algorithms a key set holds |
+| `coveringSignatures()`, `isAuthoritative()` | the RRSIGs that cover an RRset; and whether an RRset is the zone's own data, as a delegation's NS RRset and glue are not |
+| `canonicalRdata()`, `compareCanonicalNames()` | record data in canonical form (RFC 4034 §6.2), and the canonical order of two names (§6.1) |
+| `nsec3Hash()`, `assessNsec3Params()` | a name's NSEC3 hash, and a zone's NSEC3 parameters held against RFC 9276 |
+| `denialTypesAt()`, `nextCloserOptOut()` | the types that NSEC or NSEC3 records say exist at a name; and whether the NSEC3 covering a name's next closer name sets opt-out |
+| `presentRecord()` | a record as `toWireMessage` gives it, in zone-file presentation format. `formatRecord` in `/records` does the same for a typed record |
+| `sha1()`, `sha256()`, `sha384()` | the three digests DNSSEC uses, synchronous |
+
+## `/transports`
+
+The resolvers make the transports they need. Use one directly to send a message you
+encoded yourself, as in the [`/wire`](#wire) example.
+
+| Function | Notes |
+| --- | --- |
+| `createUdpTransport()` | a fresh socket and source port for every query, kept for its retransmissions (RFC 5452) |
+| `createTcpTransport()` | a connection per query by default; `pipeline: true` keeps connections open and sends several queries down each (RFC 7766) |
+| `createTlsTransport()` | DNS over TLS, pipelined by default |
+| `createDohTransport()` | DNS over HTTPS, GET by default (`dohMethod: 'POST'`) |
+
+`/transports/doh` holds `createDohTransport()` alone, for a program that sends DNS over
+HTTPS and nothing else: it leaves out the UDP and TCP transports.
+
+To share sockets and connections between resolvers, make one set with `createTransports`,
+which the root entry has too, and pass it to each. A resolver does not close a set it was
+given.
 
 ```ts
 import { AuthoritativeResolver, createTransports, Resolver } from '@aoxborrow/dns';
@@ -721,6 +794,17 @@ const iterative = new AuthoritativeResolver({ transports });
 // …
 transports.close();
 ```
+
+Resolvers given no transport options share one set for the whole process.
+`closeDefaultTransports()` closes it, for code that wants its sockets gone at a known point.
+Those sockets never keep a process alive. `DEFAULT_PORTS` has each transport's port: 53 for
+UDP and TCP, 853 for TLS, 443 for HTTPS.
+
+The `connect` option is the function that opens a TCP connection. Left out, the library
+uses `createNodeConnect()` on Node and `createCloudflareConnect()` on Cloudflare Workers,
+and either can be called to make one to pass in. `createCloudflareConnect()` takes the
+runtime's own `connect`, imported from `cloudflare:sockets`; without it, it loads that
+module itself the first time a connection is opened.
 
 ### DNS over HTTPS
 
@@ -779,10 +863,14 @@ await resolver.resolve4('example.com', { ttl: true }); // [{ address: '…', ttl
 net.connect({ host: 'example.com', port: 80, lookup: connectLookup });
 ```
 
-There: `resolve` and every `resolve*` Node has, `reverse`, `lookup`, `getServers`,
-`setServers`, `getDefaultResultOrder`, `setDefaultResultOrder`, `Resolver` with `cancel()`,
-and the error-code constants. Added: `connectLookup`, and `close()` on a `Resolver`. Not
-there: `lookupService`, `setLocalAddress`, the `maxTimeout` option.
+There: `resolve` and every `resolve*` Node has (`resolve4`, `resolve6`, `resolveAny`,
+`resolveCaa`, `resolveCname`, `resolveMx`, `resolveNaptr`, `resolveNs`, `resolvePtr`,
+`resolveSoa`, `resolveSrv`, `resolveTlsa`, `resolveTxt`), `reverse`, `lookup` with its hints
+(`ADDRCONFIG`, `ALL`, `V4MAPPED`), `getServers`, `setServers`, `getDefaultResultOrder`,
+`setDefaultResultOrder`, `Resolver` with `cancel()`, and the error-code constants
+(`NODATA`, `FORMERR`, `SERVFAIL`, `NOTFOUND`, `NOTIMP`, `REFUSED`, `BADNAME`, `BADRESP`,
+`CONNREFUSED`, `TIMEOUT`, `CANCELLED`). Added: `connectLookup`, and `close()` on a
+`Resolver`. Not there: `lookupService`, `setLocalAddress`, the `maxTimeout` option.
 
 Where it differs from Node:
 
@@ -822,7 +910,10 @@ way the TCP query failed, `ETIMEOUT` or `ECONNREFUSED`.
 
 Node 22 or later. Node built-ins are imported only by the transports, and only when a query
 needs them, so `/records`, `/wire` and `/dnssec` bundle for a browser with none, and the
-root entry loads no Node module at import. `check:browser` checks both.
+root and transport entries load no Node module at import. esbuild bundles the root and
+transport entries for a browser with no configuration, leaving those imports for the
+runtime. If another bundler stops at a `node:` import, mark `node:*` external there.
+`check:browser` checks all of this.
 
 On Cloudflare Workers there is no UDP, and Ed448 signatures cannot be verified. TCP and
 TLS go through the runtime's `connect()`, found on its own. The codec, the records, both

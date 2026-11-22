@@ -36,8 +36,6 @@ export interface ResolverOptions extends TransportOptions, QuerySettings {
   // false for no cache, a cache of your own, or settings for the default one (1000
   // entries)
   cache?: CacheOption<CachedResponse>;
-  // the longest an answer is kept, in seconds, whatever its TTL says. Default one day
-  maxTtl?: number;
   // how many queries may be in flight at once, to all servers together. Default: no limit
   concurrency?: number;
   // how many queries may be in flight to one server at once. Default 16; Infinity for no
@@ -72,7 +70,8 @@ export interface CachedResponse {
   receivedAt: Date;
 }
 
-const DEFAULT_MAX_TTL = 86_400;
+// the longest an answer is kept, in seconds, whatever its TTL says: one day
+const MAX_TTL = 86_400;
 // queries in flight to one server at once
 const DEFAULT_SERVER_CONCURRENCY = 16;
 // a response that says the server could not or would not do the work: another may
@@ -224,10 +223,9 @@ export class Resolver {
       }
       if (key && this.cache) {
         const { cache } = this;
-        const maxTtl = this.options.maxTtl ?? DEFAULT_MAX_TTL;
         pending.then(
           response => {
-            const lifetime = Math.min(cacheLifetime(response.result.message), maxTtl);
+            const lifetime = Math.min(cacheLifetime(response.result.message), MAX_TTL);
             if (lifetime > 0) cache.set(key, response, lifetime * 1000);
           },
           () => undefined

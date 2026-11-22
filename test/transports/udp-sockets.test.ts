@@ -1,5 +1,5 @@
 import { Socket } from 'node:dgram';
-import { TimeoutError } from '../../src/errors';
+import { DnsError, TimeoutError } from '../../src/errors';
 import { exchange } from '../../src/exchange';
 import { createUdpTransport } from '../../src/transports/index';
 import type { Transport } from '../../src/transports/types';
@@ -137,5 +137,24 @@ describe('UDP sockets', () => {
     ]);
     expect(new Set(server.received.map(received => received.sourcePort)).size).toBe(2);
     expect(await allClosed()).toBe(true);
+  });
+});
+
+describe('UDP on Cloudflare Workers', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // Workers has a `node:dgram` that imports without error and cannot send anything, so
+  // the transport goes by the runtime, not by whether the import worked
+  it('says there is no UDP, before trying to open a socket', async () => {
+    vi.stubGlobal('navigator', { userAgent: 'Cloudflare-Workers' });
+    const send = vi.spyOn(Socket.prototype, 'send');
+    const transport = createUdpTransport();
+    const sent = transport.send({ endpoint: { host: '192.0.2.1', port: 53 }, query: query(1) });
+    await expect(sent).rejects.toThrow(DnsError);
+    await expect(sent).rejects.toThrow('UDP is not available in this runtime');
+    expect(send).not.toHaveBeenCalled();
+    transport.close();
   });
 });

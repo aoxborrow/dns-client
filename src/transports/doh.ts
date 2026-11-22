@@ -5,7 +5,7 @@ import {
   InvalidResponseError,
   NoServerError,
 } from '../errors';
-import { toBase64 } from '../wire/bytes';
+import { toBase64Url } from '../wire/bytes';
 import { parseDohUrl } from './endpoint';
 import { createHttp2Client } from './http2';
 import type { Http2Client } from './http2';
@@ -36,11 +36,6 @@ export type DohTransportOptions = Pick<
 const MEDIA_TYPE = 'application/dns-message';
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
-
-// base64url without padding, as RFC 8484 §4.1 wants the query in a URL
-export function toBase64Url(bytes: Uint8Array): string {
-  return toBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
 
 // whether to send DoH with `node:http2`: on Node and Bun, which have it. Deno's `fetch`
 // negotiates HTTP/2 by itself
