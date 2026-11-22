@@ -1,0 +1,44 @@
+name: Trust Anchors
+
+# Weekly check of the bundled DNSSEC root trust anchors and root hints
+# (src/dnssec/anchors.ts, src/resolvers/root-hints.ts) against what IANA publishes. It goes
+# red when they differ: a new root KSK, a validUntil on one (KSK-2017 is due to be revoked
+# on 2027-01-11), or a root server that moved. The fix is `yarn refresh-anchors` and the
+# procedure in CONTRIBUTING.md. It writes nothing and opens nothing.
+
+on:
+  schedule:
+    # Mondays 14:00 UTC
+    - cron: '0 14 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trust-anchors-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trust-anchors:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: 'yarn'
+
+      - name: Install dependencies (immutable)
+        run: yarn install --immutable
+
+      - name: Compare the bundled anchors and root hints with IANA's
+        run: yarn refresh-anchors --check
