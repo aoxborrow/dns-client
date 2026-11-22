@@ -166,7 +166,8 @@ import type {
   TrustAnchor,
 } from '@aoxborrow/dns';
 
-// what both resolvers take, for every query or for one
+// what both resolvers take, for every query or for one. AuthoritativeResolver takes all but
+// recursionDesired, a transport of 'udp' or 'tcp', and retries of 0 (1 at a zone's last server)
 interface QuerySettings {
   transport?: 'udp' | 'tcp' | 'tls' | 'doh'; // default 'udp'; 'doh' for a server given as a URL
   port?: number; // default 53, 853 for TLS, 443 for DoH
