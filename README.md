@@ -421,8 +421,8 @@ and transport together, has not yet been run on a deployed Worker.
 
 ## Benchmarks
 
-Against the other ways to resolve names from Node, on a cloud machine with 2 AMD EPYC
-cores, Linux 6.1, Node 24.22.3, on 2026-11-22. To reproduce, from this package:
+Against the other ways to resolve names from Node, on an Apple M2 Max (12 cores), macOS
+14.8.5, Node 24.14.1 and DiG 9.10.6, on 2026-11-22. To reproduce, from this package:
 
 ```bash
 yarn bench --network
@@ -438,39 +438,40 @@ cache column.
 
 | Client                               |     Transport | warm p50, µs | 1,000 sequential, ms | queries/s, 100 in flight | queries/s, 1,000 in flight | cached answers/s |
 | :----------------------------------- | ------------: | -----------: | -------------------: | -----------------------: | -------------------------: | ---------------: |
-| `@aoxborrow/dns` `Resolver`          |           UDP |          150 |                  187 |                    6,413 |                      7,796 |          113,467 |
-| `@aoxborrow/dns` `Resolver`          | TCP pipelined |           85 |                  100 |                   11,389 |                     10,612 |           84,168 |
-| `@aoxborrow/dns` `Resolver`          |           DoH |          273 |                  348 |                    4,330 |                        n/a |          146,063 |
-| `@aoxborrow/dns/promises` `resolve4` |           UDP |          148 |                  170 |                    6,072 |                      6,282 |           90,589 |
-| `node:dns` `Resolver` (c-ares)       |           UDP |           65 |                   86 |                   29,118 |                      1,836 |         no cache |
-| dns2 3.1.1                           |           UDP |           68 |                   79 |                   19,250 |                        390 |         no cache |
-| tangerine 2.1.3                      |           DoH |          176 |                  207 |                   10,056 |                        n/a |          787,024 |
-| `fetch` + dns-packet                 |           DoH |          263 |                  316 |                    5,228 |                        n/a |         no cache |
+| `@aoxborrow/dns` `Resolver`          |           UDP |          150 |                  159 |                   12,407 |                     11,726 |          233,755 |
+| `@aoxborrow/dns` `Resolver`          | TCP pipelined |           56 |                   60 |                   31,456 |                     32,352 |          220,191 |
+| `@aoxborrow/dns` `Resolver`          |           DoH |          109 |                  127 |                   11,258 |                        n/a |          235,318 |
+| `@aoxborrow/dns/promises` `resolve4` |           UDP |          128 |                  135 |                    8,495 |                     12,144 |          211,589 |
+| `node:dns` `Resolver` (c-ares)       |           UDP |           62 |                   66 |                   38,009 |                     35,216 |         no cache |
+| dns2 3.1.1                           |           UDP |          156 |                  167 |                   19,400 |                     12,374 |         no cache |
+| tangerine 2.1.3                      |           DoH |           73 |                   81 |                   21,544 |                        n/a |        1,441,996 |
+| `fetch` + dns-packet                 |           DoH |          116 |                  133 |                   12,162 |                        n/a |         no cache |
 
 DoH stops at 100 in flight: past that the local test server's accept queue drops
 connections, which measures the server.
 
-**UDP throughput at 100 in flight is under a quarter of c-ares's**, and that is a choice.
-The library gives every UDP query a socket and source port of its own, so a forged answer
-has to guess the port as well as the 16-bit ID (RFC 5452); c-ares sends every query from
-one socket. The extra system calls cost throughput. At 1,000 in flight c-ares and dns2,
-each on one socket, fall to 1,836 and 390 queries a second, while the library keeps its
-rate. Pipelined TCP, which reuses a connection, is the library's fastest transport here.
+**Over UDP the library manages about a third of c-ares's throughput**, and that is the
+price of a choice. Every UDP query gets a fresh socket and a random source port of its own,
+so a forged answer has to guess the port as well as the 16-bit ID (RFC 5452); c-ares sends
+every query from one socket. The extra system calls cost throughput and latency on every
+query. **Pipelined TCP**, which reuses one connection, is about 2.5 times as fast as the
+library's UDP and close to c-ares. **The cache** is the clear win: about 230,000 answers a
+second at every transport, against c-ares, whose cache Node turns off, so every repeat goes
+back to the server. Only tangerine's cache is faster.
 
 **Iterative resolution from the root**, the 100 names in `bench/top-100.ts`, one at a time
 over IPv4 UDP:
 
 | Resolver                                   | total, s | per name p50, ms | per name p95, ms | queries per name |
 | :----------------------------------------- | -------: | ---------------: | ---------------: | ---------------: |
-| `AuthoritativeResolver`, one for the list  |     13.1 |               48 |              289 |              3.2 |
-| `AuthoritativeResolver`, new for each name |     17.6 |              104 |              331 |              4.9 |
-| `dig +trace`, a process per name           |     36.8 |              197 |            1,333 |              4.0 |
+| `AuthoritativeResolver`, one for the list  |     16.6 |               77 |              373 |              3.3 |
+| `AuthoritativeResolver`, new for each name |     15.8 |              138 |              375 |              5.0 |
+| `dig +trace`, a process per name           |     28.9 |              176 |            1,099 |              4.0 |
 
 Against public resolvers (Cloudflare, Google, Quad9) every client is mostly round-trip time
 and the differences are within the network's own variance; those tables are in
-`bench/RESULTS.md`. `Bun.dns` is not driven by the harness yet, `Deno.resolveDns` and
-`dnsperf` were not installed on the machine, and `dns-socket` is unmaintained since 2021, so
-none of them is measured.
+`bench/RESULTS.md`. `Bun.dns`, `Deno.resolveDns` and `dnsperf` were not installed on the
+machine, and `dns-socket` is unmaintained since 2021, so none of them is measured.
 
 ### Features
 
