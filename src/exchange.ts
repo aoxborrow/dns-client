@@ -51,17 +51,19 @@ export interface DnsQuestion {
   class?: string | number;
 }
 
-// the header flags a query was sent with: recursion desired, checking disabled,
-// authentic data
+/**
+ * the header flags a query was sent with: recursion desired, checking disabled,
+ * authentic data
+ */
 export interface QueryFlags {
   rd: boolean;
   cd: boolean;
   ad: boolean;
 }
 
-// what was sent: the question as it went on the wire, its flags and its EDNS settings
+/** what was sent: the question as it went on the wire, its flags and its EDNS settings */
 export interface SentQuery {
-  // with no trailing dot, as it was written
+  /** with no trailing dot, as it was written */
   name: string;
   type: string;
   class: string;
@@ -110,24 +112,27 @@ export interface ExchangeOptions extends TransportOptions {
   transports?: Transports;
 }
 
+/** one exchange with one server: the response, decoded and as it arrived, and how it came */
 export interface ExchangeResult {
   message: Message;
-  // the response exactly as it arrived
+  /** the response exactly as it arrived */
   bytes: Uint8Array;
-  // what was asked, as it was sent
+  /** what was asked, as it was sent */
   query: SentQuery & { id: number; bytes: Uint8Array };
   server: string;
   port: number;
-  // DoH: the URL the query went to
+  /** DoH: the URL the query went to */
   url?: string;
-  // the transport that carried the answer, which is not always the one asked for
+  /** the transport that carried the answer, which is not always the one asked for */
   transport: TransportName;
-  // milliseconds, all attempts included
+  /** milliseconds, all attempts included */
   elapsed: number;
-  // how many times the query was sent
+  /** how many times the query was sent */
   attempts: number;
-  // the answer is a truncated UDP one (TC set) because asking again over TCP failed:
-  // why it did
+  /**
+   * the answer is a truncated UDP one (TC set) because asking again over TCP failed:
+   * why it did
+   */
   tcpFallbackError?: ErrorData;
 }
 
@@ -178,7 +183,7 @@ export interface DigOptions {
   edns?: boolean;
 }
 
-// what `toDig` needs: an answer from either resolver, or an exchange's result
+/** what `toDig` needs: an answer from either resolver, or an exchange's result */
 export interface DigSource {
   query: SentQuery;
   server: string;
@@ -187,8 +192,10 @@ export interface DigSource {
   transport: TransportName;
 }
 
-// the `dig` command that asks the server that answered the same question the same way:
-// the fastest way to check an answer by hand
+/**
+ * the `dig` command that asks the server that answered the same question the same way:
+ * the fastest way to check an answer by hand
+ */
 export function toDig(answer: DigSource): string {
   const { query } = answer;
   return digCommand(

@@ -11,7 +11,7 @@ export const FEATURES = `## Features
 | DNS over HTTPS | yes | no | no | yes | yes, only | no | no | BIND 9.18+ (\`+https\`) |
 | Iterative resolution from the root | yes (\`AuthoritativeResolver\`) | no | no | no | no | no | no | \`+trace\` |
 | DNSSEC | validation (\`validate: true\`), and the primitives it is built from | no | no | record types only | DO bit, reads the resolver's AD flag | no | no | DO bit (\`+dnssec\`), no validation |
-| Cache | yes, by TTL, shared between callers | c-ares query cache | the system's | no | yes, pluggable (Map, Redis) | yes | no | no |
+| Cache | yes, by TTL, shared between callers | no (Node turns c-ares's cache off) | the system's | no | yes, pluggable (Map, Redis) | yes | no | no |
 | One query on the wire for callers asking the same thing | yes | no | no | no | no | not documented | no | n/a |
 | SOCKS5 and HTTP CONNECT proxies | yes | no | no | no | through its \`request\` function | no | no | no |
 | Browsers and Workers | records, wire and DNSSEC entries anywhere; DoH through \`fetch\`; TCP on Cloudflare Workers | no | no | no | no | Bun only | Deno only | n/a |
@@ -20,5 +20,5 @@ export const FEATURES = `## Features
 | Runtime dependencies | none | built in | built in | none | 15 | built in | built in | n/a |
 | A \`node:dns/promises\` drop-in | yes (\`@aoxborrow/dns/promises\`) | it is the original | it is the original | no | yes, over DoH | Bun implements \`node:dns\` | Deno implements \`node:dns\` | n/a |
 
-"System resolver" means the client asks the operating system (getaddrinfo), which picks the transport and the servers. c-ares is the C library behind \`node:dns\`'s resolver; whether its query cache answered in the fixture runs is in the cache table above (a query that reached the server was not answered from a cache).
+"System resolver" means the client asks the operating system (getaddrinfo), which picks the transport and the servers. c-ares is the C library behind \`node:dns\`'s resolver. It has a query cache, which Node turns off: in the cache table above every query reaches the server.
 `;

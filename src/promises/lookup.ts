@@ -7,25 +7,31 @@ import { argumentError, checkHostname, getaddrinfoError } from './errors';
 // read; `localhost` and names under it are the loopback addresses (RFC 6761 §6.3);
 // everything else is asked of the DNS servers, A and AAAA at once
 
+/** `lookup`'s options, as Node's */
 export interface LookupOptions {
   family?: number | 'IPv4' | 'IPv6';
-  // `V4MAPPED` and `ALL` change the answer for family 6. `ADDRCONFIG` is accepted and has
-  // no effect: both families are returned whatever this machine's interfaces are
+  /**
+   * `V4MAPPED` and `ALL` change the answer for family 6. `ADDRCONFIG` is accepted and has
+   * no effect: both families are returned whatever this machine's interfaces are
+   */
   hints?: number;
   all?: boolean;
   order?: 'ipv4first' | 'ipv6first' | 'verbatim';
-  // deprecated in Node: true is `order: 'verbatim'`, false is `order: 'ipv4first'`
+  /** deprecated in Node: true is `order: 'verbatim'`, false is `order: 'ipv4first'` */
   verbatim?: boolean;
 }
 
+/** `lookup`'s options for one address */
 export interface LookupOneOptions extends LookupOptions {
   all?: false;
 }
 
+/** `lookup`'s options for every address */
 export interface LookupAllOptions extends LookupOptions {
   all: true;
 }
 
+/** an address `lookup` found, and its family */
 export interface LookupAddress {
   address: string;
   family: number;
@@ -34,6 +40,7 @@ export interface LookupAddress {
 // `node:dns`'s hint flags, with this platform's values
 export const { ADDRCONFIG, V4MAPPED, ALL } = LOOKUP_HINTS;
 
+/** the order `lookup` gives addresses in, as Node's `order` option */
 export type ResultOrder = 'ipv4first' | 'ipv6first' | 'verbatim';
 
 // asks the DNS for one family's addresses. Resolves to the addresses, or rejects with the

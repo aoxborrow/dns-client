@@ -1,4 +1,4 @@
-// EDNS(0) option codes, from the IANA "DNS EDNS0 Option Codes (OPT)" registry
+/** EDNS(0) option codes, from the IANA "DNS EDNS0 Option Codes (OPT)" registry */
 export const EDNS_OPTIONS = {
   LLQ: 1, // long-lived queries
   UL: 2, // update lease
@@ -19,7 +19,7 @@ export const EDNS_OPTIONS = {
   SERVER_TAG: 17,
 } as const;
 
-// extended DNS error codes (RFC 8914 and the IANA registry that followed it)
+/** extended DNS error codes (RFC 8914 and the IANA registry that followed it) */
 export const EXTENDED_DNS_ERRORS = {
   0: 'Other Error',
   1: 'Unsupported DNSKEY Algorithm',
@@ -51,6 +51,8 @@ export const EXTENDED_DNS_ERRORS = {
   27: 'Unsupported NSEC3 Iterations Value',
 } as const;
 
-// the EDNS payload size to advertise: large enough for most signed answers over UDP, small
-// enough to stay under the common 1500-byte path MTU (DNS flag day 2020)
+/**
+ * the EDNS payload size to advertise: large enough for most signed answers over UDP, small
+ * enough to stay under the common 1500-byte path MTU (DNS flag day 2020)
+ */
 export const DEFAULT_UDP_PAYLOAD_SIZE = 1232;

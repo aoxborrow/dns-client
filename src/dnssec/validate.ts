@@ -34,13 +34,13 @@ export function requireEdns(edns: boolean | undefined): void {
   }
 }
 
-// what a validated answer carries
+/** what a validated answer carries */
 export interface Security {
   status: SecurityStatus;
   reason: SecurityReason;
-  // every link judged: each zone's key set from the trust anchor down, then the data
+  /** every link judged: each zone's key set from the trust anchor down, then the data */
   chain: ChainLink[];
-  // the first link that is bogus or indeterminate, when the outcome is either
+  /** the first link that is bogus or indeterminate, when the outcome is either */
   failure?: ChainLink;
 }
 

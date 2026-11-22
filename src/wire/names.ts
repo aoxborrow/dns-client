@@ -10,15 +10,18 @@ import { compareBytes, concatBytes, latin1Decode } from './bytes';
 const MAX_LABEL_BYTES = 63;
 const MAX_NAME_BYTES = 255;
 
+/** a name read out of a message, and where the bytes after it start */
 export interface NameRead {
-  // the labels, as views into the message
+  /** the labels, as views into the message */
   labels: Uint8Array[];
-  // the offset just past the name where it was written; following a compression pointer
-  // does not move it
+  /**
+   * the offset just past the name where it was written; following a compression pointer
+   * does not move it
+   */
   end: number;
 }
 
-// read a name that starts at `offset`, following compression pointers
+/** read a name that starts at `offset`, following compression pointers */
 export function readName(message: Uint8Array, offset: number): NameRead {
   const labels: Uint8Array[] = [];
   let position = offset;
@@ -75,7 +78,7 @@ function escapeLabel(label: Uint8Array): string {
   return out;
 }
 
-// labels to the presentation form
+/** labels to the presentation form */
 export function labelsToName(labels: readonly Uint8Array[]): string {
   if (labels.length === 0) return '.';
   return labels.map(escapeLabel).join('.');
@@ -90,7 +93,7 @@ export function endsWithRootDot(name: string): boolean {
   return backslashes % 2 === 0;
 }
 
-// split a name on its unescaped dots. The root has no labels
+/** split a name on its unescaped dots. The root has no labels */
 export function splitName(name: string): string[] {
   const trimmed = endsWithRootDot(name) ? name.slice(0, -1) : name;
   if (trimmed === '') return [];
@@ -139,7 +142,7 @@ function unescapeLabel(label: string): Uint8Array {
   return Uint8Array.from(bytes);
 }
 
-// a name's labels as bytes, checked against the DNS length limits
+/** a name's labels as bytes, checked against the DNS length limits */
 export function nameToLabels(name: string): Uint8Array[] {
   const labels = splitName(name).map(unescapeLabel);
   let total = 1;
@@ -154,7 +157,7 @@ export function nameToLabels(name: string): Uint8Array[] {
   return labels;
 }
 
-// a name in wire form, uncompressed, in the case it was given
+/** a name in wire form, uncompressed, in the case it was given */
 export function encodeName(name: string): Uint8Array {
   const parts: Uint8Array[] = [];
   for (const label of nameToLabels(name)) {
@@ -164,8 +167,10 @@ export function encodeName(name: string): Uint8Array {
   return concatBytes(parts);
 }
 
-// a name for comparing: lowercase, no trailing dot, '.' for the root. DNS names are
-// case-insensitive, and only ASCII letters fold
+/**
+ * a name for comparing: lowercase, no trailing dot, '.' for the root. DNS names are
+ * case-insensitive, and only ASCII letters fold
+ */
 export function canonicalName(name: string): string {
   const trimmed = endsWithRootDot(name) ? name.slice(0, -1) : name;
   if (trimmed === '') return '.';
@@ -179,18 +184,18 @@ export function comparableName(name: string): string {
   return canonicalName(labelsToName(nameToLabels(name)));
 }
 
-// the number of labels, not counting the root (RFC 4034 §3.1.3)
+/** the number of labels, not counting the root (RFC 4034 §3.1.3) */
 export function countLabels(name: string): number {
   return splitName(name).length;
 }
 
-// the name one label up: 'a.b.example.com' -> 'b.example.com', 'com' -> '.'
+/** the name one label up: 'a.b.example.com' -> 'b.example.com', 'com' -> '.' */
 export function parentName(name: string): string {
   const labels = splitName(name);
   return labels.length <= 1 ? '.' : labels.slice(1).join('.');
 }
 
-// whether `name` is `zone` itself or below it
+/** whether `name` is `zone` itself or below it */
 export function isSubdomain(name: string, zone: string): boolean {
   const child = splitName(canonicalName(name));
   const parent = splitName(canonicalName(zone));
@@ -207,9 +212,11 @@ function foldLabel(label: Uint8Array): Uint8Array {
   return out;
 }
 
-// canonical DNS name order (RFC 4034 §6.1): compare labels from the right, as lowercase
-// bytes; a name sorts before the names below it. Negative, zero or positive, like a
-// comparator
+/**
+ * canonical DNS name order (RFC 4034 §6.1): compare labels from the right, as lowercase
+ * bytes; a name sorts before the names below it. Negative, zero or positive, like a
+ * comparator
+ */
 export function compareNames(a: string, b: string): number {
   const left = nameToLabels(a).map(foldLabel).reverse();
   const right = nameToLabels(b).map(foldLabel).reverse();
@@ -227,16 +234,18 @@ const ASCII = /^[\x00-\x7f]*$/;
 // eslint-disable-next-line no-control-regex
 const URL_SYNTAX = /[\x00-\x20#%/:<>?@[\\\]^|\x7f]/;
 
-// a name in its ASCII form. A name that is already ASCII is returned as it is; a Unicode
-// name (`münchen.de`) is converted to punycode (`xn--mnchen-3ya.de`) with the IDNA mapping
-// built into the runtime's URL parser, so the library ships no tables of its own.
-//
-// the conversion is label by label, and only labels with non-ASCII characters go through
-// the parser. Every other label is left exactly as written, wildcards and underscore
-// labels included (`*.münchen.de`, `_dmarc.münchen.de`). A label holding characters the
-// parser reads as URL syntax (`@`, `:`, `/`) is refused rather than handed to it, where
-// part of the name could be dropped. Each label is parsed with a fixed label after it, so
-// one made of digits is never read as an IPv4 address
+/**
+ * a name in its ASCII form. A name that is already ASCII is returned as it is; a Unicode
+ * name (`münchen.de`) is converted to punycode (`xn--mnchen-3ya.de`) with the IDNA mapping
+ * built into the runtime's URL parser, so the library ships no tables of its own.
+ *
+ * the conversion is label by label, and only labels with non-ASCII characters go through
+ * the parser. Every other label is left exactly as written, wildcards and underscore
+ * labels included (`*.münchen.de`, `_dmarc.münchen.de`). A label holding characters the
+ * parser reads as URL syntax (`@`, `:`, `/`) is refused rather than handed to it, where
+ * part of the name could be dropped. Each label is parsed with a fixed label after it, so
+ * one made of digits is never read as an IPv4 address
+ */
 export function toAsciiName(name: string): string {
   if (ASCII.test(name)) return name;
   const fail = (cause?: unknown) =>

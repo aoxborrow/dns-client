@@ -124,10 +124,12 @@ const HAS_NAMES_IN_DATA = new Set([
 
 const theZone = (zone: string) => canonicalHostName(zone, 'target', 'zone', 'The zone');
 
-// expand names written relative to a zone into full names: in the record's own name, and
-// in the names inside its data. `@` is the zone itself, a trailing dot marks a name that
-// is already full, and every other name is relative to the zone. The result is what the
-// validators take
+/**
+ * expand names written relative to a zone into full names: in the record's own name, and
+ * in the names inside its data. `@` is the zone itself, a trailing dot marks a name that
+ * is already full, and every other name is relative to the zone. The result is what the
+ * validators take
+ */
 export function qualify<T extends FlatRecordInput>(input: T, zone: string): T {
   const origin = theZone(zone);
   const type = input.type.trim().toUpperCase();
@@ -155,9 +157,11 @@ function relativeName(name: string, zone: string): string {
   return `${name}.`;
 }
 
-// the reverse of `qualify`: write the record's name and the names inside its data
-// relative to the zone, for a UI or a provider API that wants them short. A name outside
-// the zone is written in full, with its trailing dot
+/**
+ * the reverse of `qualify`: write the record's name and the names inside its data
+ * relative to the zone, for a UI or a provider API that wants them short. A name outside
+ * the zone is written in full, with its trailing dot
+ */
 export function relativize<T extends FlatRecordInput>(input: T, zone: string): T {
   const origin = theZone(zone);
   const type = input.type.trim().toUpperCase();

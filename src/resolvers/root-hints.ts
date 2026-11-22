@@ -1,22 +1,30 @@
-// the root servers: where a resolution that knows nothing starts. From the root hints
-// file IANA publishes, which `scripts/refresh-anchors.ts` compares this with (a weekly CI
-// job runs it in check mode)
+/**
+ * the root servers: where a resolution that knows nothing starts. From the root hints
+ * file IANA publishes, which `scripts/refresh-anchors.ts` compares this with (a weekly CI
+ * job runs it in check mode)
+ */
 export const ROOT_HINTS_SOURCE = 'https://www.internic.net/domain/named.root';
 
-// the version of that file the data below was taken from: its "related version of root
-// zone" line
+/**
+ * the version of that file the data below was taken from: its "related version of root
+ * zone" line
+ */
 export const ROOT_HINTS_DATA_VERSION = '2026111201';
 
-// when the data below was last checked against the source
+/** when the data below was last checked against the source */
 export const ROOT_HINTS_REFRESHED = '2026-11-16';
 
+/** a nameserver by name, with its addresses */
 export interface NameserverHint {
-  // the server's name, for the trace
+  /** the server's name, for the trace */
   name?: string;
   ipv4?: string;
   ipv6?: string;
 }
 
+/**
+ * the 13 root servers, from IANA's root hints file: where `AuthoritativeResolver` starts by default
+ */
 export const ROOT_HINTS: readonly NameserverHint[] = [
   { name: 'a.root-servers.net', ipv4: '198.41.0.4', ipv6: '2001:503:ba3e::2:30' },
   { name: 'b.root-servers.net', ipv4: '170.247.170.2', ipv6: '2801:1b8:10::b' },

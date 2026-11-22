@@ -28,6 +28,7 @@ import type { FetchLike, Transport, TransportOptions } from './types';
 // needs a `fetch` that goes through it (on Workers, the `tunnelfetch` package). Without
 // one the query fails, so that nothing goes around the proxy
 
+/** the options of `createDohTransport` */
 export type DohTransportOptions = Pick<
   TransportOptions,
   'proxy' | 'fetch' | 'dohMethod' | 'tls' | 'idleTimeout'
@@ -78,6 +79,9 @@ async function readBody(
   }
 }
 
+/**
+ * DNS over HTTPS (RFC 8484): HTTP/2 on Node, `fetch` elsewhere or when one is given. GET by default
+ */
 export function createDohTransport(options: DohTransportOptions = {}): Transport {
   const method = options.dohMethod ?? 'GET';
   let http2: Http2Client | undefined;

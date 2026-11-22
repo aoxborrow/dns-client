@@ -164,7 +164,7 @@ describe('verifySignature', () => {
   });
 
   it('leaves an unverifiable algorithm unchecked rather than passing it', async () => {
-    // GOST (12) is one this tool must never green-check
+    // GOST (12) is one the library must never report as verified
     const outcome = await verifySignature(12, Buffer.alloc(64), SIGNED_DATA, Buffer.alloc(64));
     expect(outcome.verified).toBeUndefined();
     expect(outcome.reason).toMatch(/cannot be verified/);

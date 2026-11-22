@@ -54,114 +54,134 @@ import { REASON_CODES, SECURITY_STATUSES, securityReason } from './reasons';
 import type { ReasonCode, SecurityReason, SecurityStatus } from './reasons';
 import type { DenialProof, TrustAnchor } from './types';
 
-// the judging core: given the records fetched for each zone on the way down from a trust
-// anchor, and the responses whose data is to be trusted, say whether each link holds and
-// why. It fetches nothing and keeps no state, so the same records and time always give
-// the same judgement. `mode: 'first'` stops as soon as the outcome is settled, the way a
-// validating resolver does; `mode: 'all'` judges every link and every signature, for a
-// report of everything that is wrong
-
 const { SECURE, INSECURE, BOGUS, INDETERMINATE } = SECURITY_STATUSES;
 const R = REASON_CODES;
 const { VERIFIED } = VERIFICATION_RESULTS;
 const { DS, RRSIG, NSEC, NSEC3, CNAME, DNAME, NS, SOA } = RECORD_TYPES;
 
-// one response, as the judgement reads it
+/** one response, as the judgement reads it */
 export interface DnssecResponse {
-  // the question that was sent: never the response's own question section, which is
-  // unsigned and could name something else
+  /**
+   * the question that was sent: never the response's own question section, which is
+   * unsigned and could name something else
+   */
   name: string;
   type: number;
   rcode: number;
   answers: ResourceRecord[];
   authorities: ResourceRecord[];
-  // the server was asked to recurse, so it follows every alias to its end: a response that
-  // stops at an alias without the target's records owes a proof that the target has none.
-  // A zone's own server hands over an alias that leads out of its zone and nothing more
+  /**
+   * the server was asked to recurse, so it follows every alias to its end: a response that
+   * stops at an alias without the target's records owes a proof that the target has none.
+   * A zone's own server hands over an alias that leads out of its zone and nothing more
+   */
   recursive?: boolean;
-  // the response came with TC set: it is not the whole answer
+  /** the response came with TC set: it is not the whole answer */
   truncated?: boolean;
 }
 
-// a name between the trust anchor and the data, with what was fetched for it
+/** a name between the trust anchor and the data, with what was fetched for it */
 export interface ChainName {
   name: string;
-  // the answer to `<name> DS`, which the zone above gives
+  /** the answer to `<name> DS`, which the zone above gives */
   ds?: DnssecResponse;
-  // the answer to `<name> DNSKEY`, needed where `ds` shows the name is a zone of its own
+  /** the answer to `<name> DNSKEY`, needed where `ds` shows the name is a zone of its own */
   dnskey?: DnssecResponse;
 }
 
-// what is known about a name from an earlier judgement, so it need not be fetched or
-// judged again: whether it is a zone of its own and, if so, what came of its key set
+/**
+ * what is known about a name from an earlier judgement, so it need not be fetched or
+ * judged again: whether it is a zone of its own and, if so, what came of its key set
+ */
 export interface ZoneFact {
   name: string;
-  // false: the name is inside the zone above it
+  /** false: the name is inside the zone above it */
   cut: boolean;
   status: SecurityStatus;
   reason: SecurityReason;
-  // the zone's validated keys, for a secure zone
+  /** the zone's validated keys, for a secure zone */
   keys: DnssecKey[];
-  // how long the fact holds, in seconds: the shortest TTL, or signature lifetime, it rests on
+  /** how long the fact holds, in seconds: the shortest TTL, or signature lifetime, it rests on */
   ttl: number;
 }
 
+/**
+ * what `judgeChain` judges: the responses fetched for each name from the trust anchor down, and the
+ * responses holding the data
+ */
 export interface ChainInput {
-  // the DNSKEY response of the zone the trust anchors are for: the root unless the
-  // anchors say otherwise
+  /**
+   * the DNSKEY response of the zone the trust anchors are for: the root unless the
+   * anchors say otherwise
+   */
   anchored?: DnssecResponse;
-  // the names below it, each with its DS response and, for a zone cut, its DNSKEY response
+  /** the names below it, each with its DS response and, for a zone cut, its DNSKEY response */
   names?: ChainName[];
-  // the responses whose data is judged
+  /** the responses whose data is judged */
   responses?: DnssecResponse[];
-  // what earlier judgements established, which is used as it is
+  /** what earlier judgements established, which is used as it is */
   known?: ZoneFact[];
 }
 
+/** `'first'` stops at the first link that settles the outcome; `'all'` judges every link */
 export type JudgeMode = 'first' | 'all';
 
+/** the options of `judgeChain` */
 export interface JudgeOptions {
-  // default: IANA's root trust anchors
+  /** default: IANA's root trust anchors */
   trustAnchors?: readonly TrustAnchor[];
-  // the time signatures and anchors are judged at. Default: now
+  /** the time signatures and anchors are judged at. Default: now */
   now?: Date;
-  // 'first' (default) stops at the first link that settles the outcome; 'all' judges
-  // every link
+  /**
+   * 'first' (default) stops at the first link that settles the outcome; 'all' judges
+   * every link
+   */
   mode?: JudgeMode;
-  // require each RRset to be signed by every algorithm in its zone's key set (RFC 4035
-  // §2.2). Validators accept any one (RFC 6840 §5.11), so off by default
+  /**
+   * require each RRset to be signed by every algorithm in its zone's key set (RFC 4035
+   * §2.2). Validators accept any one (RFC 6840 §5.11), so off by default
+   */
   requireEveryAlgorithm?: boolean;
-  // how much signature checking the judgement may do before it gives up on the answer as
-  // bogus. Default: 128 verifications, 4 keys tried per signature, 8 signatures per RRset
+  /**
+   * how much signature checking the judgement may do before it gives up on the answer as
+   * bogus. Default: 128 verifications, 4 keys tried per signature, 8 signatures per RRset
+   */
   limits?: Partial<CheckLimits>;
 }
 
+/** what a link is about: a zone's key set, an RRset, or a denial proof */
 export type LinkKind = 'keys' | 'rrset' | 'denial';
 
-// one link in the chain: a zone's key set (vouched for by the trust anchor or by its
-// parent's DS), an RRset of the data, or a proof that something does not exist
+/**
+ * one link in the chain: a zone's key set (vouched for by the trust anchor or by its
+ * parent's DS), an RRset of the data, or a proof that something does not exist
+ */
 export interface ChainLink {
   kind: LinkKind;
   zone: string;
-  // the RRset or name the link is about, for data and proofs
+  /** the RRset or name the link is about, for data and proofs */
   name?: string;
   type?: string;
   status: SecurityStatus;
   reason: SecurityReason;
 }
 
+/** what `judgeChain` came to: the outcome, its reason, and every link judged */
 export interface Judgement {
   status: SecurityStatus;
   reason: SecurityReason;
-  // every link judged, zones from the top down, then the data
+  /** every link judged, zones from the top down, then the data */
   links: ChainLink[];
-  // the first link that is bogus or indeterminate, when the outcome is either
+  /** the first link that is bogus or indeterminate, when the outcome is either */
   failure?: ChainLink;
-  // what this judgement established about each name, to keep for next time. Only secure
-  // and insecure outcomes are given: a broken or unanswered zone is asked about again
+  /**
+   * what this judgement established about each name, to keep for next time. Only secure
+   * and insecure outcomes are given: a broken or unanswered zone is asked about again
+   */
   facts: ZoneFact[];
 }
 
+/** what a judgement established about a zone */
 export interface ZoneState {
   zone: string;
   status: SecurityStatus;
@@ -171,6 +191,13 @@ export interface ZoneState {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * the judging core: given the records fetched for each zone on the way down from a trust anchor,
+ * and the responses whose data is to be trusted, say whether each link holds and why. It fetches
+ * nothing and keeps no state, so the same records and time always give the same judgement. `mode:
+ * 'first'` stops as soon as the outcome is settled, the way a validating resolver does; `mode:
+ * 'all'` judges every link and every signature, for a report of everything that is wrong
+ */
 export async function judgeChain(
   input: ChainInput,
   options: JudgeOptions = {}
@@ -302,28 +329,33 @@ function keysLink(zone: ZoneState): ChainLink {
 // a zone's key set
 // ---------------------------------------------------------------------------
 
+/** what `judgeKeys` made of a zone's key set */
 export interface ZoneKeysJudgement {
   zone: ZoneState;
-  // the published keys, read
+  /** the published keys, read */
   keys: DnssecKey[];
-  // what the trust anchors made of them, for the anchored zone
+  /** what the trust anchors made of them, for the anchored zone */
   anchors?: AnchorCheck;
-  // what the parent's DS records made of them, for any other
+  /** what the parent's DS records made of them, for any other */
   dsSet?: DsSetCheck;
-  // the key set's signatures, checked
+  /** the key set's signatures, checked */
   keySet?: KeySetCheck;
   fact?: ZoneFact;
 }
 
-// where a zone's key set gets its trust: the trust anchors, for the anchored zone, or the
-// parent's DS records. `authenticated: false` says the parent's DS response was not
-// validly signed, so the DS records anchor nothing
+/**
+ * where a zone's key set gets its trust: the trust anchors, for the anchored zone, or the
+ * parent's DS records. `authenticated: false` says the parent's DS response was not
+ * validly signed, so the DS records anchor nothing
+ */
 export type KeysEntry =
   | { anchors: readonly TrustAnchor[] }
   | { ds: readonly ResourceRecord[]; dsTtl?: number; authenticated?: boolean };
 
-// judge a zone's key set against its entry points. Every check is made and handed back,
-// even past a failure, unless `stopAtFirst`
+/**
+ * judge a zone's key set against its entry points. Every check is made and handed back,
+ * even past a failure, unless `stopAtFirst`
+ */
 export async function judgeKeys(
   zone: string,
   dnskey: DnssecResponse | undefined,

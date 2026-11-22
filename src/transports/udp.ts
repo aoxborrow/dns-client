@@ -37,9 +37,12 @@ import type {
 // through a SOCKS5 proxy the same thing runs over one UDP association; through a proxy
 // that cannot carry UDP the query goes over TCP instead, and the response says so
 
+/** the options of `createUdpTransport` */
 export interface UdpTransportOptions extends Pick<TransportOptions, 'proxy' | 'tls'> {
-  // the transport a query is handed to when the proxy cannot carry UDP. One is made on
-  // demand if this is left out
+  /**
+   * the transport a query is handed to when the proxy cannot carry UDP. One is made on
+   * demand if this is left out
+   */
   tcp?: () => Transport;
 }
 
@@ -87,6 +90,7 @@ const UNSPECIFIED = new Set(['0.0.0.0', '::']);
 const keyOf = (address: string, port: number, id: number) => `${address}|${port}|${id}`;
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+/** DNS over UDP. Every query gets a socket and source port of its own (RFC 5452) */
 export function createUdpTransport(options: UdpTransportOptions = {}): Transport {
   // the sockets of the queries in flight, each closed when its query ends
   const open = new Set<SharedSocket>();

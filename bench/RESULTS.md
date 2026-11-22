@@ -2,15 +2,15 @@
 
 Written by `bench/run.ts`. Reproduce with `yarn bench --network`; see `bench/README.md`.
 
-- **Date:** 2026-11-16
-- **CPU:** Apple M2 Max, 12 cores
-- **OS:** macOS 14.8.5 (Darwin 23.6.0)
-- **Node:** v24.14.1
-- **Contenders:** dns2 3.1.1, tangerine 2.1.3, dns-packet 5.6.1 (for the fetch DoH client), DiG 9.10.6
+- **Date:** 2026-11-22
+- **CPU:** AMD EPYC, 2 cores
+- **OS:** Linux 6.1.158+
+- **Node:** v24.22.3
+- **Contenders:** dns2 3.1.1, tangerine 2.1.3, dns-packet 5.6.1 (for the fetch DoH client), DiG 9.18.39-0ubuntu0.24.04.9-Ubuntu
 
 Not measured:
 
-- `Bun.dns`: `bun` is not installed on the machine these numbers come from.
+- `Bun.dns`: `bun` is installed, but the harness does not drive it yet.
 - `Deno.resolveDns`: `deno` is not installed on the machine these numbers come from.
 - `dnsperf`: `dnsperf` is not installed on the machine these numbers come from.
 - `dns-socket`: unmaintained. Its last release, 4.2.2, was published on 2021-05-28; it is not a contender.
@@ -25,15 +25,15 @@ Cold: a new client and its first query, median of 30 (modules already loaded). W
 
 | Client | Transport | cold ms (median) | cold ms (p95) | warm p50 µs | warm p95 µs | 1,000 sequential, ms |
 | :-- | --: | --: | --: | --: | --: | --: |
-| @aoxborrow/dns Resolver | UDP | 0.19 | 0.59 | 131 | 192 | 141 |
-| @aoxborrow/dns Resolver, TCP pipelined | TCP | 0.26 | 0.50 | 49 | 85 | 57 |
-| @aoxborrow/dns Resolver, DoH | DoH | 0.16 | 0.41 | 115 | 204 | 129 |
-| @aoxborrow/dns/promises resolve4 | UDP | 0.26 | 0.59 | 175 | 232 | 182 |
-| node:dns Resolver (c-ares) | UDP | 0.10 | 0.25 | 65 | 83 | 67 |
-| dns2 UDPClient | UDP | 0.25 | 0.47 | 116 | 151 | 120 |
-| tangerine (DoH) | DoH | 0.22 | 0.37 | 84 | 140 | 94 |
-| fetch + dns-packet (DoH) | DoH | 0.23 | 0.98 | 145 | 224 | 165 |
-| `dig`, a process per query | process | 3.5 | n/a | 0 ms* | n/a | n/a |
+| @aoxborrow/dns Resolver | UDP | 0.27 | 1.64 | 150 | 213 | 187 |
+| @aoxborrow/dns Resolver, TCP pipelined | TCP | 0.99 | 3.38 | 85 | 135 | 100 |
+| @aoxborrow/dns Resolver, DoH | DoH | 0.38 | 0.51 | 273 | 588 | 348 |
+| @aoxborrow/dns/promises resolve4 | UDP | 0.17 | 1.03 | 148 | 257 | 170 |
+| node:dns Resolver (c-ares) | UDP | 0.22 | 0.52 | 65 | 163 | 86 |
+| dns2 UDPClient | UDP | 0.25 | 0.43 | 68 | 117 | 79 |
+| tangerine (DoH) | DoH | 0.27 | 0.55 | 176 | 233 | 207 |
+| fetch + dns-packet (DoH) | DoH | 0.38 | 1.50 | 263 | 393 | 316 |
+| `dig`, a process per query | process | 31.1 | n/a | 0 ms* | n/a | n/a |
 
 \* `dig`'s own "Query time", which leaves out starting the process; it reports whole milliseconds.
 
@@ -43,16 +43,16 @@ Cold: a new client and its first query, median of 30 (modules already loaded). W
 
 | Client | 10 in flight | 100 in flight | 1,000 in flight |
 | :-- | --: | --: | --: |
-| @aoxborrow/dns Resolver | 10,656 | 6,939 | 10,179 |
-| @aoxborrow/dns Resolver, TCP pipelined | 30,243 | 35,594 | 31,671 |
-| @aoxborrow/dns Resolver, DoH | 10,571 | 11,398 | n/a† |
-| @aoxborrow/dns/promises resolve4 | 9,024 | 11,300 | 10,158 |
-| node:dns Resolver (c-ares) | 30,071 | 34,119 | 32,008 |
-| dns2 UDPClient | 11,997 | 7,116 | 13,064 |
-| tangerine (DoH) | 17,668 | 19,517 | n/a† |
-| fetch + dns-packet (DoH) | 10,525 | 10,744 | n/a† |
+| @aoxborrow/dns Resolver | 6,881 | 6,413 | 7,796 |
+| @aoxborrow/dns Resolver, TCP pipelined | 10,638 | 11,389 | 10,612 |
+| @aoxborrow/dns Resolver, DoH | 4,113 | 4,330 | n/a† |
+| @aoxborrow/dns/promises resolve4 | 6,329 | 6,072 | 6,282 |
+| node:dns Resolver (c-ares) | 23,670 | 29,118 | 1,836 |
+| dns2 UDPClient | 15,895 | 19,250 | 390 |
+| tangerine (DoH) | 9,796 | 10,056 | n/a† |
+| fetch + dns-packet (DoH) | 5,217 | 5,228 | n/a† |
 
-† DoH over HTTP/1.1 opens a connection for each query in flight. Past about 128 at once the local server's accept queue (macOS `kern.ipc.somaxconn`) resets connections, which measures the test server, so DoH stops at 100.
+† DoH over HTTP/1.1 opens a connection for each query in flight. Past about 128 at once the local server's accept queue (`kern.ipc.somaxconn` on macOS, `net.core.somaxconn` on Linux) resets connections, which measures the test server, so DoH stops at 100.
 
 ### Cache hits
 
@@ -60,13 +60,13 @@ The same name 10,000 times in a row on a client with its cache on, and how many 
 
 | Client | answers per second | queries that reached the server |
 | :-- | --: | --: |
-| @aoxborrow/dns Resolver | 209,841 | 0 |
-| @aoxborrow/dns Resolver, TCP pipelined | 207,846 | 0 |
-| @aoxborrow/dns Resolver, DoH | 227,129 | 0 |
-| @aoxborrow/dns/promises resolve4 | 176,548 | 0 |
-| node:dns Resolver (c-ares) | 11,657 | 10,000 |
+| @aoxborrow/dns Resolver | 113,467 | 0 |
+| @aoxborrow/dns Resolver, TCP pipelined | 84,168 | 0 |
+| @aoxborrow/dns Resolver, DoH | 146,063 | 0 |
+| @aoxborrow/dns/promises resolve4 | 90,589 | 0 |
+| node:dns Resolver (c-ares) | 11,296 | 10,000 |
 | dns2 UDPClient | no cache | n/a |
-| tangerine (DoH) | 1,335,076 | 0 |
+| tangerine (DoH) | 787,024 | 0 |
 | fetch + dns-packet (DoH) | no cache | n/a |
 
 ### Sockets and memory
@@ -75,16 +75,16 @@ Run first, in a new process. A new client sends 1,000 queries at once (DoH: 100)
 
 | Client | queries at once | UDP source ports | TCP connections | sockets open after | heap retained, KB |
 | :-- | --: | --: | --: | --: | --: |
-| @aoxborrow/dns Resolver | 1,000 | 1,000 | 0 | 0 | 238 |
-| @aoxborrow/dns Resolver, TCP pipelined | 1,000 | 0 | 1 | 0 | 414 |
-| @aoxborrow/dns Resolver, DoH | 100 | 0 | 100 | 100 | 6,521 |
-| @aoxborrow/dns/promises resolve4 | 1,000 | 1,000 | 0 | 0 | 372 |
-| node:dns Resolver (c-ares) | 1,000 | 1 | 0 | 0 | -10 |
-| dns2 UDPClient | 1,000 | 1,000 | 0 | 0 | 63 |
-| tangerine (DoH) | 100 | 0 | 100 | 100 | 2,510 |
-| fetch + dns-packet (DoH) | 100 | 0 | 100 | 100 | 9,515 |
+| @aoxborrow/dns Resolver | 1,000 | 978 | 0 | 0 | 174 |
+| @aoxborrow/dns Resolver, TCP pipelined | 1,000 | 0 | 1 | 0 | 278 |
+| @aoxborrow/dns Resolver, DoH | 100 | 0 | 23 | 9 | 3,773 |
+| @aoxborrow/dns/promises resolve4 | 1,000 | 987 | 0 | 0 | 160 |
+| node:dns Resolver (c-ares) | 1,000 | 1 | 0 | 0 | 74 |
+| dns2 UDPClient | 1,000 | 278 | 0 | 0 | 106 |
+| tangerine (DoH) | 100 | 0 | 100 | 100 | 2,604 |
+| fetch + dns-packet (DoH) | 100 | 0 | 100 | 100 | 5,550 |
 
-Every query got its answer.
+Failed or empty answers: node:dns Resolver (c-ares) 3092, dns2 UDPClient 2996.
 
 ## On the real network
 
@@ -94,47 +94,45 @@ The 100 names in `bench/top-100.ts`, A records, against three public resolvers o
 
 | Client | Transport | cold ms | p50 ms | p95 ms | 100 sequential, ms | 100 in a burst, ms | failed |
 | :-- | --: | --: | --: | --: | --: | --: | --: |
-| @aoxborrow/dns Resolver | UDP | 16.4 | 13.0 | 96.3 | 2,421 | 202 | 0 |
-| @aoxborrow/dns Resolver, TCP pipelined | TCP | 22.5 | 12.1 | 26.0 | 1,370 | 117 | 0 |
-| @aoxborrow/dns Resolver, DoH‡ | DoH | 187.1 | 12.3 | 93.1 | 1,934 | 205 | 0 |
-| @aoxborrow/dns/promises resolve4 | UDP | 12.4 | 13.0 | 24.3 | 1,642 | 201 | 0 |
-| node:dns Resolver (c-ares) | UDP | 11.7 | 11.7 | 21.1 | 1,418 | 200 | 0 |
-| dns2 UDPClient | UDP | 13.6 | 14.8 | 144.1 | 3,806 | 218 | 0 |
-| tangerine (DoH) | DoH | 17.2 | 18.2 | 152.2 | 4,512 | 177 | 0 |
-| fetch + dns-packet (DoH) | DoH | 21.2 | 15.4 | 24.5 | 1,594 | 168 | 0 |
-| `dig`, a process per query | process | n/a | 16.1 (query 12) | 26.3 | 1,851 | n/a | 0 |
+| @aoxborrow/dns Resolver | UDP | 2.3 | 2.9 | 5.5 | 405 | 136 | 0 |
+| @aoxborrow/dns Resolver, TCP pipelined | TCP | 4.6 | 2.3 | 4.8 | 560 | 613 | 0 |
+| @aoxborrow/dns Resolver, DoH | DoH | 17.8 | 4.5 | 7.9 | 654 | 265 | 0 |
+| @aoxborrow/dns/promises resolve4 | UDP | 2.4 | 2.9 | 10.5 | 426 | 228 | 0 |
+| node:dns Resolver (c-ares) | UDP | 2.1 | 2.4 | 11.1 | 567 | 76 | 0 |
+| dns2 UDPClient | UDP | 2.0 | 2.6 | 12.0 | 696 | 205 | 0 |
+| tangerine (DoH) | DoH | 4.1 | 3.9 | 13.9 | 698 | 160 | 0 |
+| fetch + dns-packet (DoH) | DoH | 5.1 | 4.1 | 6.6 | 622 | 383 | 0 |
+| `dig`, a process per query | process | n/a | 34.8 (query 4) | 47.2 | 3,765 | n/a | 0 |
 
 ### Google 8.8.8.8
 
 | Client | Transport | cold ms | p50 ms | p95 ms | 100 sequential, ms | 100 in a burst, ms | failed |
 | :-- | --: | --: | --: | --: | --: | --: | --: |
-| @aoxborrow/dns Resolver | UDP | 18.2 | 18.3 | 30.7 | 1,927 | 251 | 0 |
-| @aoxborrow/dns Resolver, TCP pipelined | TCP | 31.6 | 17.9 | 33.0 | 1,936 | 162 | 0 |
-| @aoxborrow/dns Resolver, DoH‡ | DoH | 102.9 | 22.3 | 47.9 | 2,493 | 362 | 0 |
-| @aoxborrow/dns/promises resolve4 | UDP | 18.0 | 16.7 | 25.5 | 1,814 | 2,295 | 0 |
-| node:dns Resolver (c-ares) | UDP | 16.4 | 16.3 | 22.5 | 1,504 | 245 | 0 |
-| dns2 UDPClient | UDP | 17.6 | 17.2 | 148.9 | 3,013 | 594 | 0 |
-| tangerine (DoH) | DoH | 53.6 | 57.0 | 216.2 | 7,981 | 348 | 0 |
-| fetch + dns-packet (DoH) | DoH | 18.6 | 18.0 | 25.0 | 1,628 | 366 | 0 |
-| `dig`, a process per query | process | n/a | 20.8 (query 16) | 28.3 | 1,939 | n/a | 0 |
+| @aoxborrow/dns Resolver | UDP | 8.6 | 15.4 | 225.5 | 3,917 | 48 | 0 |
+| @aoxborrow/dns Resolver, TCP pipelined | TCP | 11.9 | 10.4 | 37.7 | 1,707 | 300 | 0 |
+| @aoxborrow/dns Resolver, DoH | DoH | 26.6 | 11.8 | 29.9 | 1,561 | 329 | 0 |
+| @aoxborrow/dns/promises resolve4 | UDP | 0.7 | 0.4 | 0.6 | 43 | 23 | 0 |
+| node:dns Resolver (c-ares) | UDP | 0.2 | 0.2 | 0.2 | 18 | 4 | 0 |
+| dns2 UDPClient | UDP | 0.4 | 0.3 | 0.4 | 48 | 13 | 0 |
+| tangerine (DoH) | DoH | 12.2 | 11.4 | 38.1 | 1,523 | 280 | 0 |
+| fetch + dns-packet (DoH) | DoH | 18.3 | 11.6 | 41.2 | 1,586 | 328 | 0 |
+| `dig`, a process per query | process | n/a | 31.3 (query 0) | 43.4 | 3,574 | n/a | 0 |
 
 ### Quad9 9.9.9.9
 
 | Client | Transport | cold ms | p50 ms | p95 ms | 100 sequential, ms | 100 in a burst, ms | failed |
 | :-- | --: | --: | --: | --: | --: | --: | --: |
-| @aoxborrow/dns Resolver | UDP | 9.4 | 10.8 | 181.0 | 4,309 | 1,806 | 0 |
-| @aoxborrow/dns Resolver, TCP pipelined | TCP | 152.5 | 10.6 | 150.5 | 3,133 | 80 | 0 |
-| @aoxborrow/dns Resolver, DoH‡ | DoH | 43.7 | 11.9 | 150.6 | 2,588 | 138 | 0 |
-| @aoxborrow/dns/promises resolve4 | UDP | 9.0 | 8.9 | 12.4 | 926 | 68 | 0 |
-| node:dns Resolver (c-ares) | UDP | 8.1 | 9.1 | 123.1 | 1,635 | 83 | 0 |
-| dns2 UDPClient | UDP | 8.4 | 8.7 | 11.8 | 901 | 90 | 0 |
-| tangerine (DoH) | DoH | 10.2 | 11.3 | 145.9 | 3,504 | 354 | 0 |
-| fetch + dns-packet (DoH) | DoH | 185.5 | 38.5 | 180.8 | 5,665 | 393 | 210 |
-| `dig`, a process per query | process | n/a | 14.0 (query 10) | 21.5 | 1,537 | n/a | 0 |
+| @aoxborrow/dns Resolver | UDP | 2.5 | 72.4 | 2,379.6 | 52,721 | 5,885 | 4 |
+| @aoxborrow/dns Resolver, TCP pipelined | TCP | 8.1 | 5.9 | 140.0 | 2,476 | 5,040 | 8 |
+| @aoxborrow/dns Resolver, DoH | DoH | 13.3 | 2.1 | 3,017.5 | 20,653 | 3,838 | 0 |
+| @aoxborrow/dns/promises resolve4 | UDP | 5.2 | 4.5 | 2,098.1 | 42,298 | 1,401 | 2 |
+| node:dns Resolver (c-ares) | UDP | 1.0 | 2.1 | 1,001.3 | 13,916 | 2,803 | 26 |
+| dns2 UDPClient | UDP | 2.0 | 2.2 | 1,463.5 | 23,629 | 5,043 | 3 |
+| tangerine (DoH) | DoH | 12.3 | 13.4 | 19.2 | 1,391 | 385 | 210 |
+| fetch + dns-packet (DoH) | DoH | 12.3 | 14.8 | 20.8 | 1,546 | 445 | 210 |
+| `dig`, a process per query | process | n/a | 244.1 (query 216) | 2,961.8 | 57,798 | n/a | 2 |
 
-DoH failures here are HTTP 505s: some of this resolver's sites answer only HTTP/2, as RFC 8484 §5.2 recommends, and the clients built on Node's own `fetch` speak HTTP/1.1. tangerine brings undici 8, which negotiates HTTP/2. `@aoxborrow/dns` now sends DoH over HTTP/2 with `node:http2` on Node.
-
-‡ Re-run on its own on the same day, after DoH on Node moved from `fetch` (HTTP/1.1) to `node:http2`; the other rows are from the full run. Before the change this row failed all 210 queries to Quad9 with HTTP 505, like the `fetch` client. Cold is higher than the `fetch` rows because a new client opens its own TLS connection and HTTP/2 session, where Node's `fetch` keeps one connection pool for the whole process, so its "cold" query reuses a connection an earlier client opened.
+DoH failures here are HTTP 505s: some of this resolver's sites answer only HTTP/2, as RFC 8484 §5.2 recommends, and the clients built on Node's own `fetch` speak HTTP/1.1. tangerine brings undici 8, which negotiates HTTP/2. `@aoxborrow/dns` takes a `fetch` option for a client that does.
 
 ### The operating system's resolver
 
@@ -142,7 +140,7 @@ DoH failures here are HTTP 505s: some of this resolver's sites answer only HTTP/
 
 | Client | cold ms | p50 ms | p95 ms | 100 sequential, ms | 100 in a burst, ms | failed |
 | :-- | --: | --: | --: | --: | --: | --: |
-| node:dns lookup (getaddrinfo) | 9.5 | 11.34 | 131.50 | 1,950 | 20 | 0 |
+| node:dns lookup (getaddrinfo) | 7.2 | 0.72 | 55.47 | 1,738 | 28 | 0 |
 
 ### Iterative resolution from the root
 
@@ -150,9 +148,9 @@ Each of the 100 names resolved from the root servers down, over IPv4 UDP, one na
 
 | Resolver | total, s | per name p50 ms | per name p95 ms | queries per name | failed |
 | :-- | --: | --: | --: | --: | --: |
-| @aoxborrow/dns AuthoritativeResolver, one for the list (cache shared) | 14.8 | 95 | 541 | 2.8 | 0 |
-| @aoxborrow/dns AuthoritativeResolver, new for each name | 19.6 | 134 | 582 | 4.3 | 0 |
-| dig +trace, a process per name | 43.2 | 244 | 1,655 | 4.0 | 0 |
+| @aoxborrow/dns AuthoritativeResolver, one for the list (cache shared) | 13.1 | 48 | 289 | 3.2 | 0 |
+| @aoxborrow/dns AuthoritativeResolver, new for each name | 17.6 | 104 | 331 | 4.9 | 0 |
+| dig +trace, a process per name | 36.8 | 197 | 1,333 | 4.0 | 0 |
 
 ## Features
 
@@ -164,7 +162,7 @@ Each of the 100 names resolved from the root servers down, over IPv4 UDP, one na
 | DNS over HTTPS | yes | no | no | yes | yes, only | no | no | BIND 9.18+ (`+https`) |
 | Iterative resolution from the root | yes (`AuthoritativeResolver`) | no | no | no | no | no | no | `+trace` |
 | DNSSEC | validation (`validate: true`), and the primitives it is built from | no | no | record types only | DO bit, reads the resolver's AD flag | no | no | DO bit (`+dnssec`), no validation |
-| Cache | yes, by TTL, shared between callers | c-ares query cache | the system's | no | yes, pluggable (Map, Redis) | yes | no | no |
+| Cache | yes, by TTL, shared between callers | no (Node turns c-ares's cache off) | the system's | no | yes, pluggable (Map, Redis) | yes | no | no |
 | One query on the wire for callers asking the same thing | yes | no | no | no | no | not documented | no | n/a |
 | SOCKS5 and HTTP CONNECT proxies | yes | no | no | no | through its `request` function | no | no | no |
 | Browsers and Workers | records, wire and DNSSEC entries anywhere; DoH through `fetch`; TCP on Cloudflare Workers | no | no | no | no | Bun only | Deno only | n/a |
@@ -173,4 +171,4 @@ Each of the 100 names resolved from the root servers down, over IPv4 UDP, one na
 | Runtime dependencies | none | built in | built in | none | 15 | built in | built in | n/a |
 | A `node:dns/promises` drop-in | yes (`@aoxborrow/dns/promises`) | it is the original | it is the original | no | yes, over DoH | Bun implements `node:dns` | Deno implements `node:dns` | n/a |
 
-"System resolver" means the client asks the operating system (getaddrinfo), which picks the transport and the servers. c-ares is the C library behind `node:dns`'s resolver; whether its query cache answered in the fixture runs is in the cache table above (a query that reached the server was not answered from a cache).
+"System resolver" means the client asks the operating system (getaddrinfo), which picks the transport and the servers. c-ares is the C library behind `node:dns`'s resolver. It has a query cache, which Node turns off: in the cache table above every query reaches the server.

@@ -41,96 +41,127 @@ import type { KeyedLimiter, Limiter, Pacer } from './limiter';
 import { ROOT_HINTS } from './root-hints';
 import type { NameserverHint } from './root-hints';
 
-// the resolver that asks nobody to resolve for it. It starts at the root servers and
-// follows the referrals down, asking each zone's own nameservers, until one of them
-// answers with authority. This is what a recursive resolver does behind the scenes, done
-// in the open: the answer comes with every server that was asked on the way.
-//
-// it is slower than asking a resolver that has it all cached, and it is the only way to
-// see what a zone's own servers say right now
-
+/**
+ * the options of an `AuthoritativeResolver`. The query settings among them can also be given to one
+ * `query()`
+ */
 export interface AuthoritativeResolverOptions
   extends TransportOptions, Omit<QuerySettings, 'recursionDesired' | 'transport'> {
-  // UDP falls back to TCP for a truncated answer. Default UDP
+  /** UDP falls back to TCP for a truncated answer. Default UDP */
   transport?: 'udp' | 'tcp';
-  // where to start. Default: the thirteen root servers
+  /** where to start. Default: the thirteen root servers */
   rootServers?: readonly NameserverHint[];
-  // which of a nameserver's addresses to use. Default both, IPv4 first: a server's IPv6
-  // address is tried only once each of the zone's servers has been tried at its first
-  // address, so a host with no IPv6 route does not wait out a timeout at every step
+  /**
+   * which of a nameserver's addresses to use. Default both, IPv4 first: a server's IPv6
+   * address is tried only once each of the zone's servers has been tried at its first
+   * address, so a host with no IPv6 route does not wait out a timeout at every step
+   */
   addressFamily?: 'ipv4' | 'ipv6' | 'both';
-  // when a name is an alias for a name in another zone, resolve that one too and return
-  // the whole chain. Off by default: the answer is then what the zone's server said, the
-  // alias and nothing more. Covers CNAME and DNAME
+  /**
+   * when a name is an alias for a name in another zone, resolve that one too and return
+   * the whole chain. Off by default: the answer is then what the zone's server said, the
+   * alias and nothing more. Covers CNAME and DNAME
+   */
   followCnames?: boolean;
-  // how long an alias chain may be. Default 8
+  /** how long an alias chain may be. Default 8 */
   maxAliases?: number;
-  // how many servers may be asked on the way to one answer, nameserver address lookups
-  // included. Default 40
+  /**
+   * how many servers may be asked on the way to one answer, nameserver address lookups
+   * included. Default 40
+   */
   maxHops?: number;
-  // how long one answer may take altogether, in milliseconds. `timeout` is the patience
-  // with one server; a zone whose servers all stay silent would otherwise cost that for
-  // each address of each of them. The last server a zone has left to ask is given the
-  // rest of this, shared among its attempts, since there is no next one to save it for.
-  // With `validate`, the queries for the chain share it with the data. Default 10000
+  /**
+   * how long one answer may take altogether, in milliseconds. `timeout` is the patience
+   * with one server; a zone whose servers all stay silent would otherwise cost that for
+   * each address of each of them. The last server a zone has left to ask is given the
+   * rest of this, shared among its attempts, since there is no next one to save it for.
+   * With `validate`, the queries for the chain share it with the data. Default 10000
+   */
   totalTimeout?: number;
-  // addresses for nameservers by name, used before asking for them. Also what puts a
-  // name beside an address in the trace
+  /**
+   * addresses for nameservers by name, used before asking for them. Also what puts a
+   * name beside an address in the trace
+   */
   hosts?: Readonly<Record<string, string | readonly string[]>>;
-  // how many queries may be in flight to one server address at once. Default 8; Infinity
-  // for no limit
+  /**
+   * how many queries may be in flight to one server address at once. Default 8; Infinity
+   * for no limit
+   */
   serverConcurrency?: number;
-  // remember delegations between queries, for as long as their TTLs allow and at most a
-  // day, and for no longer than the resolver lives. A query then starts at the deepest zone it knows, and
-  // its trace starts there too. Queries running at the same time that need the same
-  // delegation share one referral: the others wait for the one asking, at the root, a
-  // top-level domain or a zone already seen to give referrals. Default true. With false every query starts again from the root, and its trace is the whole path
+  /**
+   * remember delegations between queries, for as long as their TTLs allow and at most a
+   * day, and for no longer than the resolver lives. A query then starts at the deepest zone it knows, and
+   * its trace starts there too. Queries running at the same time that need the same
+   * delegation share one referral: the others wait for the one asking, at the root, a
+   * top-level domain or a zone already seen to give referrals. Default true. With false every query starts again from the root, and its trace is the whole path
+   */
   cache?: boolean;
-  // remember the addresses of nameservers that came without glue between queries, for as
-  // long as their TTLs allow and at most a day, even with `cache` false: a later query that meets the same
-  // nameserver asks it straight away instead of looking it up again. Lookups of one
-  // nameserver made by queries running at the same time are shared. Default true
+  /**
+   * remember the addresses of nameservers that came without glue between queries, for as
+   * long as their TTLs allow and at most a day, even with `cache` false: a later query that meets the same
+   * nameserver asks it straight away instead of looking it up again. Lookups of one
+   * nameserver made by queries running at the same time are shared. Default true
+   */
   nameserverCache?: boolean;
-  // the least time between two queries to the same server, in milliseconds. Default 0
+  /** the least time between two queries to the same server, in milliseconds. Default 0 */
   serverDelay?: number;
-  // how many queries may be in flight at once, to all servers together. Default: no limit
+  /** how many queries may be in flight at once, to all servers together. Default: no limit */
   concurrency?: number;
-  // malformed record data is an error. By default such a record comes back in the
-  // generic form
+  /**
+   * malformed record data is an error. By default such a record comes back in the
+   * generic form
+   */
   strict?: boolean;
+  /** told of every exchange, retry, fallback to TCP and proxy connection, as it happens */
   onEvent?: OnEvent;
-  // sockets and connections to share with other resolvers. The resolver does not close
-  // a set it was given
+  /**
+   * sockets and connections to share with other resolvers. The resolver does not close
+   * a set it was given
+   */
   transports?: Transports;
-  // check each answer's DNSSEC chain from the trust anchors down, and say what came of it
-  // in `answer.security`. Queries are then sent with DO set, so the answer's `answers`
-  // holds its signatures too. Validated key sets are kept by zone for as long as their
-  // TTLs allow, unless `cache` is false. Default false
+  /**
+   * check each answer's DNSSEC chain from the trust anchors down, and say what came of it
+   * in `answer.security`. Queries are then sent with DO set, so the answer's `answers`
+   * holds its signatures too. Validated key sets are kept by zone for as long as their
+   * TTLs allow, unless `cache` is false. Default false
+   */
   validate?: boolean;
-  // the trust anchors validation starts from. Default: IANA's root trust anchors
+  /** the trust anchors validation starts from. Default: IANA's root trust anchors */
   trustAnchors?: readonly TrustAnchor[];
 }
 
+/**
+ * what one `AuthoritativeResolver.query()` takes: the query settings, for this query alone, and
+ * these
+ */
 export interface AuthoritativeQueryOptions extends Omit<
   QuerySettings,
   'recursionDesired' | 'transport'
 > {
   transport?: 'udp' | 'tcp';
+  /** in place of the resolver's `totalTimeout`, for this query */
   totalTimeout?: number;
+  /** abandons the query when aborted; it rejects with the signal's reason */
   signal?: AbortSignal;
-  // told of every query this one sends, nameserver lookups included, beside the
-  // resolver's own `onEvent`: what tells the queries of one call apart from those of
-  // others running at the same time
+  /**
+   * told of every query this one sends, nameserver lookups included, beside the
+   * resolver's own `onEvent`: what tells the queries of one call apart from those of
+   * others running at the same time
+   */
   onEvent?: OnEvent;
-  // where this query starts, in place of the root servers: a server to ask first and
-  // follow the referrals of. Nameservers that come without an address are still looked
-  // up from the root servers, and the delegations found on the way are not kept for
-  // other queries
+  /**
+   * where this query starts, in place of the root servers: a server to ask first and
+   * follow the referrals of. Nameservers that come without an address are still looked
+   * up from the root servers, and the delegations found on the way are not kept for
+   * other queries
+   */
   startAt?: readonly NameserverHint[];
-  // walk from the root servers whatever delegations the resolver remembers, asking every
-  // server on the way, so the trace is the whole path. What the walk learns is still kept
-  // for other queries, and other queries that need a delegation it is fetching wait for
-  // it. Nameserver addresses still come from `nameserverCache`. Default false
+  /**
+   * walk from the root servers whatever delegations the resolver remembers, asking every
+   * server on the way, so the trace is the whole path. What the walk learns is still kept
+   * for other queries, and other queries that need a delegation it is fetching wait for
+   * it. Nameserver addresses still come from `nameserverCache`. Default false
+   */
   fromRoot?: boolean;
 }
 
@@ -297,6 +328,17 @@ type Outcome =
   // `loop`: the server sent the question sideways or back up, not an error code
   | { kind: 'lame'; reason: string; loop?: boolean };
 
+/**
+ * the resolver that asks nobody to resolve for it. It starts at the root servers and follows the
+ * referrals down, asking each zone's own nameservers, until one of them answers with authority.
+ * This is what a recursive resolver does behind the scenes, done in the open: the answer comes with
+ * every server that was asked on the way.
+ *
+ * it is slower than asking a resolver that has it all cached, and it is the only way to see what a
+ * zone's own servers say right now
+ *
+ * See docs/resolvers.md.
+ */
 export class AuthoritativeResolver {
   private readonly options: AuthoritativeResolverOptions;
   private readonly limit: Limiter;
@@ -352,8 +394,10 @@ export class AuthoritativeResolver {
     }
   }
 
-  // resolve from the root. As with `Resolver`, a name that does not exist is an answer,
-  // not an error; an error means no server gave a usable response
+  /**
+   * resolve from the root. As with `Resolver`, a name that does not exist is an answer,
+   * not an error; an error means no server gave a usable response
+   */
   query<Type extends KnownRecordType>(
     name: string,
     type: Type,
@@ -555,8 +599,10 @@ export class AuthoritativeResolver {
     }
   }
 
-  // forget every delegation, nameserver address and nameserver name learned so far, and
-  // every zone validation has judged
+  /**
+   * forget every delegation, nameserver address and nameserver name learned so far, and
+   * every zone validation has judged
+   */
   clearCache(): void {
     this.knowledge.cuts.clear();
     this.knowledge.zones.clear();
@@ -565,8 +611,10 @@ export class AuthoritativeResolver {
     this.validator?.clear();
   }
 
-  // close the sockets and connections this resolver opened. A resolver that shares the
-  // process-wide set, or was given one, leaves it open
+  /**
+   * close the sockets and connections this resolver opened. A resolver that shares the
+   * process-wide set, or was given one, leaves it open
+   */
   close(): void {
     // a lookup some query is still waiting on ends with the resolver
     for (const lookup of this.lookups.values()) lookup.stop.abort();

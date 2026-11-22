@@ -1,6 +1,6 @@
 // the fixed parts of a DNS message header (RFC 1035 §4.1.1, RFC 2535 for AD and CD)
 
-// flag bits within the 16-bit flags word
+/** flag bits within the 16-bit flags word */
 export const HEADER_FLAGS = {
   QR: 0x8000, // this message is a response
   AA: 0x0400, // the responding server is authoritative for the name
@@ -11,7 +11,7 @@ export const HEADER_FLAGS = {
   CD: 0x0010, // checking disabled: return data even if validation fails
 } as const;
 
-// operation codes, from the IANA "DNS OpCodes" registry
+/** operation codes, from the IANA "DNS OpCodes" registry */
 export const OPCODES = {
   QUERY: 0,
   IQUERY: 1, // obsolete
@@ -21,7 +21,7 @@ export const OPCODES = {
   DSO: 6,
 } as const;
 
-// response codes, from the IANA "DNS RCODEs" registry. Codes above 15 only fit with EDNS
+/** response codes, from the IANA "DNS RCODEs" registry. Codes above 15 only fit with EDNS */
 export const RCODES = {
   NOERROR: 0, // no error
   FORMERR: 1, // the server could not interpret the query
@@ -46,6 +46,7 @@ export const RCODES = {
   BADCOOKIE: 23, // bad or missing server cookie
 } as const;
 
+/** a response code mnemonic, such as `NXDOMAIN` */
 export type RcodeName = keyof typeof RCODES;
 
 // the first name listed for a code wins. 16 reads as BADVERS because a header rcode of 16
@@ -56,7 +57,7 @@ for (const [name, code] of Object.entries(RCODES) as [RcodeName, number][]) {
   if (!RCODE_NAMES.has(code)) RCODE_NAMES.set(code, name);
 }
 
-// the mnemonic for a response code, or `RCODE<n>` for one with no name
+/** the mnemonic for a response code, or `RCODE<n>` for one with no name */
 export function rcodeName(code: number): RcodeName | `RCODE${number}` {
   return RCODE_NAMES.get(code) ?? `RCODE${code}`;
 }

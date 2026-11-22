@@ -34,11 +34,12 @@ import type {
 // seen closing on pipelined queries is given one query per connection from then on. A
 // server that goes silent cannot be told from a slow one, and costs a timeout
 
+/** the options of `createTcpTransport` */
 export interface TcpTransportOptions extends Pick<
   TransportOptions,
   'proxy' | 'connect' | 'tls' | 'idleTimeout' | 'pipeline'
 > {
-  // speak TLS on the connection: DNS over TLS
+  /** speak TLS on the connection: DNS over TLS */
   secure?: boolean;
 }
 
@@ -142,6 +143,10 @@ function connectionWire(connection: Connection, handlers: WireHandlers): Wire {
   };
 }
 
+/**
+ * DNS over TCP: a connection per query, or with `pipeline: true` connections kept open and shared
+ * (RFC 7766)
+ */
 export function createTcpTransport(options: TcpTransportOptions = {}): Transport {
   const name = options.secure ? 'tls' : 'tcp';
   const idleTimeout = options.idleTimeout ?? DEFAULT_IDLE_TIMEOUT;

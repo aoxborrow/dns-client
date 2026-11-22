@@ -63,7 +63,12 @@ describe('the docs', () => {
   }, 60_000);
 
   it('runs every example that needs no network, and each gives the values it shows', async () => {
-    expect(await run(all.filter(example => !example.network), true)).toEqual([]);
+    expect(
+      await run(
+        all.filter(example => !example.network),
+        true
+      )
+    ).toEqual([]);
   }, 60_000);
 
   // nothing is public without a word about what it is. Types are left out: the examples

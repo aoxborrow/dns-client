@@ -46,34 +46,40 @@ export function readRrsig(record: ResourceRecord): RrsigFields | undefined {
 // the work one judgement may do
 // ---------------------------------------------------------------------------
 
-// how much signature checking one judgement may do. A zone that publishes many keys with
-// the same tag, or signs an RRset many times over, can make a validator run thousands of
-// signature checks for one answer (KeyTrap, CVE-2023-50387); validators since cap that
-// work and fail the answer past the cap. Without a budget nothing is capped, as for a
-// report that wants every check made
+/**
+ * how much signature checking one judgement may do. A zone that publishes many keys with
+ * the same tag, or signs an RRset many times over, can make a validator run thousands of
+ * signature checks for one answer (KeyTrap, CVE-2023-50387); validators since cap that
+ * work and fail the answer past the cap. Without a budget nothing is capped, as for a
+ * report that wants every check made
+ */
 export interface CheckBudget {
-  // signature verifications left for the whole judgement
+  /** signature verifications left for the whole judgement */
   remaining: number;
-  // the most keys tried for one signature, where several share its tag and algorithm
+  /** the most keys tried for one signature, where several share its tag and algorithm */
   keysPerSignature: number;
-  // the most signatures checked for one RRset
+  /** the most signatures checked for one RRset */
   signaturesPerRrset: number;
 }
 
+/** limits on how much signature checking one judgement may do */
 export interface CheckLimits {
-  // signature verifications for the whole judgement
+  /** signature verifications for the whole judgement */
   verifications: number;
   keysPerSignature: number;
   signaturesPerRrset: number;
 }
 
+/**
+ * the default limits: 128 verifications in all, 4 keys tried per signature, 8 signatures per RRset
+ */
 export const CHECK_LIMITS: Readonly<CheckLimits> = {
   verifications: 128,
   keysPerSignature: 4,
   signaturesPerRrset: 8,
 };
 
-// a fresh budget, at the default limits unless told otherwise
+/** a fresh budget, at the default limits unless told otherwise */
 export function checkBudget(limits: Partial<CheckLimits> = {}): CheckBudget {
   return {
     remaining: limits.verifications ?? CHECK_LIMITS.verifications,
@@ -94,6 +100,7 @@ function spend(budget: CheckBudget | undefined): boolean {
 // keys
 // ---------------------------------------------------------------------------
 
+/** a DNSKEY, decoded, with its key tag */
 export interface DnssecKey {
   record: ResourceRecord;
   keyTag: number;
@@ -101,15 +108,15 @@ export interface DnssecKey {
   protocol: number;
   algorithm: number;
   publicKey: Uint8Array;
-  // the Secure Entry Point flag: the key a parent's DS normally points at
+  /** the Secure Entry Point flag: the key a parent's DS normally points at */
   sep: boolean;
-  // the RFC 5011 revoke bit
+  /** the RFC 5011 revoke bit */
   revoked: boolean;
-  // the Zone flag: a key without it may not sign the zone's data
+  /** the Zone flag: a key without it may not sign the zone's data */
   zoneFlag: boolean;
 }
 
-// the DNSKEY records among `records`, read. One that does not decode is left out
+/** the DNSKEY records among `records`, read. One that does not decode is left out */
 export function readKeys(records: readonly ResourceRecord[]): DnssecKey[] {
   const keys: DnssecKey[] = [];
   for (const record of records) {
@@ -145,17 +152,20 @@ export function keyAlgorithms(keys: readonly DnssecKey[]): number[] {
 // trust anchors
 // ---------------------------------------------------------------------------
 
+/** what `checkAnchors` made of a key set */
 export interface AnchorCheck {
-  // verified when a published key hashes to a current trust anchor
+  /** verified when a published key hashes to a current trust anchor */
   result: VerificationResult;
-  // the published keys that do, in the order they were published
+  /** the published keys that do, in the order they were published */
   keys: DnssecKey[];
-  // the anchors they match, each once, in the order first matched
+  /** the anchors they match, each once, in the order first matched */
   anchors: TrustAnchor[];
-  // the key tags of published keys with the revoke bit set
+  /** the key tags of published keys with the revoke bit set */
   revokedKeyTags: number[];
-  // anchors whose key is published with the revoke bit and signs the key set itself, so
-  // it is revoked (RFC 5011 §2.1) and anchors nothing, whatever its validity window says
+  /**
+   * anchors whose key is published with the revoke bit and signs the key set itself, so
+   * it is revoked (RFC 5011 §2.1) and anchors nothing, whatever its validity window says
+   */
   revokedAnchors: TrustAnchor[];
 }
 
@@ -171,11 +181,13 @@ function digestMatches(owner: string, rdata: Uint8Array, anchor: TrustAnchor): b
   return Boolean(digest) && toHex(digest!) === anchor.digest.toLowerCase();
 }
 
-// which published keys a set of trust anchors vouches for. A key is anchored by its own
-// material hashing to a current anchor, never by sharing a key tag with one: tags collide,
-// and a colliding key added to the set could otherwise vouch for it. `rrset` and
-// `rrsigs`, when given, are the key set and its signatures, used to tell a revoked anchor:
-// one whose key appears with the revoke bit set and has signed the set with it
+/**
+ * which published keys a set of trust anchors vouches for. A key is anchored by its own
+ * material hashing to a current anchor, never by sharing a key tag with one: tags collide,
+ * and a colliding key added to the set could otherwise vouch for it. `rrset` and
+ * `rrsigs`, when given, are the key set and its signatures, used to tell a revoked anchor:
+ * one whose key appears with the revoke bit set and has signed the set with it
+ */
 export async function checkAnchors(
   zone: string,
   keys: readonly DnssecKey[],
@@ -268,6 +280,7 @@ function withinValidity(sig: RrsigFields, now: Date): boolean {
 // DS records
 // ---------------------------------------------------------------------------
 
+/** the codes a DS check gives */
 export const DS_CODES = {
   VERIFIED: 'verified',
   // a digest type nothing here computes
@@ -282,30 +295,33 @@ export const DS_CODES = {
   DIGEST_MISMATCH: 'digest-mismatch',
 } as const;
 
+/** a code a DS check gives */
 export type DsCode = (typeof DS_CODES)[keyof typeof DS_CODES];
 
+/** one DS record, checked against the published keys */
 export interface DsCheck {
   record: ResourceRecord;
   ds: DsFields;
   code: DsCode;
   result: VerificationResult;
-  // whether the digest selection kept it (RFC 4509 §3)
+  /** whether the digest selection kept it (RFC 4509 §3) */
   selected: boolean;
-  // the published keys with its key tag
+  /** the published keys with its key tag */
   candidates: DnssecKey[];
-  // the digest computed over the last candidate tried, in hex
+  /** the digest computed over the last candidate tried, in hex */
   computed?: string;
-  // the key it authenticates
+  /** the key it authenticates */
   key?: DnssecKey;
 }
 
+/** a zone's DS set, checked */
 export interface DsSetCheck {
   checks: DsCheck[];
-  // the strongest supported digest type published, which decides
+  /** the strongest supported digest type published, which decides */
   selectedDigestType?: number;
-  // the keys the DS set authenticates, in the order the DS records came
+  /** the keys the DS set authenticates, in the order the DS records came */
   keys: DnssecKey[];
-  // the algorithms of the DS records the selection kept
+  /** the algorithms of the DS records the selection kept */
   algorithms: number[];
 }
 
@@ -313,7 +329,7 @@ type DigestInfo = (typeof DS_DIGEST_TYPES)[keyof typeof DS_DIGEST_TYPES];
 const digestInfo = (type: number): DigestInfo | undefined =>
   DS_DIGEST_TYPES[type as keyof typeof DS_DIGEST_TYPES];
 
-// whether a digest type is deprecated (SHA-1)
+/** whether a digest type is deprecated (SHA-1) */
 export function isDigestDeprecated(type: number): boolean {
   return digestInfo(type)?.standing === ALGORITHM_STANDINGS.DEPRECATED;
 }
@@ -401,6 +417,7 @@ export function checkDsSet(
 // signatures
 // ---------------------------------------------------------------------------
 
+/** the codes a signature check gives */
 export const SIGNATURE_CODES = {
   VERIFIED: 'verified',
   // the signer name is not the zone the RRset is judged in
@@ -428,24 +445,26 @@ export const SIGNATURE_CODES = {
   LIMIT_EXCEEDED: 'limit-exceeded',
 } as const;
 
+/** a code a signature check gives */
 export type SignatureCode = (typeof SIGNATURE_CODES)[keyof typeof SIGNATURE_CODES];
 
+/** one signature, checked */
 export interface SignatureCheck {
   record: ResourceRecord;
   rrsig: RrsigFields;
   code: SignatureCode;
   result: VerificationResult;
-  // the key it was checked against
+  /** the key it was checked against */
   key?: DnssecKey;
-  // fewer labels than its owner: the answer was synthesized from a wildcard
+  /** fewer labels than its owner: the answer was synthesized from a wildcard */
   wildcard?: boolean;
-  // the RRset's TTL is above the original TTL the signature records
+  /** the RRset's TTL is above the original TTL the signature records */
   ttlExceedsOriginal?: boolean;
   signedDataLength?: number;
   signatureLength?: number;
   expectedSignatureLength?: number;
   publicKeyDescription?: string;
-  // what the crypto said, as it said it
+  /** what the crypto said, as it said it */
   detail?: string;
 }
 
@@ -544,6 +563,7 @@ export async function checkSignature(
 // RRsets
 // ---------------------------------------------------------------------------
 
+/** the codes an RRset check gives */
 export const RRSET_CODES = {
   // a signature from the zone verified it
   VERIFIED: 'verified',
@@ -555,38 +575,52 @@ export const RRSET_CODES = {
   MISSING_ALGORITHM: 'missing-algorithm',
 } as const;
 
+/** a code an RRset check gives */
 export type RrsetCode = (typeof RRSET_CODES)[keyof typeof RRSET_CODES];
 
+/** what `checkRrset` made of an RRset */
 export interface RrsetCheck {
   rrset: Rrset;
-  // false for the NS RRset of a delegation and for glue, which the parent does not sign
-  // (RFC 4035 §2.2)
+  /**
+   * false for the NS RRset of a delegation and for glue, which the parent does not sign
+   * (RFC 4035 §2.2)
+   */
   authoritative: boolean;
   code: RrsetCode;
-  // the signatures covering it, in the order they came. One made by another zone is
-  // recorded as `foreign` and not checked
+  /**
+   * the signatures covering it, in the order they came. One made by another zone is
+   * recorded as `foreign` and not checked
+   */
   signatures: SignatureCheck[];
-  // the algorithms of the key set no verified signature used, when every algorithm is
-  // required
+  /**
+   * the algorithms of the key set no verified signature used, when every algorithm is
+   * required
+   */
   missingAlgorithms: number[];
 }
 
+/** a zone's validated keys, which RRsets are checked against */
 export interface ZoneKeys {
   zone: string;
   keys: readonly DnssecKey[];
 }
 
+/** the options of `checkRrset` */
 export interface RrsetCheckOptions {
   now: Date;
-  // the child zone, when the RRset came with a referral to it: its NS RRset is then the
-  // delegation's, which the parent does not sign
+  /**
+   * the child zone, when the RRset came with a referral to it: its NS RRset is then the
+   * delegation's, which the parent does not sign
+   */
   delegationOf?: string;
-  // require a signature from every algorithm in the key set (RFC 4035 §2.2). Validators
-  // accept any one (RFC 6840 §5.11), so off by default
+  /**
+   * require a signature from every algorithm in the key set (RFC 4035 §2.2). Validators
+   * accept any one (RFC 6840 §5.11), so off by default
+   */
   requireEveryAlgorithm?: boolean;
-  // stop at the first signature that verifies
+  /** stop at the first signature that verifies */
   stopAtFirst?: boolean;
-  // the signature checks the judgement may still make
+  /** the signature checks the judgement may still make */
   budget?: CheckBudget;
 }
 
@@ -612,9 +646,11 @@ export function isAuthoritative(rrset: Rrset, zone: string, delegationOf?: strin
   return !delegationNs && !glue;
 }
 
-// judge an RRset in its zone. Only a signature from the zone can authenticate the zone's
-// data (RFC 4035 §5.3.1): an RRset whose only signatures name another signer is unsigned,
-// or a server could strip the real RRSIG and attach an off-zone one
+/**
+ * judge an RRset in its zone. Only a signature from the zone can authenticate the zone's
+ * data (RFC 4035 §5.3.1): an RRset whose only signatures name another signer is unsigned,
+ * or a server could strip the real RRSIG and attach an off-zone one
+ */
 export async function checkRrset(
   zone: ZoneKeys,
   rrset: Rrset,
@@ -686,6 +722,7 @@ export async function checkRrset(
 // key sets
 // ---------------------------------------------------------------------------
 
+/** the codes a key set check gives */
 export const KEY_SET_CODES = {
   // signed by a key an entry point vouches for
   VERIFIED: 'verified',
@@ -704,15 +741,17 @@ export const KEY_SET_CODES = {
   NOT_SIGNED_BY_ENTRY_KEY: 'not-signed-by-entry-key',
 } as const;
 
+/** a code a key set check gives */
 export type KeySetCode = (typeof KEY_SET_CODES)[keyof typeof KEY_SET_CODES];
 
+/** a zone's key set, checked */
 export interface KeySetCheck {
   code: KeySetCode;
-  // the DNSKEY RRset
+  /** the DNSKEY RRset */
   rrset?: Rrset;
-  // every signature over it, each checked against the zone's keys
+  /** every signature over it, each checked against the zone's keys */
   signatures: SignatureCheck[];
-  // the tag of the vouched-for key whose signature verified it
+  /** the tag of the vouched-for key whose signature verified it */
   keyTag?: number;
 }
 

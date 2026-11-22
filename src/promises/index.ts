@@ -70,8 +70,10 @@ import { ADDRCONFIG, ALL, V4MAPPED } from './lookup';
 
 export { ADDRCONFIG, ALL, V4MAPPED };
 
-// Node's error codes, under Node's names: every one `node:dns/promises` has, the ones this
-// facade never gives included, so code that compares against them still compiles
+/**
+ * Node's error codes, under Node's names: every one `node:dns/promises` has, the ones this
+ * facade never gives included, so code that compares against them still compiles
+ */
 export const NODATA = 'ENODATA';
 export const FORMERR = 'EFORMERR';
 export const SERVFAIL = 'ESERVFAIL';
@@ -97,20 +99,25 @@ export const LOADIPHLPAPI = 'ELOADIPHLPAPI';
 export const ADDRGETNETWORKPARAMS = 'EADDRGETNETWORKPARAMS';
 export const CANCELLED = 'ECANCELLED';
 
-// the library's resolver options, and Node's `timeout` (milliseconds per attempt, as in
-// the library) and `tries` (attempts per server). `maxTimeout` is not supported
+/**
+ * the library's resolver options, and Node's `timeout` (milliseconds per attempt, as in
+ * the library) and `tries` (attempts per server). `maxTimeout` is not supported
+ */
 export interface ResolverOptions extends LibraryResolverOptions {
   tries?: number;
 }
 
+/** `resolve4` and `resolve6`'s options: `ttl: true` gives each address with its TTL */
 export interface ResolveOptions {
   ttl: boolean;
 }
 
+/** `ResolveOptions` asking for TTLs */
 export interface ResolveWithTtlOptions extends ResolveOptions {
   ttl: true;
 }
 
+/** the callback `connectLookup` calls, as Node's `lookup` does */
 export type LookupCallback = (
   error: Error | null,
   address: string | LookupAddress[],
@@ -136,10 +143,12 @@ const SYSCALLS: Record<string, string> = {
 
 let defaultOrder: ResultOrder = 'verbatim';
 
+/** the order `lookup` gives addresses in by default, as Node's */
 export function getDefaultResultOrder(): ResultOrder {
   return defaultOrder;
 }
 
+/** set the order `lookup` gives addresses in by default, as Node's */
 export function setDefaultResultOrder(order: ResultOrder): void {
   if (!['ipv4first', 'ipv6first', 'verbatim'].includes(order)) {
     throw argumentError(`The argument 'order' is invalid. Received ${String(order)}`);
@@ -176,6 +185,10 @@ function formatServer(server: Server): string {
     : `${server.address}:${server.port}`;
 }
 
+/**
+ * `node:dns/promises`'s `Resolver`, over the library's: the same methods and results, errors shaped
+ * like Node's, and a cache
+ */
 export class Resolver {
   readonly #options: ResolverOptions;
   readonly #transports: Transports;
@@ -206,7 +219,7 @@ export class Resolver {
     this.#resolver = this.#make();
   }
 
-  // the servers asked, in Node's format. The machine's own until `setServers` is called
+  /** the servers asked, in Node's format. The machine's own until `setServers` is called */
   getServers(): string[] {
     return this.#servers ? this.#servers.map(formatServer) : configuredServers();
   }
@@ -226,14 +239,18 @@ export class Resolver {
     previous.close();
   }
 
-  // every call in progress rejects with ECANCELLED. What was already sent is still
-  // answered, into the cache
+  /**
+   * every call in progress rejects with ECANCELLED. What was already sent is still
+   * answered, into the cache
+   */
   cancel(): void {
     for (const reject of [...this.#pending]) reject('ECANCELLED');
   }
 
-  // closes the sockets this resolver opened and empties its cache. Not in Node, whose
-  // resolvers need no closing; neither do these, whose sockets never keep a process alive
+  /**
+   * closes the sockets this resolver opened and empties its cache. Not in Node, whose
+   * resolvers need no closing; neither do these, whose sockets never keep a process alive
+   */
   close(): void {
     this.#resolver.close();
     if (this.#ownsTransports) this.#transports.close();
@@ -363,7 +380,7 @@ export class Resolver {
     return this.#typed(hostname, 'TXT', record => record.strings.map(nodeText));
   }
 
-  // the names an address has: its PTR records under in-addr.arpa or ip6.arpa
+  /** the names an address has: its PTR records under in-addr.arpa or ip6.arpa */
   reverse(ip: string): Promise<string[]> {
     checkHostname(ip, 'ip');
     if (!ipFamily(ip)) {
@@ -391,8 +408,10 @@ export class Resolver {
     ).then(addresses => (all ? addresses : addresses[0]));
   }
 
-  // `lookup` with a callback, for the `lookup` option of `net.connect`, `tls.connect`,
-  // `http.Agent` and undici. Bound, so it can be passed as it is
+  /**
+   * `lookup` with a callback, for the `lookup` option of `net.connect`, `tls.connect`,
+   * `http.Agent` and undici. Bound, so it can be passed as it is
+   */
   readonly connectLookup = (
     hostname: string,
     options: number | LookupOptions | LookupCallback,
@@ -529,29 +548,59 @@ export class Resolver {
 // the process-wide resolver the functions below use, as `node:dns/promises` has one
 const shared = new Resolver();
 
+/** the servers the shared resolver asks, in Node's format */
 export const getServers = (): string[] => shared.getServers();
+/** the servers the shared resolver asks from now on */
 export const setServers = (servers: readonly string[]): void => shared.setServers(servers);
 
+/**
+ * the records of one type, as `node:dns/promises` gives them. Every `resolve*` below and `reverse`
+ * and `lookup` use one shared resolver
+ */
 export const resolve: Resolver['resolve'] = shared.resolve.bind(shared);
+/** the IPv4 addresses of a name */
 export const resolve4: Resolver['resolve4'] = shared.resolve4.bind(shared);
+/** the IPv6 addresses of a name */
 export const resolve6: Resolver['resolve6'] = shared.resolve6.bind(shared);
+/** every record of a name an ANY query returns */
 export const resolveAny: Resolver['resolveAny'] = shared.resolveAny.bind(shared);
+/** the CAA records of a name */
 export const resolveCaa: Resolver['resolveCaa'] = shared.resolveCaa.bind(shared);
+/** the CNAME targets of a name */
 export const resolveCname: Resolver['resolveCname'] = shared.resolveCname.bind(shared);
+/** the MX records of a name */
 export const resolveMx: Resolver['resolveMx'] = shared.resolveMx.bind(shared);
+/** the NAPTR records of a name */
 export const resolveNaptr: Resolver['resolveNaptr'] = shared.resolveNaptr.bind(shared);
+/** the nameservers of a name */
 export const resolveNs: Resolver['resolveNs'] = shared.resolveNs.bind(shared);
+/** the PTR targets of a name */
 export const resolvePtr: Resolver['resolvePtr'] = shared.resolvePtr.bind(shared);
+/** the SOA record of a name */
 export const resolveSoa: Resolver['resolveSoa'] = shared.resolveSoa.bind(shared);
+/** the SRV records of a name */
 export const resolveSrv: Resolver['resolveSrv'] = shared.resolveSrv.bind(shared);
+/** the TLSA records of a name */
 export const resolveTlsa: Resolver['resolveTlsa'] = shared.resolveTlsa.bind(shared);
+/** the TXT records of a name, each as its strings */
 export const resolveTxt: Resolver['resolveTxt'] = shared.resolveTxt.bind(shared);
+/** the names an address has, from its PTR records */
 export const reverse: Resolver['reverse'] = shared.reverse.bind(shared);
+/**
+ * an address for a name, as `node:dns/promises`' `lookup`: from the hosts file, `localhost`, or A
+ * and AAAA queries. It does not call getaddrinfo
+ */
 export const lookup: Resolver['lookup'] = shared.lookup.bind(shared);
+/**
+ * `lookup` with a callback, for the `lookup` option of `net.connect`, `tls.connect`, `http.Agent`
+ * and undici's `connect`
+ */
 export const connectLookup: Resolver['connectLookup'] = shared.connectLookup;
 
-// the whole module as one object, for `import dns from '@aoxborrow/dns/promises'`, which is
-// how much code imports `node:dns/promises`
+/**
+ * the whole module as one object, for `import dns from '@aoxborrow/dns/promises'`, which is
+ * how much code imports `node:dns/promises`
+ */
 export default {
   ADDRCONFIG,
   ALL,

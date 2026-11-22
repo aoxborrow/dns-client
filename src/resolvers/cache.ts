@@ -9,21 +9,30 @@ export const MAX_TTL = 86_400;
 // problematic; Unbound and PowerDNS keep an hour
 export const MAX_NEGATIVE_TTL = 3600;
 
+/**
+ * a cache a resolver can use: anything with `get`, `set` (with a time to live in milliseconds),
+ * `delete` and `clear`
+ */
 export interface Cache<Value> {
   get(key: string): Value | undefined;
-  // keep `value` for `ttl` milliseconds
+  /** keep `value` for `ttl` milliseconds */
   set(key: string, value: Value, ttl: number): void;
   delete(key: string): void;
   clear(): void;
 }
 
+/** the options of `createLruCache` */
 export interface LruCacheOptions {
-  // how many entries to keep. Default 1000
+  /** how many entries to keep. Default 1000 */
   max?: number;
-  // the clock, in milliseconds. For tests
+  /** the clock, in milliseconds. For tests */
   now?: () => number;
 }
 
+/**
+ * the built-in cache: least recently used entries go first once it holds `max`, and an entry is
+ * gone once its time to live has passed
+ */
 export function createLruCache<Value>(options: LruCacheOptions = {}): Cache<Value> {
   const max = Math.max(1, options.max ?? 1000);
   const now = options.now ?? Date.now;
@@ -61,8 +70,10 @@ export function createLruCache<Value>(options: LruCacheOptions = {}): Cache<Valu
   };
 }
 
-// what a resolver's `cache` option accepts: false for none, a cache to use, or settings
-// for the default one
+/**
+ * what a resolver's `cache` option accepts: false for none, a cache to use, or settings
+ * for the default one
+ */
 export type CacheOption<Value> = false | Cache<Value> | LruCacheOptions;
 
 export function resolveCache<Value>(

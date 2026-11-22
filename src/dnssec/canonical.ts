@@ -80,9 +80,11 @@ const DOWNCASE_NAMES_IN_RDATA = new Set([
 // message parsing
 // ---------------------------------------------------------------------------
 
-// canonicalise RDATA (RFC 4034 §6.2): downcase the names embedded in it, for the types the
-// RFC lists. The decoder has already written those names out in full, so they are walked
-// in place; every other byte is left as it was
+/**
+ * canonicalise RDATA (RFC 4034 §6.2): downcase the names embedded in it, for the types the
+ * RFC lists. The decoder has already written those names out in full, so they are walked
+ * in place; every other byte is left as it was
+ */
 export function canonicalRdata(type: number, rdata: Uint8Array): Uint8Array {
   const layout = NAME_OFFSETS_IN_RDATA[type];
   if (!layout || !DOWNCASE_NAMES_IN_RDATA.has(type)) return rdata;
@@ -113,6 +115,7 @@ export function canonicalRdata(type: number, rdata: Uint8Array): Uint8Array {
 // RRsets
 // ---------------------------------------------------------------------------
 
+/** the records sharing a name, class and type, as `groupRrsets` gives them */
 export interface Rrset {
   name: string;
   type: number;
@@ -122,8 +125,10 @@ export interface Rrset {
   records: ResourceRecord[];
 }
 
-// group records into RRsets keyed by (name, class, type), as RFC 2181 defines them. Names
-// are compared without regard to case; the RRset takes its first record's spelling
+/**
+ * group records into RRsets keyed by (name, class, type), as RFC 2181 defines them. Names
+ * are compared without regard to case; the RRset takes its first record's spelling
+ */
 export function groupRrsets(records: ResourceRecord[]): Rrset[] {
   const map = new Map<string, Rrset>();
   for (const rr of records) {
@@ -156,9 +161,11 @@ function canonicalWireName(name: string): Uint8Array {
   return encodeName(canonicalName(name));
 }
 
-// key tag over canonical DNSKEY RDATA (RFC 4034 Appendix B), including the algorithm-1
-// special case. this is the single implementation — key tag is the join key for nearly
-// every other check, so a second, drifting copy manufactures false orphans
+/**
+ * key tag over canonical DNSKEY RDATA (RFC 4034 Appendix B), including the algorithm-1
+ * special case. this is the single implementation — key tag is the join key for nearly
+ * every other check, so a second, drifting copy manufactures false orphans
+ */
 export function computeKeyTag(rdata: Uint8Array): number {
   const algorithm = rdata.length > 3 ? rdata[3] : 0;
 
@@ -176,8 +183,10 @@ export function computeKeyTag(rdata: Uint8Array): number {
   return ac & 0xffff;
 }
 
-// DS digest (RFC 4034 §5.1.4): digest(canonical owner name || DNSKEY RDATA). Null for a
-// digest type that cannot be computed here
+/**
+ * DS digest (RFC 4034 §5.1.4): digest(canonical owner name || DNSKEY RDATA). Null for a
+ * digest type that cannot be computed here
+ */
 export function computeDsDigest(
   ownerName: string,
   dnskeyRdata: Uint8Array,
@@ -200,8 +209,10 @@ export function computeDsDigest(
 // signed data reconstruction
 // ---------------------------------------------------------------------------
 
-// the wildcard an answer at `name` was synthesised from, given its RRSIG's labels field: `*.`
-// and the rightmost `labels` labels, the source of synthesis (RFC 4035 §5.3.2)
+/**
+ * the wildcard an answer at `name` was synthesised from, given its RRSIG's labels field: `*.`
+ * and the rightmost `labels` labels, the source of synthesis (RFC 4035 §5.3.2)
+ */
 export function wildcardOwner(name: string, labels: number): string {
   const parts = splitName(canonicalName(name));
   return `*.${parts.slice(parts.length - labels).join('.')}`;
@@ -221,8 +232,10 @@ function signedPrefix(rrsig: RrsigFields): Uint8Array {
   return concatBytes([fixed, canonicalWireName(rrsig.signerName)]);
 }
 
-// the exact bytes an RRSIG covers: `RRSIG RDATA (through the signer name) || canonical RRset`
-// (RFC 4034 §3.1.8.1). returns null when the RRset cannot be canonicalised
+/**
+ * the exact bytes an RRSIG covers: `RRSIG RDATA (through the signer name) || canonical RRset`
+ * (RFC 4034 §3.1.8.1). returns null when the RRset cannot be canonicalised
+ */
 export function buildSignedData(
   rrsig: RrsigFields,
   rrset: Rrset
@@ -278,7 +291,7 @@ export function buildSignedData(
 // outcome for an over-limit zone
 export const NSEC3_MAX_ITERATIONS = 500;
 
-// RFC 5155 §5: iterated SHA-1 over the canonical name with the salt appended each round
+/** RFC 5155 §5: iterated SHA-1 over the canonical name with the salt appended each round */
 export function nsec3Hash(
   name: string,
   salt: Uint8Array,

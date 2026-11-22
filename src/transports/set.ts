@@ -3,16 +3,21 @@ import { createTcpTransport } from './tcp';
 import type { Transport, TransportName, TransportOptions } from './types';
 import { createUdpTransport } from './udp';
 
-// the four transports as one thing that shares their sockets and connections between
-// queries. A transport is made the first time it is asked for, so a set costs nothing
-// for the transports it never uses
-
+/**
+ * the four transports as one thing that shares their sockets and connections between queries. A
+ * transport is made the first time it is asked for, so a set costs nothing for the transports it
+ * never uses
+ */
 export interface Transports {
   get(name: TransportName): Transport;
-  // close every socket and connection the set holds
+  /** close every socket and connection the set holds */
   close(): void;
 }
 
+/**
+ * a set of the four transports to share between resolvers: pass it as `transports` to each, and
+ * close it when done. A resolver never closes a set it was given
+ */
 export function createTransports(options: TransportOptions = {}): Transports {
   const made = new Map<TransportName, Transport>();
 
@@ -52,8 +57,10 @@ export function defaultTransports(): Transports {
   return (shared ??= createTransports());
 }
 
-// close the shared set. Its sockets never keep a process alive, so this is for code that
-// wants them gone at a known point
+/**
+ * close the shared set. Its sockets never keep a process alive, so this is for code that
+ * wants them gone at a known point
+ */
 export function closeDefaultTransports(): void {
   shared?.close();
   shared = undefined;

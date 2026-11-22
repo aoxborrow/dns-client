@@ -11,97 +11,112 @@ import type { TransportName } from '../transports/types';
 import type { HeaderFlags, Message, ResourceRecord } from '../wire/message';
 import { canonicalName, comparableName, encodeName, isSubdomain, splitName } from '../wire/names';
 
-// the answer both resolvers return: what the server said, typed and raw. Plain data, with
-// no methods: it can be copied, stored and sent as it is (`toDig(answer)` gives the `dig`
-// command for it)
-
+/**
+ * the answer both resolvers return: what the server said, typed and raw. Plain data, with no
+ * methods: it can be copied, stored and sent as it is (`toDig(answer)` gives the `dig` command for
+ * it)
+ */
 export interface Answer<Rec extends DnsRecord = DnsRecord> {
-  // the question, as it was asked, with no trailing dot
+  /** the question, as it was asked, with no trailing dot */
   name: string;
   type: string;
   class: string;
 
   rcode: number;
   rcodeName: RcodeName | `RCODE${number}`;
-  // the response's header flags
+  /** the response's header flags */
   flags: HeaderFlags;
 
-  // the records that answer the question: those of the type asked for, at the name asked
-  // about or at the end of the alias chain it leads to. Empty for NXDOMAIN and for a name
-  // with no records of that type; `rcodeName` tells the two apart. From
-  // AuthoritativeResolver, only records the answering zone holds authority for: an alias
-  // out of the zone ends `records` there, unless `followCnames` resolves its target
+  /**
+   * the records that answer the question: those of the type asked for, at the name asked
+   * about or at the end of the alias chain it leads to. Empty for NXDOMAIN and for a name
+   * with no records of that type; `rcodeName` tells the two apart. From
+   * AuthoritativeResolver, only records the answering zone holds authority for: an alias
+   * out of the zone ends `records` there, unless `followCnames` resolves its target
+   */
   records: Rec[];
-  // every record in each section of the response, typed, as the server sent it and not
-  // vetted: a zone's server can put anything here, records about other zones included.
-  // `answers` holds the aliases a name went through and, when DNSSEC records were asked
-  // for, the signatures
+  /**
+   * every record in each section of the response, typed, as the server sent it and not
+   * vetted: a zone's server can put anything here, records about other zones included.
+   * `answers` holds the aliases a name went through and, when DNSSEC records were asked
+   * for, the signatures
+   */
   answers: DnsRecord[];
   authorities: DnsRecord[];
   additionals: DnsRecord[];
   extendedErrors: ExtendedErrorOption[];
 
-  // the response as decoded from the wire, record data as bytes, and exactly as it arrived
+  /** the response as decoded from the wire, record data as bytes, and exactly as it arrived */
   message: Message;
   bytes: Uint8Array;
-  // the query the server answered, as it was sent. After an alias was followed its name
-  // is the alias's target, not the name first asked about
+  /**
+   * the query the server answered, as it was sent. After an alias was followed its name
+   * is the alias's target, not the name first asked about
+   */
   query: SentQuery;
 
-  // who answered, and how
+  /** who answered, and how */
   server: string;
-  // the server's name, where the resolver knows it
+  /** the server's name, where the resolver knows it */
   serverName?: string;
   port: number;
-  // DoH: the URL the query went to
+  /** DoH: the URL the query went to */
   url?: string;
   transport: TransportName;
-  // milliseconds from asking to having the answer, all servers and attempts included
+  /** milliseconds from asking to having the answer, all servers and attempts included */
   elapsed: number;
-  // how many times a query was sent to get it
+  /** how many times a query was sent to get it */
   attempts: number;
-  // when the response arrived
+  /** when the response arrived */
   timestamp: Date;
-  // served from the resolver's cache: the record TTLs are what is left of them
+  /** served from the resolver's cache: the record TTLs are what is left of them */
   cached: boolean;
-  // the answer is a truncated UDP one (`flags.tc`), with whatever records it carried,
-  // because asking again over TCP failed: why it did
+  /**
+   * the answer is a truncated UDP one (`flags.tc`), with whatever records it carried,
+   * because asking again over TCP failed: why it did
+   */
   tcpFallbackError?: ErrorData;
 
-  // every server asked on the way from the root. AuthoritativeResolver only
+  /** every server asked on the way from the root. AuthoritativeResolver only */
   trace?: TraceHop[];
 
-  // what DNSSEC validation made of the answer, when the resolver was asked to validate:
-  // secure, insecure, bogus or indeterminate, why, and the chain it judged
+  /**
+   * what DNSSEC validation made of the answer, when the resolver was asked to validate:
+   * secure, insecure, bogus or indeterminate, why, and the chain it judged
+   */
   security?: Security;
 }
 
-// one step of a resolution from the root
+/** one step of a resolution from the root */
 export interface TraceHop {
   server: string;
   serverName?: string;
-  // the zone this server was asked as an authority for
+  /** the zone this server was asked as an authority for */
   zone: string;
-  // what it was asked, which changes when an alias is followed
+  /** what it was asked, which changes when an alias is followed */
   name: string;
   type: string;
   transport?: TransportName;
   rcode?: number;
   rcodeName?: RcodeName | `RCODE${number}`;
-  // the zone it referred the question on to, when it did
+  /** the zone it referred the question on to, when it did */
   referral?: string;
   bytes?: number;
   elapsed: number;
   timestamp: Date;
-  // why this server gave nothing usable, when it did not
+  /** why this server gave nothing usable, when it did not */
   error?: ErrorData;
-  // its answer was truncated over UDP and asking again over TCP failed: why. The
-  // truncated answer is what the walk went on with, when it could
+  /**
+   * its answer was truncated over UDP and asking again over TCP failed: why. The
+   * truncated answer is what the walk went on with, when it could
+   */
   tcpFallbackError?: ErrorData;
 }
 
-// the flags and EDNS settings of a query, which both resolvers take for every query and
-// for a single one
+/**
+ * the flags and EDNS settings of a query, which both resolvers take for every query and
+ * for a single one
+ */
 export type QuerySettings = Pick<
   ExchangeOptions,
   | 'transport'

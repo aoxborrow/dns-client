@@ -9,9 +9,12 @@ import type { DnsRecord, ServiceParams } from './types';
 // a name as it appears in a zone file
 const defaultName = (name: string) => (name === '.' ? '.' : `${name}.`);
 
+/** the options of `formatRecord` and `formatRecordData` */
 export interface FormatOptions {
-  // how to write a domain name inside the data. The default writes it absolute, with a
-  // trailing dot
+  /**
+   * how to write a domain name inside the data. The default writes it absolute, with a
+   * trailing dot
+   */
   formatName?: (name: string) => string;
 }
 
@@ -41,7 +44,7 @@ function quoteString(field: string): string {
   return `${out}"`;
 }
 
-// RRSIG times are written YYYYMMDDHHmmSS in UTC, not as a number (RFC 4034 §3.2)
+/** RRSIG times are written YYYYMMDDHHmmSS in UTC, not as a number (RFC 4034 §3.2) */
 export function formatSignatureTime(seconds: number): string {
   const date = new Date(seconds * 1000);
   const pad = (value: number, width = 2) => String(value).padStart(width, '0');
@@ -94,7 +97,7 @@ function serviceParams(params: ServiceParams): string[] {
   return out.sort((a, b) => a[0] - b[0]).map(([, text]) => text);
 }
 
-// the data of a record in presentation format: everything after the type on a zone-file line
+/** the data of a record in presentation format: everything after the type on a zone-file line */
 export function formatRecordData(record: DnsRecord, options: FormatOptions = {}): string {
   const absolute = options.formatName ?? defaultName;
   switch (record.type) {
@@ -208,7 +211,7 @@ export function formatRecordData(record: DnsRecord, options: FormatOptions = {})
   }
 }
 
-// a whole zone-file line: owner, TTL, class, type and data, separated by tabs
+/** a whole zone-file line: owner, TTL, class, type and data, separated by tabs */
 export function formatRecord(record: DnsRecord): string {
   return [
     defaultName(record.name),

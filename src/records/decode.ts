@@ -100,6 +100,7 @@ function readTypeBitmap(reader: Reader): number[] {
 // sent them. What the DNSSEC primitives compute over; `decodeRecord` presents the same
 // fields as text
 
+/** the fields of DS or CDS data, as `decodeDs` gives them */
 export interface DsFields {
   keyTag: number;
   algorithm: number;
@@ -107,6 +108,7 @@ export interface DsFields {
   digest: Uint8Array;
 }
 
+/** the fields of DNSKEY, CDNSKEY or KEY data, as `decodeDnskey` gives them */
 export interface DnskeyFields {
   flags: number;
   protocol: number;
@@ -114,12 +116,13 @@ export interface DnskeyFields {
   publicKey: Uint8Array;
 }
 
+/** the fields of RRSIG or SIG data, as `decodeRrsig` gives them */
 export interface RrsigFields {
   typeCovered: number;
   algorithm: number;
   labels: number;
   originalTtl: number;
-  // seconds since the epoch (RFC 4034 §3.1.5)
+  /** seconds since the epoch (RFC 4034 §3.1.5) */
   expiration: number;
   inception: number;
   keyTag: number;
@@ -127,11 +130,13 @@ export interface RrsigFields {
   signature: Uint8Array;
 }
 
+/** the fields of NSEC data, as `decodeNsec` gives them */
 export interface NsecFields {
   nextDomain: string;
   types: number[];
 }
 
+/** the fields of NSEC3 data, as `decodeNsec3` gives them */
 export interface Nsec3Fields {
   hashAlgorithm: number;
   flags: number;
@@ -141,6 +146,7 @@ export interface Nsec3Fields {
   types: number[];
 }
 
+/** the fields of NSEC3PARAM data, as `decodeNsec3Param` gives them */
 export interface Nsec3ParamFields {
   hashAlgorithm: number;
   flags: number;
@@ -209,37 +215,37 @@ function decodeData<T>(rdata: Uint8Array, read: (reader: Reader) => T, what: str
   }
 }
 
-// DS or CDS data (RFC 4034 §5.1)
+/** DS or CDS data (RFC 4034 §5.1) */
 export function decodeDs(rdata: Uint8Array): DsFields {
   return decodeData(rdata, readDs, 'DS data');
 }
 
-// DNSKEY, CDNSKEY or KEY data (RFC 4034 §2.1)
+/** DNSKEY, CDNSKEY or KEY data (RFC 4034 §2.1) */
 export function decodeDnskey(rdata: Uint8Array): DnskeyFields {
   return decodeData(rdata, readDnskey, 'DNSKEY data');
 }
 
-// RRSIG or SIG data (RFC 4034 §3.1)
+/** RRSIG or SIG data (RFC 4034 §3.1) */
 export function decodeRrsig(rdata: Uint8Array): RrsigFields {
   return decodeData(rdata, readRrsig, 'RRSIG data');
 }
 
-// NSEC data (RFC 4034 §4.1)
+/** NSEC data (RFC 4034 §4.1) */
 export function decodeNsec(rdata: Uint8Array): NsecFields {
   return decodeData(rdata, readNsec, 'NSEC data');
 }
 
-// NSEC3 data (RFC 5155 §3.2)
+/** NSEC3 data (RFC 5155 §3.2) */
 export function decodeNsec3(rdata: Uint8Array): Nsec3Fields {
   return decodeData(rdata, readNsec3, 'NSEC3 data');
 }
 
-// NSEC3PARAM data (RFC 5155 §4.2)
+/** NSEC3PARAM data (RFC 5155 §4.2) */
 export function decodeNsec3Param(rdata: Uint8Array): Nsec3ParamFields {
   return decodeData(rdata, readNsec3Param, 'NSEC3PARAM data');
 }
 
-// an NSEC or NSEC3 type bitmap (RFC 4034 §4.1.2), as type codes
+/** an NSEC or NSEC3 type bitmap (RFC 4034 §4.1.2), as type codes */
 export function decodeTypeBitmap(bitmap: Uint8Array): number[] {
   return decodeData(bitmap, readTypeBitmap, 'type bitmap');
 }
@@ -292,7 +298,7 @@ const SERVICE_PARAM_NAMES: Record<number, string> = {
   8: 'ohttp',
 };
 
-// the name a service parameter key is written with: its mnemonic, or `key<n>`
+/** the name a service parameter key is written with: its mnemonic, or `key<n>` */
 export function serviceParamName(key: number): string {
   return SERVICE_PARAM_NAMES[key] ?? `key${key}`;
 }
@@ -501,9 +507,12 @@ const DECODERS: Record<number, Decoder> = {
   },
 };
 
+/** the options of `decodeRecord` and `decodeRecords` */
 export interface DecodeOptions {
-  // malformed record data is an error. By default such a record comes back in the
-  // generic form, as an UnknownRecord
+  /**
+   * malformed record data is an error. By default such a record comes back in the
+   * generic form, as an UnknownRecord
+   */
   strict?: boolean;
 }
 
@@ -517,12 +526,12 @@ function unknownRecord(record: ResourceRecord): UnknownRecord {
   };
 }
 
-// whether the library decodes this type into its own fields
+/** whether the library decodes this type into its own fields */
 export function isKnownRecordType(type: number): boolean {
   return type in DECODERS;
 }
 
-// decode one record's data into typed fields
+/** decode one record's data into typed fields */
 export function decodeRecord(record: ResourceRecord, options: DecodeOptions = {}): DnsRecord {
   const decoder = DECODERS[record.type];
   if (!decoder) return unknownRecord(record);
@@ -547,7 +556,7 @@ export function decodeRecord(record: ResourceRecord, options: DecodeOptions = {}
   }
 }
 
-// decode every record in a section
+/** decode every record in a section */
 export function decodeRecords(
   records: readonly ResourceRecord[],
   options: DecodeOptions = {}

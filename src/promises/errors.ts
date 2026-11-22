@@ -17,6 +17,10 @@ import { RCODES } from '../protocol/header';
 // with `code`, `syscall` and `hostname`, and `errno` where Node sets one. The library's
 // own errors carry no codes; this file is the one place they are given some
 
+/**
+ * an error as `node:dns` throws one: `code`, `syscall` and `hostname`, with the library's error as
+ * `cause`
+ */
 export interface NodeDnsError extends Error {
   errno: number | undefined;
   code: string;

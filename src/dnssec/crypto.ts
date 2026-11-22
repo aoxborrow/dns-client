@@ -6,14 +6,16 @@ import { DNSSEC_ALGORITHMS, SIGNATURE_LENGTHS } from './constants';
 // WebCrypto does not have, is reported as not attempted, which yields `indeterminate`
 // for the object: never a pass
 
+/** what `verifySignature` came to: `verified` is undefined when the check could not be made */
 export interface VerifyOutcome {
-  // undefined means "not attempted": unsupported algorithm or an unusable key
+  /** undefined means "not attempted": unsupported algorithm or an unusable key */
   verified?: boolean;
   reason?: string;
   publicKeyDescription?: string;
   expectedSignatureLength?: number;
 }
 
+/** whether the library has code to verify signatures of this algorithm */
 export function isAlgorithmVerifiable(algorithm: number): boolean {
   const entry = DNSSEC_ALGORITHMS[algorithm as keyof typeof DNSSEC_ALGORITHMS];
   return Boolean(entry?.verify);
@@ -49,6 +51,7 @@ const PROBE_KEYS: Record<15 | 16, { name: string; hex: string }> = {
   },
 };
 
+/** whether this runtime's WebCrypto can verify signatures of this algorithm */
 export function isAlgorithmSupported(algorithm: number): Promise<boolean> {
   if (!isAlgorithmVerifiable(algorithm)) return Promise.resolve(false);
   if (algorithm !== 15 && algorithm !== 16) return Promise.resolve(true);
@@ -68,12 +71,13 @@ export function isAlgorithmSupported(algorithm: number): Promise<boolean> {
   return probe;
 }
 
+/** an algorithm's mnemonic, such as `ECDSAP256SHA256` */
 export function algorithmName(algorithm: number): string {
   const entry = DNSSEC_ALGORITHMS[algorithm as keyof typeof DNSSEC_ALGORITHMS];
   return entry?.name ?? `UNKNOWN(${algorithm})`;
 }
 
-// bit length of the key material, for the "key size and estimated strength" display
+/** the size of a DNSKEY's public key in bits, where the algorithm has one */
 export function keySizeBits(algorithm: number, publicKey: Uint8Array): number | undefined {
   switch (algorithm) {
     case 5:
@@ -224,9 +228,11 @@ async function importKey(algorithm: number, publicKey: Uint8Array): Promise<Impo
   }
 }
 
-// verify `signature` over `data` with a DNSKEY's raw public key.
-// an error thrown inside WebCrypto is a failed check, not a crashed analysis: every path
-// here returns a VerifyOutcome
+/**
+ * verify `signature` over `data` with a DNSKEY's raw public key.
+ * an error thrown inside WebCrypto is a failed check, not a crashed analysis: every path
+ * here returns a VerifyOutcome
+ */
 export async function verifySignature(
   algorithm: number,
   publicKey: Uint8Array,
@@ -235,7 +241,7 @@ export async function verifySignature(
 ): Promise<VerifyOutcome> {
   if (!isAlgorithmVerifiable(algorithm)) {
     return {
-      reason: `${algorithmName(algorithm)} (algorithm ${algorithm}) cannot be verified by this tool`,
+      reason: `${algorithmName(algorithm)} (algorithm ${algorithm}) cannot be verified by this library`,
     };
   }
 

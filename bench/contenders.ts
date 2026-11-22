@@ -132,7 +132,7 @@ export const CONTENDERS: Contender[] = [
     id: 'node',
     label: 'node:dns Resolver (c-ares)',
     transport: 'UDP',
-    // c-ares has a query cache, which Node leaves at its default; it is measured as it is
+    // c-ares has a query cache, which Node turns off; it is measured as it is
     caches: true,
     create(target) {
       const resolver = new nodeDns.promises.Resolver({ timeout: TIMEOUT, tries: 1 });

@@ -16,28 +16,28 @@ import { parseIpv4, parseIpv6 } from './addresses';
 // EDNS options with their contents decoded. The wire layer hands options over as a code
 // and bytes; these give the common ones fields, and build the ones a client sends.
 
-// the nameserver's identifier for itself (RFC 5001): free-form bytes, usually text
+/** the nameserver's identifier for itself (RFC 5001): free-form bytes, usually text */
 export interface NsidOption {
   name: 'NSID';
   code: 3;
-  // the identifier as text when it is printable ASCII, otherwise null
+  /** the identifier as text when it is printable ASCII, otherwise null */
   nsid: string | null;
-  // the identifier as hex, always
+  /** the identifier as hex, always */
   hex: string;
 }
 
-// the client's network, as a resolver passes it on (RFC 7871)
+/** the client's network, as a resolver passes it on (RFC 7871) */
 export interface ClientSubnetOption {
   name: 'CLIENT_SUBNET';
   code: 8;
-  // 1 for IPv4, 2 for IPv6
+  /** 1 for IPv4, 2 for IPv6 */
   family: number;
   sourcePrefixLength: number;
   scopePrefixLength: number;
   address: string;
 }
 
-// DNS cookies (RFC 7873), hex
+/** DNS cookies (RFC 7873), hex */
 export interface CookieOption {
   name: 'COOKIE';
   code: 10;
@@ -45,51 +45,60 @@ export interface CookieOption {
   serverCookie: string | null;
 }
 
+/** edns-tcp-keepalive (RFC 7828) */
 export interface TcpKeepaliveOption {
   name: 'TCP_KEEPALIVE';
   code: 11;
-  // how long the server will hold an idle connection, as the wire carries it: in units of
-  // 100 milliseconds (RFC 7828 §3.1). Null in a query
+  /**
+   * how long the server will hold an idle connection, as the wire carries it: in units of
+   * 100 milliseconds (RFC 7828 §3.1). Null in a query
+   */
   timeout: number | null;
 }
 
+/** padding (RFC 7830) */
 export interface PaddingOption {
   name: 'PADDING';
   code: 12;
   length: number;
 }
 
-// the DNSSEC algorithms, DS hashes or NSEC3 hashes a client understands (RFC 6975)
+/** the DNSSEC algorithms, DS hashes or NSEC3 hashes a client understands (RFC 6975) */
 export interface AlgorithmsOption {
   name: 'DAU' | 'DHU' | 'N3U';
   code: 5 | 6 | 7;
   algorithms: number[];
 }
 
+/** the trust anchors a client holds, by key tag (RFC 8145) */
 export interface KeyTagOption {
   name: 'KEY_TAG';
   code: 14;
   keyTags: number[];
 }
 
-// an extended DNS error (RFC 8914): why a response is what it is
+/** an extended DNS error (RFC 8914): why a response is what it is */
 export interface ExtendedErrorOption {
   name: 'EDE';
   code: 15;
   infoCode: number;
-  // the registry's description of the code, or null for a code not in it
+  /** the registry's description of the code, or null for a code not in it */
   purpose: string | null;
-  // whatever the server added, often empty
+  /** whatever the server added, often empty */
   extraText: string;
 }
 
+/**
+ * an option the library does not decode, or one that does not fit its layout: its code and bytes
+ */
 export interface UnknownOption {
   name: `OPTION${number}`;
   code: number;
-  // hex
+  /** hex */
   data: string;
 }
 
+/** an EDNS option, decoded */
 export type TypedEdnsOption =
   | NsidOption
   | ClientSubnetOption
@@ -109,8 +118,10 @@ const unknown = (option: EdnsOption): UnknownOption => ({
 
 const ALGORITHM_OPTION_NAMES = { 5: 'DAU', 6: 'DHU', 7: 'N3U' } as const;
 
-// decode one option. An option whose contents do not fit its layout comes back as
-// unknown, with its bytes: a bad option should not cost the caller the whole response
+/**
+ * decode one option. An option whose contents do not fit its layout comes back as
+ * unknown, with its bytes: a bad option should not cost the caller the whole response
+ */
 export function decodeEdnsOption(option: EdnsOption): TypedEdnsOption {
   const { code, data } = option;
   switch (code) {
@@ -184,12 +195,12 @@ export function decodeEdnsOption(option: EdnsOption): TypedEdnsOption {
   }
 }
 
-// every option of a message, decoded. A message with no EDNS has none
+/** every option of a message, decoded. A message with no EDNS has none */
 export function decodeEdnsOptions(edns: Edns | undefined): TypedEdnsOption[] {
   return (edns?.options ?? []).map(decodeEdnsOption);
 }
 
-// the extended DNS errors a response carries, if any
+/** the extended DNS errors a response carries, if any */
 export function extendedErrors(edns: Edns | undefined): ExtendedErrorOption[] {
   return decodeEdnsOptions(edns).filter(
     (option): option is ExtendedErrorOption => option.name === 'EDE'
@@ -198,12 +209,12 @@ export function extendedErrors(edns: Edns | undefined): ExtendedErrorOption[] {
 
 // ---- options a client sends
 
-// ask the server to identify itself
+/** ask the server to identify itself */
 export function nsidOption(): EdnsOption {
   return { code: EDNS_OPTIONS.NSID, data: new Uint8Array(0) };
 }
 
-// a cookie: the client's eight bytes, and the server's from an earlier response if known
+/** a cookie: the client's eight bytes, and the server's from an earlier response if known */
 export function cookieOption(clientCookie: Uint8Array, serverCookie?: Uint8Array): EdnsOption {
   if (clientCookie.length !== 8) throw new ParseError('A client cookie is exactly 8 bytes');
   if (serverCookie && (serverCookie.length < 8 || serverCookie.length > 32)) {
@@ -215,13 +226,15 @@ export function cookieOption(clientCookie: Uint8Array, serverCookie?: Uint8Array
   };
 }
 
-// padding of the given length, to hide a message's size on an encrypted transport
+/** padding of the given length, to hide a message's size on an encrypted transport */
 export function paddingOption(length: number): EdnsOption {
   return { code: EDNS_OPTIONS.PADDING, data: new Uint8Array(length) };
 }
 
-// the client's subnet: an address and how many of its leading bits to reveal. A prefix
-// length of 0 asks the resolver not to pass any client address on
+/**
+ * the client's subnet: an address and how many of its leading bits to reveal. A prefix
+ * length of 0 asks the resolver not to pass any client address on
+ */
 export function clientSubnetOption(address: string, sourcePrefixLength: number): EdnsOption {
   const ipv4 = parseIpv4(address);
   const bytes = ipv4 ?? parseIpv6(address);

@@ -99,7 +99,7 @@ function wildcardAt(encloser: string): string {
 // parameters
 // ---------------------------------------------------------------------------
 
-// RFC 9276 §3.1 assessment of a zone's NSEC3 parameters
+/** RFC 9276 §3.1 assessment of a zone's NSEC3 parameters */
 export function assessNsec3Params(
   hashAlgorithm: number,
   iterations: number,
@@ -262,7 +262,7 @@ function coverNsec3(
 // proof of no DS — the one that makes `insecure` provable
 // ---------------------------------------------------------------------------
 
-// the parent answered a DS query with NODATA. establish that no DS exists at the delegation
+/** the parent answered a DS query with NODATA. establish that no DS exists at the delegation */
 export function verifyNoDsProof(qname: string, records: ResourceRecord[]): DenialProof {
   const nsec3 = collectNsec3(records);
   if (nsec3.length > 0) return verifyNoDsNsec3(qname, nsec3);
@@ -409,7 +409,7 @@ function verifyNoDsNsec3(qname: string, entries: Nsec3Entry[]): DenialProof {
       steps: [
         step(
           'Hash algorithm',
-          `NSEC3 hash algorithm ${first.hashAlgorithm} is not one this tool can compute.`,
+          `NSEC3 hash algorithm ${first.hashAlgorithm} is not one this library can compute.`,
           UNCHECKED
         ),
       ],
@@ -604,7 +604,7 @@ function bitmapStep(qtype: number, present: boolean, aliased: boolean) {
   return step('Type bitmap', `${typeName(qtype)} is absent from the bitmap.`, VERIFIED);
 }
 
-// the zone answered with an empty answer section for a type it does not hold
+/** the zone answered with an empty answer section for a type it does not hold */
 export function verifyNodataProof(
   qname: string,
   qtype: number,
@@ -843,7 +843,7 @@ function nsec3NodataWithoutMatch(
   };
 }
 
-// the zone said the name does not exist at all
+/** the zone said the name does not exist at all */
 export function verifyNxdomainProof(qname: string, records: ResourceRecord[]): DenialProof {
   const name = canonicalName(qname);
   const nsec3 = collectNsec3(records);
@@ -968,12 +968,14 @@ export function verifyNxdomainProof(qname: string, records: ResourceRecord[]): D
   };
 }
 
-// RFC 4035 §5.3.4 and RFC 5155 §8.8: a positive answer synthesised from a wildcard is valid only
-// if the queried name has no exact match of its own, and the wildcard that answered is the one at
-// the queried name's closest encloser. Otherwise a wildcard RRset could be replayed for a name that
-// really holds different records, should not exist, or sits under a nearer wildcard. `wildcard` is
-// the owner that was signed, `*.<source of synthesis>`, rebuilt from the RRSIG's labels field; the
-// signature binds it, so it is the closest encloser the proof has to agree with
+/**
+ * RFC 4035 §5.3.4 and RFC 5155 §8.8: a positive answer synthesised from a wildcard is valid only
+ * if the queried name has no exact match of its own, and the wildcard that answered is the one at
+ * the queried name's closest encloser. Otherwise a wildcard RRset could be replayed for a name that
+ * really holds different records, should not exist, or sits under a nearer wildcard. `wildcard` is
+ * the owner that was signed, `*.<source of synthesis>`, rebuilt from the RRSIG's labels field; the
+ * signature binds it, so it is the closest encloser the proof has to agree with
+ */
 export function verifyWildcardProof(
   qname: string,
   records: ResourceRecord[],

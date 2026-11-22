@@ -25,9 +25,12 @@ import type { DnsRecord } from './types';
 // one record
 // ---------------------------------------------------------------------------
 
+/** the options of the record validators */
 export interface ValidateOptions {
-  // the zone the record belongs to. When given, a record whose name is outside it is
-  // rejected, which also catches a relative name that was never qualified
+  /**
+   * the zone the record belongs to. When given, a record whose name is outside it is
+   * rejected, which also catches a relative name that was never qualified
+   */
   zone?: string;
 }
 
@@ -270,18 +273,22 @@ function aboutRecord<T>(input: FlatRecordInput, check: () => T): T {
   }
 }
 
-// check one record and return it typed. The name must be a full name. Throws
-// RecordSyntaxError with a message that can be shown to the person who typed the record
+/**
+ * check one record and return it typed. The name must be a full name. Throws
+ * RecordSyntaxError with a message that can be shown to the person who typed the record
+ */
 export function parseRecord(input: FlatRecordInput, options: ValidateOptions = {}): DnsRecord {
   return aboutRecord(input, () => parseKnown(envelope(input, options), input.data));
 }
 
-// check one record and return it in canonical spelling: the same shape, with the name,
-// type, class and data written the one way this library writes them. Two records are the
-// same record exactly when their canonical forms are equal, TTL aside.
-//
-// a type the wire knows but this library has no parser for has its data trimmed and
-// passed through, unless it is in the generic form (`\# 4 c0000201`)
+/**
+ * check one record and return it in canonical spelling: the same shape, with the name,
+ * type, class and data written the one way this library writes them. Two records are the
+ * same record exactly when their canonical forms are equal, TTL aside.
+ *
+ * a type the wire knows but this library has no parser for has its data trimmed and
+ * passed through, unless it is in the generic form (`\# 4 c0000201`)
+ */
 export function canonicalRecord(input: FlatRecordInput, options: ValidateOptions = {}): FlatRecord {
   return aboutRecord(input, () => {
     const head = envelope(input, options);
@@ -317,9 +324,11 @@ function canonicalAll(records: readonly FlatRecordInput[], options: ValidateOpti
 // prove it (RFC 4034 §2.5 and §4)
 const ALLOWED_BESIDE_CNAME = new Set(['CNAME', 'RRSIG', 'NSEC', 'NSEC3']);
 
-// the alias rule for a set of records that will exist together: a name may have at most
-// one CNAME, and a name with a CNAME may have nothing else. A record that is not valid on
-// its own is reported too. This says what is wrong, not which change to make first
+/**
+ * the alias rule for a set of records that will exist together: a name may have at most
+ * one CNAME, and a name with a CNAME may have nothing else. A record that is not valid on
+ * its own is reported too. This says what is wrong, not which change to make first
+ */
 export function findCnameConflicts(
   records: readonly FlatRecordInput[],
   options: ValidateOptions = {}
@@ -366,8 +375,10 @@ export function findCnameConflicts(
 const identity = (record: FlatRecord) =>
   `${record.name}\t${record.class}\t${record.type}\t${record.data}`;
 
-// records that appear more than once in a set, compared in canonical form with the TTL
-// left out. One clash per repeated record
+/**
+ * records that appear more than once in a set, compared in canonical form with the TTL
+ * left out. One clash per repeated record
+ */
 export function findRepeatedRecords(
   records: readonly FlatRecordInput[],
   options: ValidateOptions = {}
@@ -394,22 +405,28 @@ export function findRepeatedRecords(
   return clashes;
 }
 
+/** what `diffRecords` finds */
 export interface RecordDiff {
-  // in `intended` but not in `actual`
+  /** in `intended` but not in `actual` */
   missing: FlatRecord[];
-  // in `actual` but not in `intended`
+  /** in `actual` but not in `intended` */
   unexpected: FlatRecord[];
 }
 
+/** the options of `diffRecords` */
 export interface DiffOptions extends ValidateOptions {
-  // count a different TTL as a different record. Off by default: a resolver's answer
-  // carries the time left in its cache, not the TTL that was set
+  /**
+   * count a different TTL as a different record. Off by default: a resolver's answer
+   * carries the time left in its cache, not the TTL that was set
+   */
   compareTtl?: boolean;
 }
 
-// compare two sets of records in canonical form: what was intended, and what is actually
-// there (for example, what a resolver returned, through `flattenRecords`). Both sets must
-// be valid: one RecordSyntaxError lists the problems of every record that is not
+/**
+ * compare two sets of records in canonical form: what was intended, and what is actually
+ * there (for example, what a resolver returned, through `flattenRecords`). Both sets must
+ * be valid: one RecordSyntaxError lists the problems of every record that is not
+ */
 export function diffRecords(
   intended: readonly FlatRecordInput[],
   actual: readonly FlatRecordInput[],

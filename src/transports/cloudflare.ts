@@ -7,7 +7,7 @@ import type { Connect, Connection } from './types';
 // this connector has not itself run on Workers. What it does follows a spike that ran the
 // same socket calls on a deployed Worker
 
-// the parts of a Workers `Socket` this needs
+/** the parts of a Workers `Socket` this needs */
 export interface CloudflareSocket {
   readable: ReadableStream<Uint8Array>;
   writable: WritableStream<Uint8Array>;
@@ -15,6 +15,7 @@ export interface CloudflareSocket {
   startTls(options?: { expectedServerHostname?: string }): CloudflareSocket;
 }
 
+/** the runtime's `connect` from `cloudflare:sockets` */
 export type CloudflareConnectFunction = (
   address: { hostname: string; port: number },
   options?: { secureTransport?: 'off' | 'on' | 'starttls'; allowHalfOpen?: boolean }
@@ -51,12 +52,18 @@ function wrapSocket(socket: CloudflareSocket, connectedTo: string): Connection {
 // runtime does not try to resolve a module that only exists on Workers
 const SOCKETS_MODULE = 'cloudflare:sockets';
 
-// pass the runtime's `connect`:
-//   import { connect } from 'cloudflare:sockets';
-//   createCloudflareConnect(connect)
-// without it the module is imported by name at run time, which a bundled Worker cannot do:
-// its bundler never saw the import, so there is nothing to load. Passing `connect` is the
-// way that always works
+/**
+ * the `connect` for Cloudflare Workers. Pass it the runtime's own:
+ *
+ * ```ts
+ * import { connect } from 'cloudflare:sockets';
+ * createCloudflareConnect(connect);
+ * ```
+ *
+ * Without it the module is imported by name at run time, which a bundled Worker cannot do:
+ * its bundler never saw the import, so there is nothing to load. Passing `connect` is the
+ * way that always works
+ */
 export function createCloudflareConnect(connectFunction?: CloudflareConnectFunction): Connect {
   let loaded = connectFunction;
   return async target => {

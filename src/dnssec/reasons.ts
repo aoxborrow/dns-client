@@ -2,6 +2,9 @@
 // define, and a code for why, each mapped to the extended DNS error (RFC 8914) a
 // validating resolver would send for it, where one fits
 
+/**
+ * the four outcomes of validation: `secure`, `insecure`, `bogus` and `indeterminate` (RFC 4033 §5)
+ */
 export const SECURITY_STATUSES = {
   // a chain of signatures runs from a trust anchor to the data
   SECURE: 'secure',
@@ -13,6 +16,7 @@ export const SECURITY_STATUSES = {
   INDETERMINATE: 'indeterminate',
 } as const;
 
+/** one of the four outcomes of validation */
 export type SecurityStatus = (typeof SECURITY_STATUSES)[keyof typeof SECURITY_STATUSES];
 
 // the extended DNS error codes a judgement can carry, by name (RFC 8914 §4). Every code,
@@ -35,8 +39,10 @@ export const EDE_CODES = {
 
 const E = EDE_CODES;
 
-// why a link came out as it did. Each code names one rule; the extended DNS error beside
-// it is what RFC 8914 has for that rule, or none where RFC 8914 has nothing that fits
+/**
+ * why a link came out as it did. Each code names one rule; the extended DNS error beside
+ * it is what RFC 8914 has for that rule, or none where RFC 8914 has nothing that fits
+ */
 export const REASON_CODES = {
   // secure: every check on the link passed
   VERIFIED: 'verified',
@@ -107,6 +113,7 @@ export const REASON_CODES = {
   PARENT_INDETERMINATE: 'parent-indeterminate',
 } as const;
 
+/** why a link came out as it did, as a code */
 export type ReasonCode = (typeof REASON_CODES)[keyof typeof REASON_CODES];
 
 const R = REASON_CODES;
@@ -142,19 +149,21 @@ export const REASON_EDE: Partial<Record<ReasonCode, number>> = {
   [R.PARENT_INDETERMINATE]: E.DNSSEC_INDETERMINATE,
 };
 
-// why a link, or a whole judgement, came out as it did: a code and the values it is
-// about, never English
+/**
+ * why a link, or a whole judgement, came out as it did: a code and the values it is
+ * about, never English
+ */
 export interface SecurityReason {
   code: ReasonCode;
-  // the zone the link belongs to
+  /** the zone the link belongs to */
   zone: string;
-  // the RRset, signature or record the reason is about, where it is about one
+  /** the RRset, signature or record the reason is about, where it is about one */
   name?: string;
   type?: string;
   keyTag?: number;
   algorithm?: number;
   digestType?: number;
-  // the extended DNS error (RFC 8914) for the code, where there is one
+  /** the extended DNS error (RFC 8914) for the code, where there is one */
   ede?: number;
 }
 

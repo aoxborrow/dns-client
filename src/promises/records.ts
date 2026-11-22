@@ -4,11 +4,13 @@ import { fromHex, unescapeText, utf8Decode } from '../wire/bytes';
 // the library's records in the shapes `node:dns` returns them in. The interfaces repeat
 // Node's own (`@types/node`'s `dns` module) field for field
 
+/** Node's `RecordWithTtl`, as `node:dns` returns it */
 export interface RecordWithTtl {
   address: string;
   ttl: number;
 }
 
+/** Node's `CaaRecord`, as `node:dns` returns it */
 export interface CaaRecord {
   critical: number;
   issue?: string;
@@ -18,11 +20,13 @@ export interface CaaRecord {
   contactphone?: string;
 }
 
+/** Node's `MxRecord`, as `node:dns` returns it */
 export interface MxRecord {
   priority: number;
   exchange: string;
 }
 
+/** Node's `NaptrRecord`, as `node:dns` returns it */
 export interface NaptrRecord {
   flags: string;
   service: string;
@@ -32,6 +36,7 @@ export interface NaptrRecord {
   preference: number;
 }
 
+/** Node's `SoaRecord`, as `node:dns` returns it */
 export interface SoaRecord {
   nsname: string;
   hostmaster: string;
@@ -42,6 +47,7 @@ export interface SoaRecord {
   minttl: number;
 }
 
+/** Node's `SrvRecord`, as `node:dns` returns it */
 export interface SrvRecord {
   priority: number;
   weight: number;
@@ -49,6 +55,7 @@ export interface SrvRecord {
   name: string;
 }
 
+/** Node's `TlsaRecord`, as `node:dns` returns it */
 export interface TlsaRecord {
   certUsage: number;
   selector: number;
@@ -56,47 +63,60 @@ export interface TlsaRecord {
   data: ArrayBuffer;
 }
 
+/** Node's `AnyARecord`, as `node:dns` returns it */
 export interface AnyARecord extends RecordWithTtl {
   type: 'A';
 }
+/** Node's `AnyAaaaRecord`, as `node:dns` returns it */
 export interface AnyAaaaRecord extends RecordWithTtl {
   type: 'AAAA';
 }
+/** Node's `AnyCaaRecord`, as `node:dns` returns it */
 export interface AnyCaaRecord extends CaaRecord {
   type: 'CAA';
 }
+/** Node's `AnyMxRecord`, as `node:dns` returns it */
 export interface AnyMxRecord extends MxRecord {
   type: 'MX';
 }
+/** Node's `AnyNaptrRecord`, as `node:dns` returns it */
 export interface AnyNaptrRecord extends NaptrRecord {
   type: 'NAPTR';
 }
+/** Node's `AnySoaRecord`, as `node:dns` returns it */
 export interface AnySoaRecord extends SoaRecord {
   type: 'SOA';
 }
+/** Node's `AnySrvRecord`, as `node:dns` returns it */
 export interface AnySrvRecord extends SrvRecord {
   type: 'SRV';
 }
+/** Node's `AnyTlsaRecord`, as `node:dns` returns it */
 export interface AnyTlsaRecord extends TlsaRecord {
   type: 'TLSA';
 }
+/** Node's `AnyTxtRecord`, as `node:dns` returns it */
 export interface AnyTxtRecord {
   type: 'TXT';
   entries: string[];
 }
+/** Node's `AnyNsRecord`, as `node:dns` returns it */
 export interface AnyNsRecord {
   type: 'NS';
   value: string;
 }
+/** Node's `AnyPtrRecord`, as `node:dns` returns it */
 export interface AnyPtrRecord {
   type: 'PTR';
   value: string;
 }
+/** Node's `AnyCnameRecord`, as `node:dns` returns it */
 export interface AnyCnameRecord {
   type: 'CNAME';
   value: string;
 }
 
+/** Node's `AnyRecord`, as `node:dns` returns it */
 export type AnyRecord =
   | AnyARecord
   | AnyAaaaRecord

@@ -638,7 +638,7 @@ async function main() {
       ])
     ),
     '',
-    "† DoH over HTTP/1.1 opens a connection for each query in flight. Past about 128 at once the local server's accept queue (macOS `kern.ipc.somaxconn`) resets connections, which measures the test server, so DoH stops at 100.",
+    "† DoH over HTTP/1.1 opens a connection for each query in flight. Past about 128 at once the local server's accept queue (`kern.ipc.somaxconn` on macOS, `net.core.somaxconn` on Linux) resets connections, which measures the test server, so DoH stops at 100.",
     '',
     '### Cache hits',
     '',

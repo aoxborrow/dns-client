@@ -17,10 +17,10 @@ out as type 0 and came back empty).
 | `npm install @aoxborrow/dns-client` | `npm install @aoxborrow/dns` |
 | ES modules only | ES modules only, unchanged |
 | Node 18 or later | Node 22 or later |
-| one entry point | the root, plus `/records`, `/wire`, `/dnssec`, `/transports`, `/transports/doh` and `/promises`. The root holds everything in `/records` and `/wire` too |
+| one entry point | the root, plus `/records`, `/wire`, `/dnssec`, `/transports`, `/transports/doh` and `/promises`. The root holds the resolvers, the errors and the types an answer is made of; the record helpers and tables are in `/records`, the codec in `/wire` |
 | `dns-packet` and `buffer` as dependencies | no dependencies. Bytes are `Uint8Array`, never `Buffer` |
 
-If all you used was a lookup by type, the [`/promises`](README.md#promises) facade may be
+If all you used was a lookup by type, the [`/promises`](docs/promises.md) facade may be
 the shortest way across: it has the `node:dns/promises` API.
 
 ## The client
@@ -193,7 +193,9 @@ Fields are named as the RFCs name them, in camelCase. Every record has `name`, `
 | SSHFP | `fp_type` | `fingerprintType` |
 | NAPTR | `service` | `services` |
 | HTTPS, SVCB | `svc_priority`, `target_name`, `svc_params` | `priority`, `target`, `params` |
-| CERT | `certificate_type`, a string | `certificateType`, a number |
+| CERT | `certificate_type`, a string; `key_tag` | `certificateType`, a number; `keyTag` |
+| TSIG | `time_signed`, `original_id`, `other_data`, `mac_size`, `other_len` | `timeSigned`, `originalId`, `otherData`. The two lengths are gone: `mac` and `otherData` are base64 of exactly those bytes |
+| CAA | `tag`, a `CaaTag` or a string | `tag`, a string. `CaaTag` is removed |
 | LOC | `size`, `horiz_pre`, `vert_pre`, as text | `size`, `horizontalPrecision`, `verticalPrecision`, as numbers in metres |
 
 Two values are corrected, not only renamed. A type in an NSEC or NSEC3 type list that 0.x
@@ -206,10 +208,13 @@ data an error.
 
 ## Helpers and constants
 
+These are in `/records` unless the row names another entry.
+
 | 0.x | 1.0 |
 | --- | --- |
 | `getRecords(answers)` | `answers.flatMap(answer => answer.records)` |
 | `deduplicateRecords(records)` | `deduplicateRecords(records)`, unchanged |
+| `flattenRecord(record)` | `flattenRecord(record)`, the same name, returning the new shape below |
 | `flattenRecords(records)` returning `{ name, type, ttl, content }` | `flattenRecords(records)` returning `{ name, type, class, ttl, data }` |
 | `reverseIp(ip)` | `reverseIp(ip)`, unchanged |
 | `sortRecordsCanonical` | `sortRecords` |
@@ -219,6 +224,9 @@ data an error.
 | `toBase32Hex` | `toBase32Hex` (`/wire`) |
 | `parseEdnsOptions`, `parseEdnsOption` | `decodeEdnsOptions`, `decodeEdnsOption` |
 | `parseExtendedDnsErrors` | `extendedErrors` |
+| `parsePacketOptions` | `answer.message.edns`: the OPT record is read into `edns`, never returned as a record |
+| `parseDnssecAlgorithm` | removed. `parseRecordData` reads an algorithm, by number or mnemonic, with the rest of the record's data, and `algorithmName` (`/dnssec`) gives the mnemonic for a number |
+| `createGenericRecord` | removed. `decodeRecord` returns a record it has no fields for in the generic form |
 | `parseRaw…Record`, `parsePacketAnswer` | `decodeRecord`, `decodeRecords`. The DNSSEC record-data decoders (`decodeRrsig`, `decodeDnskey`, `decodeDs`, `decodeNsec`, `decodeNsec3`, `decodeNsec3Param`) are in `/records` and throw `ParseError` for malformed data |
 | `createDnsPacket`, `DnsPacket` (from `dns-packet`) | `encodeQuery`, `decodeMessage` and `Message` (`/wire`) |
 | `A_RECORD`, `MX_RECORD` and the other `*_RECORD` constants | the strings themselves (`'A'`, `'MX'`), typed |
@@ -226,18 +234,43 @@ data an error.
 | `DNS_RECORD_CLASSES` | `RECORD_CLASSES` |
 | `DNS_RESPONSE_CODES` | `RCODES`, `rcodeName` |
 | `DNS_FLAGS`, `FLAG_*` | `HEADER_FLAGS`, and flags as an object of booleans |
+| `DNS_QUERY_FLAGS`, `DNS_TEXT_RECORD_TYPES` | removed |
 | `EDNS_OPTIONS`, `EXTENDED_DNS_ERRORS` | the same names |
 | `DEFAULT_OPTIONS`, `DEFAULT_PUBLIC_DNS_SERVER`, `DEFAULT_PUBLIC_DOH_SERVER`, `DNS_TRANSPORT_*` | removed |
 | `naturalSort`, `naturalCompare`, `stripTrailingDot`, `normalizeHost`, `stripProtocol`, `sanitizeString`, `sortObjectKeys`, `isEmpty`, `getRandomRootServer`, `detectDohServer`, `getQueryFlagsBitmask` | removed |
+
+## Types
+
+The record interfaces keep their names (`DnsRecord`, `ARecord`, `MxRecord` and the rest), with
+the fields above. `RecordOf<'MX'>` is `MxRecord`.
+
+| 0.x | 1.0 |
+| --- | --- |
+| `DnsAnswer` | `Answer` |
+| `DnsOptions` | `ResolverOptions`, `AuthoritativeResolverOptions` |
+| `DnsResolutionHop` | `TraceHop` |
+| `DnsRecordType`, `RecordType` | `KnownRecordType` for the types the library decodes, `RecordTypeName` for every mnemonic in the registry |
+| `DnsRecordClass` | `RecordClassName` |
+| `DnsResponseType` | `RcodeName` |
+| `DnsRecordCode`, `DnsResponseCode` | `number` |
+| `DnsTransportType` | `TransportName` |
+| `DnsQuery`, `DnsQuestion`, `DnsTransportQuery` | removed: a question is `query(name, type, options)`. `Query` (`/wire`) is what `encodeQuery` takes |
+| `DnsFlag`, `DnsQueryFlag`, `QueryFlag` | removed: flags are booleans, in `HeaderFlags` and the query settings |
+| `DnsExtendedErrorCode`, `DnsExtendedErrors` | `ExtendedErrorOption` |
+| `FlatDnsRecord` | `FlatRecord` (`/records`) |
+| `EdnsOption`, and `EdnsNsid`, `EdnsClientSubnet`, `EdnsCookie`, `EdnsTcpKeepAlive`, `EdnsPadding`, `EdnsDnssecCapability`, `EdnsKeyTag` | `TypedEdnsOption`, and `NsidOption`, `ClientSubnetOption`, `CookieOption`, `TcpKeepaliveOption`, `PaddingOption`, `AlgorithmsOption`, `KeyTagOption` (`/records`) |
+| `RawEdnsOption`, `EdnsBaseOption`, `EdnsOptionType`, `EdnsOptionCode`, `EdnsOptionCodeByType` | `EdnsOption`, an option's code and bytes, a different type from 0.x's of that name; `EDNS_OPTIONS` for the codes |
+| `OptRecord` | `Edns`, as `message.edns` |
+| `PacketAnswer`, `PacketQuestion`, `DnsPacket` | `ResourceRecord`, `Question`, `Message` |
 
 ## New in 1.0
 
 - Record validation: `parseRecord`, `canonicalRecord`, `diffRecords`,
   `findCnameConflicts`, `findRepeatedRecords`, `qualify` and `relativize`, with every
-  problem as a code and its values. See [Validating records](README.md#validating-records).
+  problem as a code and its values. See [Validating records](docs/records.md#validating-records).
 - DNSSEC validation with `validate: true` on either resolver, the judging core and its
-  primitives. See [`/dnssec`](README.md#dnssec).
+  primitives. See [DNSSEC](docs/dnssec.md).
 - The `node:dns/promises` facade, with `connectLookup` for `net.connect` and undici. See
-  [`/promises`](README.md#promises).
+  [`/promises`](docs/promises.md).
 - DNS over TLS, DNS over HTTPS over HTTP/2 on Node, SOCKS5 and HTTP CONNECT proxies, and
   `onEvent` for logging and metrics.

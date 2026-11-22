@@ -2,10 +2,12 @@ import { ParseError } from '../errors';
 
 // byte helpers on Uint8Array, so nothing in the codec needs Buffer
 
+/** a big-endian 16-bit number at `offset` */
 export function readU16(bytes: Uint8Array, offset: number): number {
   return (bytes[offset] << 8) | bytes[offset + 1];
 }
 
+/** a big-endian 32-bit number at `offset` */
 export function readU32(bytes: Uint8Array, offset: number): number {
   // `>>> 0` keeps the result unsigned; a plain shift would go negative past 2^31
   return (
@@ -17,11 +19,13 @@ export function readU32(bytes: Uint8Array, offset: number): number {
   );
 }
 
+/** write a big-endian 16-bit number at `offset` */
 export function writeU16(bytes: Uint8Array, offset: number, value: number): void {
   bytes[offset] = (value >>> 8) & 0xff;
   bytes[offset + 1] = value & 0xff;
 }
 
+/** write a big-endian 32-bit number at `offset` */
 export function writeU32(bytes: Uint8Array, offset: number, value: number): void {
   bytes[offset] = (value >>> 24) & 0xff;
   bytes[offset + 1] = (value >>> 16) & 0xff;
@@ -29,6 +33,7 @@ export function writeU32(bytes: Uint8Array, offset: number, value: number): void
   bytes[offset + 3] = value & 0xff;
 }
 
+/** the byte arrays one after another, in one new array */
 export function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {
   let length = 0;
   for (const chunk of chunks) length += chunk.length;
@@ -56,14 +61,14 @@ export function latin1Encode(text: string): Uint8Array {
 
 const HEX = '0123456789abcdef';
 
-// lowercase hex
+/** lowercase hex */
 export function toHex(bytes: Uint8Array): string {
   let out = '';
   for (const byte of bytes) out += HEX[byte >> 4] + HEX[byte & 0x0f];
   return out;
 }
 
-// standard base64 with padding
+/** standard base64 with padding */
 export function toBase64(bytes: Uint8Array): string {
   return btoa(latin1Decode(bytes));
 }
@@ -75,7 +80,7 @@ export function toBase64Url(bytes: Uint8Array): string {
 
 const BASE32HEX = '0123456789ABCDEFGHIJKLMNOPQRSTUV';
 
-// base32 with the extended hex alphabet and no padding (RFC 4648 §7), as NSEC3 uses it
+/** base32 with the extended hex alphabet and no padding (RFC 4648 §7), as NSEC3 uses it */
 export function toBase32Hex(bytes: Uint8Array): string {
   let out = '';
   let buffer = 0;
@@ -200,7 +205,7 @@ export function formatIpv6(bytes: Uint8Array): string {
 
 const HEX_PAIR = /^[0-9a-fA-F]{2}$/;
 
-// hex text to bytes. Throws ParseError for anything that is not pairs of hex digits
+/** hex text to bytes. Throws ParseError for anything that is not pairs of hex digits */
 export function fromHex(text: string): Uint8Array {
   if (text.length % 2 !== 0) throw new ParseError('Hex text has an odd number of digits');
   const out = new Uint8Array(text.length / 2);
@@ -212,7 +217,7 @@ export function fromHex(text: string): Uint8Array {
   return out;
 }
 
-// base64 text to bytes
+/** base64 text to bytes */
 export function fromBase64(text: string): Uint8Array {
   const binary = atob(text.replace(/\s+/g, ''));
   const out = new Uint8Array(binary.length);
@@ -226,7 +231,7 @@ export function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
-// byte order: the first difference decides, then the shorter sorts first
+/** byte order: the first difference decides, then the shorter sorts first */
 export function compareBytes(a: Uint8Array, b: Uint8Array): number {
   const length = Math.min(a.length, b.length);
   for (let i = 0; i < length; i++) {

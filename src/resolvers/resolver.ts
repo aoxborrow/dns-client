@@ -31,53 +31,68 @@ import type { Cache, CacheOption } from './cache';
 import { createKeyedLimiter, createLimiter } from './limiter';
 import type { KeyedLimiter, Limiter } from './limiter';
 
-// the ordinary resolver: it asks recursive resolvers, the way `dig` and `node:dns` do.
-// On top of a single query it adds what a program that resolves names all day wants:
-// several servers with failover, a cache that honours TTLs, and one query on the wire
-// for any number of callers asking the same thing at the same moment
-
+/** the options of a `Resolver`. The query settings among them can also be given to one `query()` */
 export interface ResolverOptions extends TransportOptions, QuerySettings {
-  // the resolvers to ask, in order of preference. Default: the ones this machine is set
-  // up to use, where the runtime can read them
+  /**
+   * the resolvers to ask, in order of preference. Default: the ones this machine is set
+   * up to use, where the runtime can read them
+   */
   servers?: readonly (string | Server)[];
-  // false for no cache, a cache of your own, or settings for the default one (1000
-  // entries)
+  /**
+   * false for no cache, a cache of your own, or settings for the default one (1000
+   * entries)
+   */
   cache?: CacheOption<CachedResponse>;
-  // how many queries may be in flight at once, to all servers together. Default: no limit
+  /** how many queries may be in flight at once, to all servers together. Default: no limit */
   concurrency?: number;
-  // how many queries may be in flight to one server at once. Default 16; Infinity for no
-  // limit
+  /**
+   * how many queries may be in flight to one server at once. Default 16; Infinity for no
+   * limit
+   */
   serverConcurrency?: number;
-  // how long one answer may take altogether, in milliseconds, every server, attempt and
-  // TCP fallback included, and time spent waiting for a turn under `concurrency` or
-  // `serverConcurrency`. With `validate`, the queries for the chain share it with the
-  // data. Default 10000
+  /**
+   * how long one answer may take altogether, in milliseconds, every server, attempt and
+   * TCP fallback included, and time spent waiting for a turn under `concurrency` or
+   * `serverConcurrency`. With `validate`, the queries for the chain share it with the
+   * data. Default 10000
+   */
   totalTimeout?: number;
-  // malformed record data is an error. By default such a record comes back in the
-  // generic form
+  /**
+   * malformed record data is an error. By default such a record comes back in the
+   * generic form
+   */
   strict?: boolean;
+  /** told of every exchange, retry, fallback to TCP and proxy connection, as it happens */
   onEvent?: OnEvent;
-  // sockets and connections to share with other resolvers. The resolver does not close
-  // a set it was given
+  /**
+   * sockets and connections to share with other resolvers. The resolver does not close
+   * a set it was given
+   */
   transports?: Transports;
-  // check each answer's DNSSEC chain from the trust anchors down, and say what came of it
-  // in `answer.security`. Queries are then sent with DO and CD set, so the answer's
-  // `answers` holds its signatures too. Default false
+  /**
+   * check each answer's DNSSEC chain from the trust anchors down, and say what came of it
+   * in `answer.security`. Queries are then sent with DO and CD set, so the answer's
+   * `answers` holds its signatures too. Default false
+   */
   validate?: boolean;
-  // the trust anchors validation starts from. Default: IANA's root trust anchors
+  /** the trust anchors validation starts from. Default: IANA's root trust anchors */
   trustAnchors?: readonly TrustAnchor[];
 }
 
+/** what one `Resolver.query()` takes: the query settings, for this query alone, and these */
 export interface ResolverQueryOptions extends QuerySettings {
-  // ask this server and no other, for this query only. The answer is not taken from the
-  // cache or put in it
+  /**
+   * ask this server and no other, for this query only. The answer is not taken from the
+   * cache or put in it
+   */
   server?: string | Server;
-  // in place of the resolver's `totalTimeout`, for this query
+  /** in place of the resolver's `totalTimeout`, for this query */
   totalTimeout?: number;
+  /** abandons the query when aborted; it rejects with the signal's reason */
   signal?: AbortSignal;
 }
 
-// what the cache holds: a response, and when it arrived
+/** what the cache holds: a response, and when it arrived */
 export interface CachedResponse {
   result: ExchangeResult;
   attempts: number;
@@ -117,6 +132,14 @@ export function cacheLifetime(message: Message): number {
   return soa ? Math.min(soa.ttl, soa.minimum, answerTtl, MAX_NEGATIVE_TTL) : 0;
 }
 
+/**
+ * the ordinary resolver: it asks recursive resolvers, the way `dig` and `node:dns` do. On top of a
+ * single query it adds what a program that resolves names all day wants: several servers with
+ * failover, a cache that honours TTLs, and one query on the wire for any number of callers asking
+ * the same thing at the same moment
+ *
+ * Without `servers` it asks the ones this machine is set up to use. See docs/resolvers.md.
+ */
 export class Resolver {
   private readonly options: ResolverOptions;
   private readonly cache: Cache<CachedResponse> | undefined;
@@ -151,9 +174,11 @@ export class Resolver {
     }
   }
 
-  // ask a question. The answer carries the response code, so a name that does not exist
-  // or has no records of the type is an answer with nothing in `records`, not an error.
-  // An error means no usable response arrived at all
+  /**
+   * ask a question. The answer carries the response code, so a name that does not exist
+   * or has no records of the type is an answer with nothing in `records`, not an error.
+   * An error means no usable response arrived at all
+   */
   query<Type extends KnownRecordType>(
     name: string,
     type: Type,
@@ -224,7 +249,7 @@ export class Resolver {
     return answer;
   }
 
-  // forget every cached answer and every zone validation has judged
+  /** forget every cached answer and every zone validation has judged */
   clearCache(): void {
     this.cache?.clear();
     this.validator?.clear();
@@ -273,8 +298,10 @@ export class Resolver {
     });
   }
 
-  // close the sockets and connections this resolver opened, and empty its cache. A
-  // resolver that shares the process-wide set, or was given one, leaves it open
+  /**
+   * close the sockets and connections this resolver opened, and empty its cache. A
+   * resolver that shares the process-wide set, or was given one, leaves it open
+   */
   close(): void {
     this.clearCache();
     if (this.ownsTransports) this.transports.close();

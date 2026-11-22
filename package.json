@@ -2,7 +2,7 @@
   "name": "@aoxborrow/dns",
   "version": "1.0.0-dev",
   "private": true,
-  "description": "DNS client for TypeScript with no dependencies: wire codec, typed records, resolvers, record validation and DNSSEC primitives",
+  "description": "DNS client for TypeScript with no dependencies: wire codec, typed records, resolvers, record validation and DNSSEC validation",
   "author": "Aaron Oxborrow <aaron@oxborrow.com>",
   "license": "MIT",
   "homepage": "https://github.com/aoxborrow/dns",
@@ -49,6 +49,7 @@
     "dist",
     "README.md",
     "UPGRADING.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "publishConfig": {

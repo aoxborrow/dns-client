@@ -8,41 +8,51 @@ import { labelsToName, readName } from './names';
 // here interprets RDATA beyond what is needed to make it self-contained; the typed
 // records are built from these bytes by the records layer.
 
+/** the section of a message a record came in */
 export type Section = 'answer' | 'authority' | 'additional';
 
+/** a question: a name, a type code and a class code */
 export interface Question {
   name: string;
   type: number;
   class: number;
 }
 
+/**
+ * a record as it was on the wire: name, type and class codes, TTL, and its data as bytes.
+ * `decodeRecord` in `/records` types it
+ */
 export interface ResourceRecord {
-  // owner name, in the case the server sent it
+  /** owner name, in the case the server sent it */
   name: string;
   type: number;
   class: number;
   ttl: number;
-  // the record's data. Names inside it are written out in full, so the bytes stand on
-  // their own without the message they came from; nothing else is changed
+  /**
+   * the record's data. Names inside it are written out in full, so the bytes stand on
+   * their own without the message they came from; nothing else is changed
+   */
   rdata: Uint8Array;
   section: Section;
 }
 
+/** an EDNS option as it was on the wire: its code and bytes */
 export interface EdnsOption {
   code: number;
   data: Uint8Array;
 }
 
-// the EDNS(0) state carried by the OPT pseudo-record (RFC 6891)
+/** the EDNS(0) state carried by the OPT pseudo-record (RFC 6891) */
 export interface Edns {
-  // the largest UDP payload the sender can receive
+  /** the largest UDP payload the sender can receive */
   udpPayloadSize: number;
   version: number;
-  // the DO bit: the sender wants DNSSEC records
+  /** the DO bit: the sender wants DNSSEC records */
   dnssecOk: boolean;
   options: EdnsOption[];
 }
 
+/** a message header's flags, as booleans */
 export interface HeaderFlags {
   qr: boolean;
   aa: boolean;
@@ -53,19 +63,23 @@ export interface HeaderFlags {
   cd: boolean;
 }
 
+/**
+ * a DNS message, decoded: header, flags, question, the three record sections and EDNS. Record data
+ * stays as bytes
+ */
 export interface Message {
   id: number;
   opcode: number;
-  // the full response code: the header's four bits, extended by the OPT record's eight
+  /** the full response code: the header's four bits, extended by the OPT record's eight */
   rcode: number;
   flags: HeaderFlags;
   questions: Question[];
   answers: ResourceRecord[];
   authorities: ResourceRecord[];
-  // without the OPT pseudo-record, which is reported as `edns`
+  /** without the OPT pseudo-record, which is reported as `edns` */
   additionals: ResourceRecord[];
   edns?: Edns;
-  // the size of the message on the wire
+  /** the size of the message on the wire */
   bytes: number;
 }
 
@@ -162,7 +176,7 @@ function readEdnsOptions(rdata: Uint8Array): EdnsOption[] {
   return options;
 }
 
-// decode a complete DNS message
+/** decode a complete DNS message */
 export function decodeMessage(bytes: Uint8Array): Message {
   if (bytes.length < 12) throw new ParseError('Message is shorter than a DNS header');
 

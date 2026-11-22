@@ -5,6 +5,7 @@ import type { Endpoint, Server, TransportName } from './types';
 
 // turning what a caller wrote into a server a transport can use
 
+/** each transport's port: 53 for UDP and TCP, 853 for TLS, 443 for HTTPS */
 export const DEFAULT_PORTS: Record<TransportName, number> = {
   udp: 53,
   tcp: 53,

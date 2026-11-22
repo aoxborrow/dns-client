@@ -38,8 +38,11 @@ Each layer uses only the ones above it in this list.
 - Node built-ins only under `src/transports/`, and imported when first needed, so the
   other entries bundle for a browser.
 - No console output from `src/`. What a caller might want to log goes through `onEvent`.
-- Comments are `//`, start in lower case unless they open with a proper noun, and say why
-  the code is the way it is.
+- Comments start in lower case unless they open with a proper noun, and say why the code
+  is the way it is. They are `//`, with one exception: a declaration an entry point exports,
+  and each public member of one, gets a `/** */` comment saying what it is and does, so
+  editors and the published `.d.ts` show it. `test/tsdoc.test.ts` fails on a public
+  declaration with a `//` comment, and on a `/** */` anywhere else.
 
 ## Tests
 
@@ -56,9 +59,7 @@ The tests follow the entry points, one directory each:
 | `test/support` | the servers, mocks and fixture loaders the others share, and their own tests |
 | `test/fixtures` | recorded messages and the IANA root files |
 
-`test/package.test.ts` checks the manifest and the entry points themselves, and
-`test/readme.test.ts` typechecks every TypeScript example in the README, so each must
-stand alone with its own imports.
+`test/package.test.ts` checks the manifest and the entry points themselves.
 
 Unit tests use no network. Three things make that possible, all under `test/support`:
 
@@ -118,40 +119,32 @@ wildcards, aliases), checking each verdict against what 1.1.1.1 and 8.8.8.8 say.
 that fails on the network is retried once; a wrong verdict fails the run. It prints the
 table of verdicts at the end. CI runs it weekly.
 
+## Documentation
+
+`README.md` is the overview; the reference for each entry point is under `docs/`. The
+pages the tests read are listed in `test/support/docs.ts`, so a new page goes on that list.
+`test/readme.test.ts` holds them to the code:
+
+- every `` ```ts `` example typechecks against the package as a user imports it, so each
+  must stand alone with its own imports
+- an example that needs no network runs, and a statement written `expression; // value`,
+  or followed by a comment holding only the value, must give that value
+- every value an entry point exports is named somewhere in the pages
+
+An example that needs the network is fenced `` ```ts network ``. It is still typechecked,
+and runs in the live suite (`test/live/docs.live.test.ts`) instead.
+
 ## Cloudflare Workers
 
 The parts of the suite that need no listening socket (the codec, the records, the
 resolvers over the simulated network, the DNSSEC primitives) also run inside the Workers
-runtime, with [`@cloudflare/vitest-plugin`](https://developers.cloudflare.com/workers/testing/vitest-integration/):
-
-```ts
-// vitest.workers.config.ts
-import { cloudflareTest } from '@cloudflare/vitest-plugin';
-import { defineConfig } from 'vitest/config';
-
-export default defineConfig({
-  plugins: [
-    cloudflareTest({
-      miniflare: { compatibilityDate: '2026-11-01', compatibilityFlags: ['nodejs_compat'] },
-    }),
-  ],
-  test: {
-    name: 'dns-workers',
-    globals: true,
-    include: [
-      'test/records/**/*.test.ts',
-      'test/wire/**/*.test.ts',
-      'test/dnssec/**/*.test.ts',
-      'test/root/resolvers.test.ts',
-    ],
-    // compares the bundled anchors with IANA's files on disk, which a Worker cannot read
-    exclude: ['test/dnssec/anchors.test.ts'],
-  },
-});
-```
+runtime, with [`@cloudflare/vitest-plugin`](https://developers.cloudflare.com/workers/testing/vitest-integration/).
+The standalone repository has it as a devDependency; this monorepo leaves it out, because it
+brings `workerd` into every install. Its config is `vitest.workers.config.ts` at the
+standalone repository's root (here, `extract/standalone/vitest.workers.config.ts`):
 
 ```bash
-vitest run --config vitest.workers.config.ts
+yarn test:workers
 ```
 
 A test that only makes sense on Node says so with `it.skipIf(!isNode())`, and Ed448 is
@@ -203,3 +196,18 @@ from the published key.
 An entry point is listed in three places, and `test/package.test.ts` fails if they
 disagree: `exports` and `publishConfig.exports` in `package.json`, and `entries` in
 `tsup.config.ts`. If it must run in a browser, add it to `scripts/browser-check.mjs`.
+
+## Releasing
+
+A release runs on a pushed tag `v<version>`, which must equal `version` in `package.json`.
+The workflow (`.github/workflows/release.yml`) lints, tests, runs the browser and pack checks,
+builds, and publishes with npm's trusted publishing, with provenance. A version with a hyphen
+(`1.0.0-beta.2`) goes to the `beta` dist-tag, any other to `latest`.
+
+1. Add the version's section to `CHANGELOG.md`, and bump `version` in `package.json`.
+2. Commit, then `git tag v<version> && git push origin v<version>`.
+3. A GitHub release can follow: `gh release create v<version> --generate-notes`, with
+   `--prerelease` for a beta.
+
+A broken release is deprecated, not unpublished:
+`npm deprecate @aoxborrow/dns@<version> "<why, and which version to use>"`.

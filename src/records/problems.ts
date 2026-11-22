@@ -8,15 +8,16 @@ import { RecordSyntaxError } from '../errors';
 // record the problem is in, as the English detail does: `name`, `target`, `exchange`,
 // `address`, `key tag` and so on
 
+/** every validation problem code, with the values a problem of that code carries */
 export interface RecordProblemValues {
-  // the envelope: name, type, class and TTL
+  /** the envelope: name, type, class and TTL */
   'invalid-ttl': { ttl: number };
   'missing-type': Record<string, never>;
   'unknown-type': { type: string };
   'unknown-class': { class: string };
   'outside-zone': { zone: string };
 
-  // names, in the envelope and in the data
+  /** names, in the envelope and in the data */
   'empty-name': { field: string };
   'zone-relative-name': { field: string };
   'invalid-name': { field: string; reason: string };
@@ -24,7 +25,7 @@ export interface RecordProblemValues {
   'misplaced-wildcard': { field: string };
   'wildcard-target': { field: string };
 
-  // the syntax of the data
+  /** the syntax of the data */
   'no-data': Record<string, never>;
   'missing-field': { field: string };
   'quoted-field': { field: string };
@@ -49,23 +50,26 @@ export interface RecordProblemValues {
   'invalid-generic-data': { type: string };
   'generic-form-only': { type: string };
 
-  // rules on top of syntax
+  /** rules on top of syntax */
   'cname-to-self': Record<string, never>;
   'null-mx-preference': { preference: number };
   'invalid-caa-tag': { tag: string };
   'digest-length': { digestType: number; expected: number; actual: number };
 
-  // sets of records
+  /** sets of records */
   'multiple-cnames': { targets: string[] };
   'cname-and-other-data': { types: string[] };
   'repeated-record': { data: string; count: number };
 }
 
+/** a validation problem code, such as `invalid-address` */
 export type RecordProblemCode = keyof RecordProblemValues;
 
-// one problem. A problem found while checking a record carries the record's `name` and
-// `type` as they were given; one from `parseRecordData`, which sees only the data, has
-// neither
+/**
+ * one problem. A problem found while checking a record carries the record's `name` and
+ * `type` as they were given; one from `parseRecordData`, which sees only the data, has
+ * neither
+ */
 export type RecordProblem = {
   [C in RecordProblemCode]: {
     code: C;
@@ -76,7 +80,7 @@ export type RecordProblem = {
   };
 }[RecordProblemCode];
 
-// a problem with a set of records, which always says which record it is about
+/** a problem with a set of records, which always says which record it is about */
 export type RecordClash = RecordProblem & { name: string; type: string };
 
 // the error for one problem

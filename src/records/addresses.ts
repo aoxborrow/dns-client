@@ -3,8 +3,10 @@ import { toHex } from '../wire/bytes';
 
 // IP addresses as text and as bytes
 
-// four bytes for a dotted-quad IPv4 address, or null if the text is not one. Each part is
-// decimal, 0 to 255, with no leading zeros
+/**
+ * four bytes for a dotted-quad IPv4 address, or null if the text is not one. Each part is
+ * decimal, 0 to 255, with no leading zeros
+ */
 export function parseIpv4(text: string): Uint8Array | null {
   const parts = text.split('.');
   if (parts.length !== 4) return null;
@@ -18,9 +20,11 @@ export function parseIpv4(text: string): Uint8Array | null {
   return out;
 }
 
-// sixteen bytes for an IPv6 address in any RFC 4291 text form, or null if the text is not
-// one: groups of one to four hex digits, at most one `::`, and optionally a dotted-quad
-// IPv4 tail. Zone identifiers (`%eth0`) are not addresses and are rejected
+/**
+ * sixteen bytes for an IPv6 address in any RFC 4291 text form, or null if the text is not
+ * one: groups of one to four hex digits, at most one `::`, and optionally a dotted-quad
+ * IPv4 tail. Zone identifiers (`%eth0`) are not addresses and are rejected
+ */
 export function parseIpv6(text: string): Uint8Array | null {
   if (!/^[0-9a-fA-F:.]+$/.test(text)) return null;
   const halves = text.split('::');
@@ -65,8 +69,10 @@ export function parseIpv6(text: string): Uint8Array | null {
   return out;
 }
 
-// the name to ask for an address's PTR record: `1.2.0.192.in-addr.arpa` for IPv4, the
-// reversed nibbles under `ip6.arpa` for IPv6
+/**
+ * the name to ask for an address's PTR record: `1.2.0.192.in-addr.arpa` for IPv4, the
+ * reversed nibbles under `ip6.arpa` for IPv6
+ */
 export function reverseIp(address: string): string {
   const text = address.trim();
   const ipv4 = parseIpv4(text);

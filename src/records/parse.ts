@@ -14,7 +14,7 @@ import type { DnsRecord, KnownRecordType, RecordOf, ServiceParams, UnknownRecord
 // put the record on the wire; rules about what a sensible record looks like are the
 // validators' job.
 
-// the type-specific fields of a record, without its envelope
+/** the type-specific fields of a record, without its envelope */
 export type RecordData<T extends KnownRecordType> = Omit<
   RecordOf<T>,
   'name' | 'class' | 'ttl' | 'type'
@@ -782,21 +782,26 @@ function genericData(data: string): Uint8Array | undefined {
   return out;
 }
 
+/** the options of `parseRecord` and `parseRecordData` */
 export interface ParseOptions {
-  // turn a domain name, as it was written in the data, into the name to store. The
-  // default takes it as a full name and drops one trailing dot
+  /**
+   * turn a domain name, as it was written in the data, into the name to store. The
+   * default takes it as a full name and drops one trailing dot
+   */
   readName?: (written: string) => string;
 }
 
-// whether the library can parse this type's own presentation format
+/** whether the library can parse this type's own presentation format */
 export function hasRecordParser(type: string): type is KnownRecordType {
   return Object.hasOwn(PARSERS, type.toUpperCase());
 }
 
-// parse a record's data from presentation format into its typed fields.
-//
-// any type, known or not, may be given in the RFC 3597 generic form (`\# 4 c0000201`). A
-// type with no parser of its own can only be given that way, and comes back as hex `data`
+/**
+ * parse a record's data from presentation format into its typed fields.
+ *
+ * any type, known or not, may be given in the RFC 3597 generic form (`\# 4 c0000201`). A
+ * type with no parser of its own can only be given that way, and comes back as hex `data`
+ */
 export function parseRecordData<T extends KnownRecordType>(
   type: T,
   data: string,

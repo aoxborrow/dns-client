@@ -145,6 +145,7 @@ function wrapSocket(
   };
 }
 
+/** the `connect` used on Node: opens TCP connections with `node:net`, and TLS with `node:tls` */
 export function createNodeConnect(tlsOptions?: TlsOptions): Connect {
   return async target => {
     const net = await loadNet();

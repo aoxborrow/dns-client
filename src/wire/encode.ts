@@ -10,29 +10,31 @@ import { encodeName } from './names';
 // encoding: queries for sending, and whole messages for building responses in tests.
 // Names are always written in full, never compressed.
 
+/** the EDNS record a query carries */
 export interface QueryEdns {
-  // the largest UDP response the sender will accept. Default 1232
+  /** the largest UDP response the sender will accept. Default 1232 */
   udpPayloadSize?: number;
-  // set the DO bit: ask for DNSSEC records
+  /** set the DO bit: ask for DNSSEC records */
   dnssecOk?: boolean;
   options?: readonly EdnsOption[];
 }
 
+/** what `encodeQuery` takes: a question, its flags and its EDNS settings */
 export interface Query {
-  // the message ID. The caller chooses it, so the codec stays deterministic
+  /** the message ID. The caller chooses it, so the codec stays deterministic */
   id: number;
   name: string;
-  // a mnemonic ('MX'), an RFC 3597 'TYPE65', or a number
+  /** a mnemonic ('MX'), an RFC 3597 'TYPE65', or a number */
   type: string | number;
-  // default IN
+  /** default IN */
   class?: string | number;
-  // RD: ask the server to recurse
+  /** RD: ask the server to recurse */
   recursionDesired?: boolean;
-  // CD: ask a validating resolver to return data even if validation fails
+  /** CD: ask a validating resolver to return data even if validation fails */
   checkingDisabled?: boolean;
-  // AD in a query: ask to be told whether the answer was authenticated
+  /** AD in a query: ask to be told whether the answer was authenticated */
   authenticData?: boolean;
-  // EDNS is on by default; pass false to send a plain RFC 1035 query
+  /** EDNS is on by default; pass false to send a plain RFC 1035 query */
   edns?: QueryEdns | false;
 }
 
@@ -73,7 +75,7 @@ function question(name: string, type: number, cls: number): Uint8Array {
   return out;
 }
 
-// encode one question as a query message
+/** encode one question as a query message */
 export function encodeQuery(query: Query): Uint8Array {
   if (!Number.isInteger(query.id) || query.id < 0 || query.id > 0xffff) {
     throw new InvalidQueryError(`Message ID out of range: ${query.id}`);
@@ -113,7 +115,7 @@ export function encodeQuery(query: Query): Uint8Array {
   return concatBytes(parts);
 }
 
-// what `encodeMessage` needs: a decoded message, with the parts that have defaults optional
+/** what `encodeMessage` needs: a decoded message, with the parts that have defaults optional */
 export type EncodableMessage = Pick<Message, 'id'> &
   Partial<
     Pick<
@@ -124,8 +126,10 @@ export type EncodableMessage = Pick<Message, 'id'> &
     flags?: Partial<Message['flags']>;
   };
 
-// encode a whole message. This is the inverse of `decodeMessage`, used to build responses
-// for tests and fixtures; RDATA is written as given
+/**
+ * encode a whole message. This is the inverse of `decodeMessage`, used to build responses
+ * for tests and fixtures; RDATA is written as given
+ */
 export function encodeMessage(message: EncodableMessage): Uint8Array {
   const rcode = message.rcode ?? 0;
   if (rcode > 0x0f && !message.edns) {

@@ -1,7 +1,9 @@
 import { InvalidQueryError } from '../errors';
 
-// resource record types, from the IANA "Resource Record (RR) TYPEs" registry
-// https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4
+/**
+ * resource record types, from the IANA "Resource Record (RR) TYPEs" registry
+ * https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4
+ */
 export const RECORD_TYPES = {
   'A': 1, // a host address
   'NS': 2, // an authoritative name server
@@ -102,6 +104,7 @@ export const RECORD_TYPES = {
   'DLV': 32769, // dNSSEC Lookaside Validation (OBSOLETE)
 } as const;
 
+/** a record type mnemonic, such as `MX` */
 export type RecordTypeName = keyof typeof RECORD_TYPES;
 
 const CODES = new Map<string, number>(Object.entries(RECORD_TYPES));
@@ -109,12 +112,12 @@ const NAMES = new Map<number, RecordTypeName>(
   (Object.entries(RECORD_TYPES) as [RecordTypeName, number][]).map(([name, code]) => [code, name])
 );
 
-// the mnemonic for a type code, or the RFC 3597 form (`TYPE65280`) for one with no name
+/** the mnemonic for a type code, or the RFC 3597 form (`TYPE65280`) for one with no name */
 export function typeName(code: number): RecordTypeName | `TYPE${number}` {
   return NAMES.get(code) ?? `TYPE${code}`;
 }
 
-// the code for a type given as a mnemonic (any case), an RFC 3597 `TYPEnnn`, or a number
+/** the code for a type given as a mnemonic (any case), an RFC 3597 `TYPEnnn`, or a number */
 export function typeCode(type: string | number): number {
   if (typeof type === 'number') {
     if (!Number.isInteger(type) || type < 0 || type > 0xffff) {
