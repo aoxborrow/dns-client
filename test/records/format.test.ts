@@ -1,6 +1,5 @@
+import { compareNames, decodeMessage } from '../../src/wire/index';
 import {
-  compareNames,
-  decodeMessage,
   decodeRecord,
   decodeRecords,
   deduplicateRecords,
@@ -8,13 +7,12 @@ import {
   formatRecord,
   formatRecordData,
   formatSignatureTime,
-  InvalidQueryError,
   parseIpv4,
   parseIpv6,
   reverseIp,
   sortRecords,
-  type DnsRecord,
-} from '../../src/index';
+} from '../../src/records/index';
+import { InvalidQueryError, type DnsRecord } from '../../src/index';
 import { formatIpv6 } from '../../src/wire/bytes';
 import { CORPUS, corpusAnswer, seededRandom } from '../support/corpus';
 

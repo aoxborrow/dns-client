@@ -322,6 +322,22 @@ describe('the top-level functions', () => {
     expect(missing.sort()).toEqual(['lookupService']);
   });
 
+  it('has every error code node:dns/promises has, with the same value', () => {
+    const codes = Object.entries(nodeDns).filter(([, value]) => typeof value === 'string');
+    expect(codes.length).toBeGreaterThan(20);
+    for (const [key, value] of codes) {
+      expect((facade as Record<string, unknown>)[key], key).toBe(value);
+    }
+  });
+
+  it('has a default export holding every value the module exports, as node:dns/promises does', () => {
+    const { default: whole, ...named } = facade;
+    expect(Object.keys(whole).sort()).toEqual(Object.keys(named).sort());
+    for (const [key, value] of Object.entries(named)) {
+      expect((whole as Record<string, unknown>)[key], key).toBe(value);
+    }
+  });
+
   it("has node:dns's error codes", () => {
     for (const key of ['NODATA', 'NOTFOUND', 'SERVFAIL', 'REFUSED', 'TIMEOUT', 'BADRESP']) {
       expect((facade as Record<string, unknown>)[key]).toBe(

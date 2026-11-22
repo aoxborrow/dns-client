@@ -1,15 +1,7 @@
 import dnsPacket from 'dns-packet';
-import {
-  decodeMessage,
-  decodeRecords,
-  encodeMessage,
-  encodeQuery,
-  InvalidQueryError,
-  ParseError,
-  rcodeName,
-  typeName,
-  type Message,
-} from '../../src/index';
+import { decodeMessage, encodeMessage, encodeQuery } from '../../src/wire/index';
+import { decodeRecords, rcodeName, typeName } from '../../src/records/index';
+import { InvalidQueryError, ParseError, type Message } from '../../src/index';
 import { CORPUS, seededRandom } from '../support/corpus';
 
 // dns-packet is the codec this one replaces. It is a dev dependency only, here as an

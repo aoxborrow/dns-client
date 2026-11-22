@@ -105,12 +105,12 @@ export const RECORD_TYPES = {
 export type RecordTypeName = keyof typeof RECORD_TYPES;
 
 const CODES = new Map<string, number>(Object.entries(RECORD_TYPES));
-const NAMES = new Map<number, string>(
-  Object.entries(RECORD_TYPES).map(([name, code]) => [code, name])
+const NAMES = new Map<number, RecordTypeName>(
+  (Object.entries(RECORD_TYPES) as [RecordTypeName, number][]).map(([name, code]) => [code, name])
 );
 
 // the mnemonic for a type code, or the RFC 3597 form (`TYPE65280`) for one with no name
-export function typeName(code: number): string {
+export function typeName(code: number): RecordTypeName | `TYPE${number}` {
   return NAMES.get(code) ?? `TYPE${code}`;
 }
 

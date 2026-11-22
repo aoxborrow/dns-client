@@ -1,16 +1,17 @@
 import {
   canonicalName,
+  compareNames,
   countLabels,
   encodeName,
   isSubdomain,
   labelsToName,
   nameToLabels,
-  ParseError,
   parentName,
   readName,
   splitName,
   toAsciiName,
-} from '../../src/index';
+} from '../../src/wire/index';
+import { ParseError } from '../../src/index';
 
 const bytes = (...values: (number | string)[]) =>
   Uint8Array.from(
@@ -198,5 +199,38 @@ describe('names in their ASCII form', () => {
     for (const name of ['ü@x.de', 'ü:80.de', 'ü/x.de', 'a。b.de']) {
       expect(() => toAsciiName(name), name).toThrow(ParseError);
     }
+  });
+});
+
+describe('compareNames in canonical order', () => {
+  it('orders by label from the right, per RFC 4034 §6.1', () => {
+    const names = ['z.example', 'a.example', 'example', 'yljkjljk.a.example'];
+    expect([...names].sort(compareNames)).toEqual([
+      'example',
+      'a.example',
+      'yljkjljk.a.example',
+      'z.example',
+    ]);
+  });
+
+  it('sorts a name before its own subdomains', () => {
+    expect(compareNames('example.com', 'a.example.com')).toBeLessThan(0);
+  });
+
+  it('is case-insensitive', () => {
+    expect(compareNames('EXAMPLE.com', 'example.COM')).toBe(0);
+  });
+
+  it('keeps an escaped dot inside its label', () => {
+    // `b\.z` is one label, "b.z", which sorts before "y"; split on every dot it would compare
+    // as "z" and sort after
+    expect(compareNames('b\\.z.example', 'y.example')).toBeLessThan(0);
+    expect(compareNames('a\\.b.example', 'b.example')).toBeLessThan(0);
+  });
+
+  it('compares an escaped byte as the byte it stands for', () => {
+    // \255 is the octet 0xff, which sorts after "z" (0x7a), not the backslash (0x5c) it is
+    // spelled with
+    expect(compareNames('\\255.example', 'z.example')).toBeGreaterThan(0);
   });
 });

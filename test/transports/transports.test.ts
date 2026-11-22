@@ -3,7 +3,6 @@ import {
   DnsError,
   EmptyResponseError,
   InvalidResponseError,
-  NoServerError,
   TimeoutError,
 } from '../../src/errors';
 import { exchange, toDig } from '../../src/exchange';
@@ -80,10 +79,10 @@ describe('toEndpoint', () => {
   });
 
   it('rejects a server it cannot read', () => {
-    expect(() => toEndpoint('', 'udp')).toThrow(NoServerError);
-    expect(() => toEndpoint('192.0.2.1:notaport', 'udp')).toThrow(NoServerError);
-    expect(() => toEndpoint('192.0.2.1:70000', 'udp')).toThrow(NoServerError);
-    expect(() => toEndpoint('[2001:db8::1', 'udp')).toThrow(NoServerError);
+    expect(() => toEndpoint('', 'udp')).toThrow(TypeError);
+    expect(() => toEndpoint('192.0.2.1:notaport', 'udp')).toThrow(TypeError);
+    expect(() => toEndpoint('192.0.2.1:70000', 'udp')).toThrow(TypeError);
+    expect(() => toEndpoint('[2001:db8::1', 'udp')).toThrow(TypeError);
   });
 
   it('accepts only an address or a host name as the host', () => {
@@ -97,13 +96,13 @@ describe('toEndpoint', () => {
     ];
     for (const host of hostile) {
       for (const transport of ['udp', 'tcp', 'tls', 'doh'] as const) {
-        expect(() => toEndpoint(host, transport), host).toThrow(NoServerError);
-        expect(() => toEndpoint({ address: host }, transport), host).toThrow(NoServerError);
+        expect(() => toEndpoint(host, transport), host).toThrow(TypeError);
+        expect(() => toEndpoint({ address: host }, transport), host).toThrow(TypeError);
       }
     }
     expect(() =>
       toEndpoint({ address: '192.0.2.1', serverName: 'dns.example\r\nX: 1' }, 'tls')
-    ).toThrow(NoServerError);
+    ).toThrow(TypeError);
     // names with underscores, trailing dots and Unicode are still names
     expect(toEndpoint('_dns.resolver.arpa.', 'udp').host).toBe('_dns.resolver.arpa.');
     expect(toEndpoint('dns.münchen.example', 'tcp').host).toBe('dns.xn--mnchen-3ya.example');
@@ -126,7 +125,7 @@ describe('toEndpoint', () => {
         } catch (caught) {
           error = caught;
         }
-        expect(error, server).toBeInstanceOf(NoServerError);
+        expect(error, server).toBeInstanceOf(TypeError);
         const text = `${(error as Error).message} ${JSON.stringify(error)} ${String((error as Error).cause)}`;
         expect(text).not.toContain('hunter2');
       }
@@ -139,7 +138,7 @@ describe('toEndpoint', () => {
       toEndpoint({ address: 'dns.example', url: 'https://u:p@dns.example/dns-query' }, 'doh')
     ).toThrow(/credentials/);
     expect(() => toEndpoint({ address: 'dns.example', url: 'ftp://dns.example/' }, 'doh')).toThrow(
-      NoServerError
+      TypeError
     );
   });
 });
@@ -427,8 +426,7 @@ describe('DNS over HTTPS', () => {
     ];
     for (const attempt of attempts) {
       const error = await attempt.catch(caught => caught);
-      expect(error).toBeInstanceOf(NoServerError);
-      expect(error.retryable).toBe(false);
+      expect(error).toBeInstanceOf(TypeError);
       expect(
         `${error.message} ${error.stack} ${JSON.stringify(error)} ${String(error.cause)}`
       ).not.toContain('hunter2');

@@ -38,17 +38,17 @@ export function parseProxy(input: string | URL): Proxy {
     url = typeof input === 'string' ? new URL(input) : input;
   } catch {
     // the text may hold credentials, so it is not repeated
-    throw new DnsError('Invalid proxy URL');
+    throw new TypeError('Invalid proxy URL');
   }
   const scheme = SCHEMES[url.protocol];
   if (!scheme) {
     // a scheme is only named when it is one somebody would write on purpose: text like
     // "user:pass@host" parses as a URL whose scheme is the username
     const named = OTHER_SCHEMES.has(url.protocol) ? ` "${url.protocol.slice(0, -1)}"` : '';
-    throw new DnsError(`Unsupported proxy scheme${named}: use socks5:// or http://`);
+    throw new TypeError(`Unsupported proxy scheme${named}: use socks5:// or http://`);
   }
   const host = url.hostname.replace(/^\[|\]$/g, '');
-  if (!host) throw new DnsError('Invalid proxy URL: no host');
+  if (!host) throw new TypeError('Invalid proxy URL: no host');
   const port = url.port ? Number(url.port) : scheme.port;
   const username = url.username ? decodeURIComponent(url.username) : undefined;
   const password = url.password ? decodeURIComponent(url.password) : undefined;
@@ -145,7 +145,8 @@ export async function openTunnel(
     } catch (error) {
       void closeQuietly(connection);
       if (options.signal?.aborted) throw options.signal.reason;
-      if (error instanceof DnsError) throw error;
+      // a target the handshake refused to write is the caller's mistake, not the proxy's
+      if (error instanceof DnsError || error instanceof TypeError) throw error;
       throw new ProxyError(
         `Proxy ${proxy.display} failed while connecting to ${targetText}: ${scrub(messageOf(error), proxy)}`,
         { cause: error }

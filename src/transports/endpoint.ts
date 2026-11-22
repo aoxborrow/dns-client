@@ -1,4 +1,3 @@
-import { NoServerError } from '../errors';
 import { parseIpv4, parseIpv6 } from '../records/addresses';
 import { formatIpv6 } from '../wire/bytes';
 import { toAsciiName } from '../wire/names';
@@ -41,7 +40,7 @@ export function formatHostPort(host: string, port: number): string {
 function parsePort(text: string): number {
   const port = Number(text);
   if (!/^\d+$/.test(text) || port < 1 || port > 0xffff) {
-    throw new NoServerError('Invalid port in the server address');
+    throw new TypeError('Invalid port in the server address');
   }
   return port;
 }
@@ -58,11 +57,11 @@ export function checkHost(host: string): string {
       // a name may be written in Unicode
       ascii = toAsciiName(host);
     } catch {
-      throw new NoServerError('Invalid server address: not an IP address or a host name');
+      throw new TypeError('Invalid server address: not an IP address or a host name');
     }
   }
   if (!HOST.test(ascii)) {
-    throw new NoServerError('Invalid server address: not an IP address or a host name');
+    throw new TypeError('Invalid server address: not an IP address or a host name');
   }
   return ascii;
 }
@@ -75,13 +74,13 @@ export function parseDohUrl(text: string): URL {
     url = new URL(text);
   } catch {
     // the parser's own error carries the text it was given, so it is not kept as a cause
-    throw new NoServerError('Invalid DoH server URL');
+    throw new TypeError('Invalid DoH server URL');
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new NoServerError('A DoH server URL has to start with https:// or http://');
+    throw new TypeError('A DoH server URL has to start with https:// or http://');
   }
   if (url.username || url.password) {
-    throw new NoServerError(
+    throw new TypeError(
       'A DoH server URL cannot carry credentials: send them from a custom fetch instead'
     );
   }
@@ -93,10 +92,10 @@ export function parseDohUrl(text: string): URL {
 function splitHostPort(text: string): { host: string; port?: number } {
   if (text.startsWith('[')) {
     const end = text.indexOf(']');
-    if (end === -1) throw new NoServerError('Invalid server address');
+    if (end === -1) throw new TypeError('Invalid server address');
     const rest = text.slice(end + 1);
     if (rest !== '' && !rest.startsWith(':')) {
-      throw new NoServerError('Invalid server address');
+      throw new TypeError('Invalid server address');
     }
     return {
       host: text.slice(1, end),
@@ -131,7 +130,7 @@ export function toEndpoint(
     described = { address: host, ...(written !== undefined && { port: written }) };
   }
 
-  if (!described.address) throw new NoServerError('No server given');
+  if (!described.address) throw new TypeError('No server given');
   const host = checkHost(described.address);
 
   if (transport === 'doh') {

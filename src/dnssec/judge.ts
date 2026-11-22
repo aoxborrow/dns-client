@@ -161,7 +161,7 @@ export interface Judgement {
   facts: ZoneFact[];
 }
 
-interface ZoneState {
+export interface ZoneState {
   zone: string;
   status: SecurityStatus;
   reason: SecurityReason;

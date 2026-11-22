@@ -1,11 +1,5 @@
 import net from 'node:net';
-import {
-  ConnectionError,
-  DnsError,
-  NoServerError,
-  ProxyError,
-  TimeoutError,
-} from '../../src/errors';
+import { ConnectionError, DnsError, ProxyError, TimeoutError } from '../../src/errors';
 import { exchange, toDig } from '../../src/exchange';
 import type { ExchangeOptions, ExchangeResult } from '../../src/exchange';
 import { createNodeConnect, createTransports } from '../../src/transports/index';
@@ -320,7 +314,7 @@ describe('proxies', () => {
               query: encodeQuery({ id: 1, name: 'example.com', type: 'A' }),
             })
             .catch(caught => caught);
-          expect(error, host).toBeInstanceOf(NoServerError);
+          expect(error, host).toBeInstanceOf(TypeError);
         }
       }
       // the proxy never saw a request line, let alone a second one
@@ -340,7 +334,7 @@ describe('proxies', () => {
           }
         ).catch(caught => caught)
       );
-      expect(error).toBeInstanceOf(NoServerError);
+      expect(error).toBeInstanceOf(TypeError);
       expect(proxy.requests).toHaveLength(1);
     });
   });
@@ -596,9 +590,9 @@ describe('proxies', () => {
         throw new Error('expected a failure');
       };
       expect(attempt('socks4://127.0.0.1:1080').message).toContain('Unsupported proxy scheme');
-      expect(attempt('https://127.0.0.1:8443')).toBeInstanceOf(DnsError);
+      expect(attempt('https://127.0.0.1:8443')).toBeInstanceOf(TypeError);
       const garbled = attempt(`${USERNAME}:${PASSWORD}@not a url`);
-      expect(garbled).toBeInstanceOf(DnsError);
+      expect(garbled).toBeInstanceOf(TypeError);
       expectNoCredentials(garbled.message);
     });
 

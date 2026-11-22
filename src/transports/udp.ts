@@ -1,7 +1,7 @@
 import type { RemoteInfo, Socket } from 'node:dgram';
 import { ConnectionError, DnsError, errorData, NoServerError, ProxyError } from '../errors';
 import { concatBytes } from '../wire/bytes';
-import { formatHostPort, isIp, normalizeAddress } from './endpoint';
+import { checkHost, formatHostPort, isIp, normalizeAddress } from './endpoint';
 import { resolveProxy, scrub } from './proxy';
 import type { Proxy } from './proxy';
 import { defaultConnect, isWorkers } from './runtime';
@@ -511,6 +511,8 @@ export function createUdpTransport(options: UdpTransportOptions = {}): Transport
       if (request.signal?.aborted) return Promise.reject(request.signal.reason);
       let proxy: Proxy | undefined;
       try {
+        // as in the TCP transport: an endpoint handed straight in is checked here
+        checkHost(request.endpoint.host);
         proxy = resolveProxy(options.proxy, {
           host: request.endpoint.host,
           port: request.endpoint.port,

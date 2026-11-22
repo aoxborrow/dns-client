@@ -8,7 +8,6 @@ export {
   ROOT_TRUST_ANCHOR_SOURCE,
   ROOT_TRUST_ANCHORS_DATA_VERSION,
   ROOT_TRUST_ANCHORS_REFRESHED,
-  isAnchorCurrent,
 } from './anchors';
 export {
   algorithmName,
@@ -20,7 +19,6 @@ export {
 export type { VerifyOutcome } from './crypto';
 export {
   assessNsec3Params,
-  compareCanonicalNames,
   verifyNoDsProof,
   verifyNodataProof,
   verifyNxdomainProof,
@@ -40,16 +38,9 @@ export type { Rrset, WireMessage, WireRecord } from './canonical';
 export {
   checkAnchors,
   checkBudget,
-  checkDsSet,
-  checkKeySet,
   checkRrset,
-  checkSignature,
-  coveringSignatures,
-  isAuthoritative,
   isDigestDeprecated,
-  keyAlgorithms,
   readKeys,
-  readRrsig,
   CHECK_LIMITS,
   DS_CODES,
   KEY_SET_CODES,
@@ -86,11 +77,24 @@ export type {
   ZoneFact,
   KeysEntry,
   ZoneKeysJudgement,
+  ZoneState,
 } from './judge';
-export { EDE_CODES, REASON_CODES, REASON_EDE, SECURITY_STATUSES, securityReason } from './reasons';
+export { REASON_CODES, SECURITY_STATUSES } from './reasons';
 export type { ReasonCode, SecurityReason, SecurityStatus } from './reasons';
-export { denialTypesAt, nextCloserOptOut } from './nsec';
+export type { Security } from './validate';
 export { presentRecord } from './present';
-export { sha1, sha256, sha384 } from './hash';
-export * from './constants';
+export {
+  ALGORITHM_REGISTRY_REFRESHED,
+  ALGORITHM_STANDINGS,
+  DNSKEY_FLAGS,
+  DNSKEY_PROTOCOL,
+  DNSSEC_ALGORITHMS,
+  DS_DIGEST_TYPES,
+  NSEC3_FLAGS,
+  NSEC3_HASH_ALGORITHMS,
+  PROOF_PURPOSES,
+  PROOF_STATUSES,
+  PROOF_TYPES,
+  VERIFICATION_RESULTS,
+} from './constants';
 export type * from './types';

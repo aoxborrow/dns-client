@@ -36,15 +36,8 @@ import net from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ResourceRecord } from '../src/index';
-import {
-  decodeMessage,
-  encodeMessage,
-  encodeName,
-  encodeQuery,
-  nsidOption,
-  rcodeName,
-  typeCode,
-} from '../src/index';
+import { decodeMessage, encodeMessage, encodeName, encodeQuery } from '../src/wire/index';
+import { nsidOption, rcodeName, typeCode } from '../src/records/index';
 
 const TIMEOUT_MS = 5000;
 const FLAGS = ['rd', 'cd', 'do', 'nsid', 'noedns'] as const;

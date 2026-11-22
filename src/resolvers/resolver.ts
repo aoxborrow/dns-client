@@ -15,6 +15,7 @@ import { typeCode, typeName } from '../protocol/types';
 import { decodeRecords } from '../records/decode';
 import type { DnsRecord, KnownRecordType, RecordOf } from '../records/types';
 import type { Transports } from '../transports/index';
+import { toEndpoint } from '../transports/endpoint';
 import { now } from '../transports/runtime';
 import { systemServers } from '../transports/system';
 import type { OnEvent, Server, TransportOptions } from '../transports/types';
@@ -129,6 +130,11 @@ export class Resolver {
 
   constructor(options: ResolverOptions = {}) {
     checkEdnsSettings(options);
+    // a server that cannot be read is refused now: on a query it would stop the failover
+    // to the servers after it
+    for (const server of options.servers ?? []) {
+      toEndpoint(server, options.transport ?? 'udp', options.port);
+    }
     this.options = options;
     this.cache = resolveCache(options.cache);
     this.limit = createLimiter(options.concurrency ?? Infinity);

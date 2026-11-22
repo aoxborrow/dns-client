@@ -1,13 +1,13 @@
 import {
   classCode,
   className,
-  InvalidQueryError,
   rcodeName,
   RCODES,
   RECORD_TYPES,
   typeCode,
   typeName,
-} from '../../src/index';
+} from '../../src/records/index';
+import { InvalidQueryError } from '../../src/index';
 
 describe('record types', () => {
   it('maps mnemonics to codes in any case', () => {
@@ -66,6 +66,13 @@ describe('classes and response codes', () => {
     expect(rcodeName(3)).toBe('NXDOMAIN');
     expect(rcodeName(16)).toBe('BADVERS');
     expect(rcodeName(99)).toBe('RCODE99');
+  });
+
+  it('types a response code name as a mnemonic, so a misspelt one does not compile', () => {
+    const name = rcodeName(3);
+    // @ts-expect-error no response code is called NXDOMIAN
+    expect(name === 'NXDOMIAN').toBe(false);
+    expect(name === 'NXDOMAIN').toBe(true);
   });
 
   it('numbers the TSIG and TKEY codes as the IANA registry does', () => {

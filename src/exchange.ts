@@ -1,4 +1,5 @@
 import {
+  addErrorContext,
   DnsError,
   errorData,
   InvalidQueryError,
@@ -324,7 +325,7 @@ export function transportsFor(options: TransportOptions & { transports?: Transpo
   if (options.transports) {
     if (given.length > 0) {
       const names = given.map(name => `\`${name}\``).join(', ');
-      throw new DnsError(
+      throw new TypeError(
         `Transport options (${names}) cannot be combined with \`transports\`: a set that ` +
           'is already made does not take them. Pass them to createTransports() instead'
       );
@@ -352,7 +353,7 @@ export function checkEdnsSettings(own: EdnsSettings, inherited: EdnsSettings = {
     own.ednsOptions?.length && '`ednsOptions`',
   ].filter(name => typeof name === 'string');
   if (names.length === 0) return;
-  throw new DnsError(
+  throw new TypeError(
     `\`edns: false\` sends no EDNS record, which is what carries ${names.join(', ')}: ` +
       'set one or the other'
   );
@@ -423,7 +424,7 @@ export async function exchange(
   try {
     queryBytes = encode(id);
   } catch (error) {
-    if (error instanceof DnsError) error.addContext(context());
+    if (error instanceof DnsError) addErrorContext(error, context());
     throw error;
   }
   if (signal?.aborted) throw signal.reason;
@@ -556,7 +557,7 @@ export async function exchange(
         clearTimeout(timer);
         // the caller gave up: that is not a failed query, and is thrown as it was given
         if (signal?.aborted) throw signal.reason;
-        if (error instanceof DnsError) error.addContext(context());
+        if (error instanceof DnsError) addErrorContext(error, context());
         report(undefined, undefined, error);
 
         const retryable = error instanceof DnsError && error.retryable;

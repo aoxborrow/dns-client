@@ -1,12 +1,11 @@
+import { decodeMessage } from '../../src/wire/index';
 import {
-  decodeMessage,
   decodeRecord,
   formatRecordData,
   hasRecordParser,
   parseRecordData,
-  RecordSyntaxError,
-  type DnsRecord,
-} from '../../src/index';
+} from '../../src/records/index';
+import { RecordSyntaxError, type DnsRecord } from '../../src/index';
 import { CORPUS } from '../support/corpus';
 
 const base = { name: 'example.com', class: 'IN', ttl: 300 };

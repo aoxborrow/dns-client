@@ -1,18 +1,16 @@
 import dnsPacket from 'dns-packet';
 // @ts-expect-error dns-packet ships no types for this module
 import * as packetTypes from 'dns-packet/types';
+import { decodeMessage } from '../../src/wire/index';
 import {
-  decodeMessage,
   decodeRecord,
   decodeRecords,
   isKnownRecordType,
-  ParseError,
   RECORD_TYPES,
   typeCode,
   typeName,
-  type DnsRecord,
-  type ResourceRecord,
-} from '../../src/index';
+} from '../../src/records/index';
+import { ParseError, type DnsRecord, type ResourceRecord } from '../../src/index';
 import {
   decodeDnskey,
   decodeDs,

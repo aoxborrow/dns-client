@@ -42,7 +42,8 @@
     "./transports": "./src/transports/index.ts",
     "./transports/doh": "./src/transports/doh.ts",
     "./dnssec": "./src/dnssec/index.ts",
-    "./promises": "./src/promises/index.ts"
+    "./promises": "./src/promises/index.ts",
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
@@ -81,7 +82,8 @@
       "./promises": {
         "types": "./dist/promises/index.d.ts",
         "default": "./dist/promises/index.js"
-      }
+      },
+      "./package.json": "./package.json"
     }
   },
   "scripts": {

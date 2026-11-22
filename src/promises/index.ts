@@ -66,19 +66,35 @@ export type {
   LookupOptions,
   ResultOrder,
 } from './lookup';
-export { ADDRCONFIG, ALL, V4MAPPED } from './lookup';
+import { ADDRCONFIG, ALL, V4MAPPED } from './lookup';
 
-// Node's error codes, under Node's names
+export { ADDRCONFIG, ALL, V4MAPPED };
+
+// Node's error codes, under Node's names: every one `node:dns/promises` has, the ones this
+// facade never gives included, so code that compares against them still compiles
 export const NODATA = 'ENODATA';
 export const FORMERR = 'EFORMERR';
 export const SERVFAIL = 'ESERVFAIL';
 export const NOTFOUND = 'ENOTFOUND';
 export const NOTIMP = 'ENOTIMP';
 export const REFUSED = 'EREFUSED';
+export const BADQUERY = 'EBADQUERY';
 export const BADNAME = 'EBADNAME';
+export const BADFAMILY = 'EBADFAMILY';
 export const BADRESP = 'EBADRESP';
 export const CONNREFUSED = 'ECONNREFUSED';
 export const TIMEOUT = 'ETIMEOUT';
+export const EOF = 'EOF';
+export const FILE = 'EFILE';
+export const NOMEM = 'ENOMEM';
+export const DESTRUCTION = 'EDESTRUCTION';
+export const BADSTR = 'EBADSTR';
+export const BADFLAGS = 'EBADFLAGS';
+export const NONAME = 'ENONAME';
+export const BADHINTS = 'EBADHINTS';
+export const NOTINITIALIZED = 'ENOTINITIALIZED';
+export const LOADIPHLPAPI = 'ELOADIPHLPAPI';
+export const ADDRGETNETWORKPARAMS = 'EADDRGETNETWORKPARAMS';
 export const CANCELLED = 'ECANCELLED';
 
 // the library's resolver options, and Node's `timeout` (milliseconds per attempt, as in
@@ -496,6 +512,11 @@ export class Resolver {
         },
         (error: unknown) => {
           this.#pending.delete(cancel);
+          // a mistake in what the caller passed is not a DNS failure, here or in Node
+          if (error instanceof TypeError) {
+            reject(error);
+            return;
+          }
           // a record the server sent that does not decode is a bad response, as in c-ares
           const code = error instanceof ParseError ? 'EBADRESP' : failureCode(error);
           reject(nodeError(code, syscall, hostname, { cause: error }));
@@ -528,3 +549,57 @@ export const resolveTxt: Resolver['resolveTxt'] = shared.resolveTxt.bind(shared)
 export const reverse: Resolver['reverse'] = shared.reverse.bind(shared);
 export const lookup: Resolver['lookup'] = shared.lookup.bind(shared);
 export const connectLookup: Resolver['connectLookup'] = shared.connectLookup;
+
+// the whole module as one object, for `import dns from '@aoxborrow/dns/promises'`, which is
+// how much code imports `node:dns/promises`
+export default {
+  ADDRCONFIG,
+  ALL,
+  V4MAPPED,
+  NODATA,
+  FORMERR,
+  SERVFAIL,
+  NOTFOUND,
+  NOTIMP,
+  REFUSED,
+  BADQUERY,
+  BADNAME,
+  BADFAMILY,
+  BADRESP,
+  CONNREFUSED,
+  TIMEOUT,
+  EOF,
+  FILE,
+  NOMEM,
+  DESTRUCTION,
+  BADSTR,
+  BADFLAGS,
+  NONAME,
+  BADHINTS,
+  NOTINITIALIZED,
+  LOADIPHLPAPI,
+  ADDRGETNETWORKPARAMS,
+  CANCELLED,
+  Resolver,
+  getDefaultResultOrder,
+  setDefaultResultOrder,
+  getServers,
+  setServers,
+  resolve,
+  resolve4,
+  resolve6,
+  resolveAny,
+  resolveCaa,
+  resolveCname,
+  resolveMx,
+  resolveNaptr,
+  resolveNs,
+  resolvePtr,
+  resolveSoa,
+  resolveSrv,
+  resolveTlsa,
+  resolveTxt,
+  reverse,
+  lookup,
+  connectLookup,
+};

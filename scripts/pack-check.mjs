@@ -10,7 +10,15 @@
 // through `/wire` or `/records` must be `instanceof` the class the root exports. A class
 // copied into two entry bundles would break that, and only the built package can show it
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,13 +44,20 @@ try {
   run('tar', ['-xzf', tarball, '-C', installed, '--strip-components=1'], work);
 
   const manifest = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8'));
-  const subpaths = Object.keys(manifest.exports ?? {});
+  // the manifest exports itself for tools that read it; every other subpath is an entry
+  const entryExports = Object.fromEntries(
+    Object.entries(manifest.exports ?? {}).filter(([subpath]) => subpath !== './package.json')
+  );
+  if (manifest.exports?.['./package.json'] !== './package.json') {
+    fail('the packed manifest does not export ./package.json');
+  }
+  const subpaths = Object.keys(entryExports);
   if (subpaths.length === 0) fail('the packed manifest has no exports');
   if (manifest.type !== 'module') fail('the packed manifest is not "type": "module"');
   if (manifest.main) fail(`the packed manifest still has a CommonJS main (${manifest.main})`);
 
   // the packed manifest must describe the build output, never the monorepo's source
-  for (const [subpath, target] of Object.entries(manifest.exports)) {
+  for (const [subpath, target] of Object.entries(entryExports)) {
     if (typeof target === 'string') fail(`${subpath} still points at source (${target})`);
     if ('require' in target) fail(`${subpath} still has a require condition`);
     for (const file of [target.types, target.default]) {
@@ -55,6 +70,16 @@ try {
     fail(`runtime dependencies in the packed manifest: ${Object.keys(manifest.dependencies)}`);
   }
   if (existsSync(join(installed, 'src'))) fail('source files are in the tarball');
+
+  // a chunk with no code in it is a module that holds only types, imported for its values
+  // by more than one entry: it costs every importer a request and says nothing
+  for (const file of readdirSync(join(installed, 'dist'), { recursive: true })) {
+    if (!String(file).endsWith('.js')) continue;
+    const code = readFileSync(join(installed, 'dist', String(file)), 'utf8')
+      .replace(/\/\/# sourceMappingURL=.*$/gm, '')
+      .trim();
+    if (code === '') fail(`dist/${file} is an empty chunk`);
+  }
 
   const specifiers = subpaths.map(s =>
     s === '.' ? manifest.name : `${manifest.name}/${s.slice(2)}`

@@ -3,14 +3,12 @@ import {
   cookieOption,
   decodeEdnsOption,
   decodeEdnsOptions,
-  decodeMessage,
-  encodeMessage,
-  encodeQuery,
   extendedErrors,
   nsidOption,
   paddingOption,
-  ParseError,
-} from '../../src/index';
+} from '../../src/records/index';
+import { decodeMessage, encodeMessage, encodeQuery } from '../../src/wire/index';
+import { ParseError } from '../../src/index';
 import { CORPUS } from '../support/corpus';
 
 const ascii = (text: string) => Uint8Array.from(Buffer.from(text, 'latin1'));

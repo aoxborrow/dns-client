@@ -2,6 +2,7 @@ import type { Security } from '../dnssec/validate';
 import type { ErrorData } from '../errors';
 import type { ExchangeOptions, ExchangeResult, SentQuery } from '../exchange';
 import { rcodeName } from '../protocol/header';
+import type { RcodeName } from '../protocol/header';
 import { decodeRecords } from '../records/decode';
 import { extendedErrors } from '../records/edns';
 import type { ExtendedErrorOption } from '../records/edns';
@@ -21,7 +22,7 @@ export interface Answer<Rec extends DnsRecord = DnsRecord> {
   class: string;
 
   rcode: number;
-  rcodeName: string;
+  rcodeName: RcodeName | `RCODE${number}`;
   // the response's header flags
   flags: HeaderFlags;
 
@@ -86,7 +87,7 @@ export interface TraceHop {
   type: string;
   transport?: TransportName;
   rcode?: number;
-  rcodeName?: string;
+  rcodeName?: RcodeName | `RCODE${number}`;
   // the zone it referred the question on to, when it did
   referral?: string;
   bytes?: number;

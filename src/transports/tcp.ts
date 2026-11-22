@@ -1,7 +1,7 @@
 import type { Socket } from 'node:net';
 import { ConnectionError, DnsError, EmptyResponseError } from '../errors';
 import { concatBytes } from '../wire/bytes';
-import { formatHostPort, isIp } from './endpoint';
+import { checkHost, formatHostPort, isIp } from './endpoint';
 import { loadNet, loadTls, whenReady } from './node';
 import { openTunnel, resolveProxy } from './proxy';
 import type { Proxy } from './proxy';
@@ -448,6 +448,13 @@ export function createTcpTransport(options: TcpTransportOptions = {}): Transport
       if (closed) return Promise.reject(new ConnectionError(`The ${name} transport is closed`));
       const { signal, query } = request;
       if (signal?.aborted) return Promise.reject(signal.reason);
+      // an endpoint handed straight to the transport has not been through the parsing of
+      // servers: nothing but an address or a host name gets as far as a socket or a proxy
+      try {
+        checkHost(request.endpoint.host);
+      } catch (error) {
+        return Promise.reject(error);
+      }
       if (query.length > 0xffff) {
         return Promise.reject(new DnsError('Query is too large to send over TCP'));
       }

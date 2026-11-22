@@ -3081,10 +3081,20 @@ describe('settings that need EDNS, where `edns: false` leaves it out', () => {
     const { transports } = simulateNetwork({});
     const recursive = () => new Resolver({ transports, edns: false, ...setting });
     const authoritative = () => new AuthoritativeResolver({ transports, edns: false, ...setting });
-    expect(recursive).toThrow(DnsError);
+    expect(recursive).toThrow(TypeError);
     expect(recursive).toThrow(`which is what carries \`${name}\``);
-    expect(authoritative).toThrow(DnsError);
+    expect(authoritative).toThrow(TypeError);
     expect(authoritative).toThrow(`which is what carries \`${name}\``);
+  });
+
+  it('refuses a server it cannot read when it is made, not on the query that would fail over', () => {
+    const { transports } = simulateNetwork({});
+    for (const server of ['192.0.2.1:notaport', 'not a host', 'https://']) {
+      expect(() => new Resolver({ transports, servers: [server, '10.0.0.1'] })).toThrow(TypeError);
+    }
+    expect(
+      () => new Resolver({ transports, servers: ['10.0.0.1:5353', 'ns.example'] })
+    ).not.toThrow();
   });
 
   it('names every such setting', () => {
@@ -3138,9 +3148,9 @@ describe('a set of transports and transport options together', () => {
     const recursive = () => new Resolver({ transports, proxy: 'socks5://127.0.0.1:1080' });
     const authoritative = () =>
       new AuthoritativeResolver({ transports, pipeline: true, idleTimeout: 10 });
-    expect(recursive).toThrow(DnsError);
+    expect(recursive).toThrow(TypeError);
     expect(recursive).toThrow(/\(`proxy`\) cannot be combined with `transports`/);
-    expect(authoritative).toThrow(DnsError);
+    expect(authoritative).toThrow(TypeError);
     expect(authoritative).toThrow(/\(`idleTimeout`, `pipeline`\) cannot be combined/);
   });
 

@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   checkAnchors,
-  checkDsSet,
   computeDsDigest,
-  EDE_CODES,
   judgeChain,
   readKeys,
   REASON_CODES,
-  REASON_EDE,
 } from '../../src/dnssec/index';
+import { checkDsSet } from '../../src/dnssec/checks';
+import { EDE_CODES, REASON_EDE } from '../../src/dnssec/reasons';
 import type { DnssecResponse, WireRecord } from '../../src/dnssec/index';
 import { dnssecResponse } from '../../src/dnssec/validate';
 import { Resolver } from '../../src/index';

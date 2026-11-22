@@ -7,15 +7,12 @@ import {
   parseRecord,
   parseRecordData,
   qualify,
-  RecordSyntaxError,
   relativize,
-  toAsciiName,
-  ParseError,
-  type DnsRecord,
   type FlatRecord,
   type FlatRecordInput,
-  type RecordProblem,
-} from '../../src/index';
+} from '../../src/records/index';
+import { RecordSyntaxError, ParseError, type DnsRecord, type RecordProblem } from '../../src/index';
+import { toAsciiName } from '../../src/wire/index';
 
 // a record as a person writes one, with no class
 const rec = (name: string, type: string, data: string, ttl = 3600): FlatRecordInput => ({

@@ -1,4 +1,5 @@
 import type { ErrorData } from '../errors';
+import type { RcodeName } from '../protocol/header';
 
 // the shapes every transport shares. Nothing in this file touches a runtime API, so any
 // entry point can import it
@@ -130,7 +131,7 @@ export interface QueryEvent {
   bytesSent: number;
   bytesReceived?: number;
   rcode?: number;
-  rcodeName?: string;
+  rcodeName?: RcodeName | `RCODE${number}`;
   truncated?: boolean;
   error?: ErrorData;
 }

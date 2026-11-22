@@ -1265,9 +1265,9 @@ describe('validate: with EDNS turned off', () => {
     const recursive = () => new Resolver({ ...settings, servers: [signed.recursive] });
     const authoritative = () =>
       new AuthoritativeResolver({ ...settings, rootServers: signed.rootServers });
-    expect(recursive).toThrow(DnsError);
+    expect(recursive).toThrow(TypeError);
     expect(recursive).toThrow(/needs EDNS/);
-    expect(authoritative).toThrow(DnsError);
+    expect(authoritative).toThrow(TypeError);
     expect(authoritative).toThrow(/needs EDNS/);
   });
 

@@ -33,6 +33,17 @@ export type DohTransportOptions = Pick<
   'proxy' | 'fetch' | 'dohMethod' | 'tls' | 'idleTimeout'
 >;
 
+// the types a caller of `send()` needs, for a program that imports this entry alone
+export type {
+  Endpoint,
+  FetchLike,
+  ProxyInput,
+  TlsOptions,
+  Transport,
+  TransportRequest,
+  TransportResponse,
+} from './types';
+
 const MEDIA_TYPE = 'application/dns-message';
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -89,7 +100,7 @@ export function createDohTransport(options: DohTransportOptions = {}): Transport
     async send(request) {
       const { endpoint, query, signal, onEvent } = request;
       if (signal?.aborted) throw signal.reason;
-      if (!endpoint.url) throw new NoServerError('No URL to send the DoH query to');
+      if (!endpoint.url) throw new TypeError('No URL to send the DoH query to');
       // an endpoint may be handed straight to the transport, so the URL is checked here
       // as well as where servers are parsed
       parseDohUrl(endpoint.url);

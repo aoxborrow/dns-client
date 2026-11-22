@@ -34,7 +34,13 @@ const manifest = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'
 
 // in the monorepo `exports` points at source and `publishConfig.exports` at the build
 const inMonorepo = manifest.publishConfig.exports !== undefined;
-const published = (manifest.publishConfig.exports ?? manifest.exports) as Record<string, Target>;
+// the manifest itself is exported too, for tools that read it, and is set aside here
+const MANIFEST = './package.json';
+const withoutManifest = <T>(map: Record<string, T>) =>
+  Object.fromEntries(Object.entries(map).filter(([subpath]) => subpath !== MANIFEST));
+const published = withoutManifest(
+  (manifest.publishConfig.exports ?? manifest.exports) as Record<string, Target>
+);
 
 // a build entry and the subpath it is published at: 'src/index.ts' -> '.',
 // 'src/records/index.ts' -> './records', 'src/transports/doh.ts' -> './transports/doh'
@@ -71,12 +77,17 @@ describe('package manifest', () => {
 
   it.runIf(inMonorepo)('exposes the same entry points at source inside the monorepo', () => {
     const expected = Object.fromEntries(entries.map(entry => [subpathOf(entry), `./${entry}`]));
-    expect(manifest.exports).toEqual(expected);
+    expect(withoutManifest(manifest.exports)).toEqual(expected);
   });
 
   it.runIf(!inMonorepo)('is publishable on its own, with only access in publishConfig', () => {
     expect(manifest.private).toBeUndefined();
     expect(manifest.publishConfig).toEqual({ access: 'public' });
+  });
+
+  it('exports its own package.json, at source and in the build', () => {
+    expect(manifest.exports[MANIFEST]).toBe(MANIFEST);
+    expect((manifest.publishConfig.exports ?? manifest.exports)[MANIFEST]).toBe(MANIFEST);
   });
 
   it('is ESM only, for Node 22 and up', () => {

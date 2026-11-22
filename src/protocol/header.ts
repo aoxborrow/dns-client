@@ -51,12 +51,12 @@ export type RcodeName = keyof typeof RCODES;
 // the first name listed for a code wins. 16 reads as BADVERS because a header rcode of 16
 // can only be the EDNS one: a TSIG BADSIG travels in the TSIG record's error field with a
 // header rcode of NOTAUTH (RFC 8945 §5.2)
-const RCODE_NAMES = new Map<number, string>();
-for (const [name, code] of Object.entries(RCODES)) {
+const RCODE_NAMES = new Map<number, RcodeName>();
+for (const [name, code] of Object.entries(RCODES) as [RcodeName, number][]) {
   if (!RCODE_NAMES.has(code)) RCODE_NAMES.set(code, name);
 }
 
 // the mnemonic for a response code, or `RCODE<n>` for one with no name
-export function rcodeName(code: number): string {
+export function rcodeName(code: number): RcodeName | `RCODE${number}` {
   return RCODE_NAMES.get(code) ?? `RCODE${code}`;
 }

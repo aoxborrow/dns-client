@@ -1,4 +1,4 @@
-import { ConnectionError, NoServerError, ProxyError } from '../errors';
+import { ConnectionError, ProxyError } from '../errors';
 import { latin1Decode, latin1Encode } from '../wire/bytes';
 import { checkHost, formatHostPort } from './endpoint';
 import { basicCredentials } from './proxy';
@@ -22,7 +22,7 @@ export async function httpConnectHandshake(
   // that line early and let whatever follows pass as headers, or as a second request
   const authority = formatHostPort(checkHost(target.host), target.port);
   if (!Number.isInteger(target.port) || target.port < 1 || target.port > 0xffff) {
-    throw new NoServerError('Invalid port in the server address');
+    throw new TypeError('Invalid port in the server address');
   }
   const lines = [`CONNECT ${authority} HTTP/1.1`, `Host: ${authority}`];
   if (proxy.username !== undefined) {

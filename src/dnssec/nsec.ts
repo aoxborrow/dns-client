@@ -37,24 +37,14 @@ const { VERIFIED, FAILED, UNCHECKED } = VERIFICATION_RESULTS;
 // canonical name ordering (RFC 4034 §6.1)
 // ---------------------------------------------------------------------------
 
-// names sort by label, right to left, each label compared as lowercase unsigned octets. The
-// labels are read from the presentation form the way the wire decoder writes it, so an
-// escaped dot stays inside its label and `\255` compares as the octet 0xff. Throws for a
-// name that cannot be written in wire form
-export function compareCanonicalNames(a: string, b: string): number {
-  return compareNames(a, b);
-}
-
 // does the half-open NSEC interval (owner, next] cover `name`? the last NSEC in a zone wraps
 // around to the apex, so `next <= owner` means the range runs past the end of the zone. A
 // name that cannot be written in wire form is never covered
 function nsecCovers(owner: string, next: string, name: string): boolean {
   try {
-    const afterOwner = compareCanonicalNames(name, owner) > 0;
-    const beforeNext = compareCanonicalNames(name, next) < 0;
-    return compareCanonicalNames(next, owner) <= 0
-      ? afterOwner || beforeNext
-      : afterOwner && beforeNext;
+    const afterOwner = compareNames(name, owner) > 0;
+    const beforeNext = compareNames(name, next) < 0;
+    return compareNames(next, owner) <= 0 ? afterOwner || beforeNext : afterOwner && beforeNext;
   } catch {
     return false;
   }

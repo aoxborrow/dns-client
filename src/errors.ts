@@ -1,4 +1,5 @@
 import { rcodeName } from './protocol/header';
+import type { RcodeName } from './protocol/header';
 import type { ExtendedErrorOption } from './records/edns';
 import type { RecordProblem } from './records/problems';
 import type { TraceHop } from './resolvers/answer';
@@ -31,7 +32,7 @@ export interface ErrorData {
   message: string;
   retryable: boolean;
   rcode?: number;
-  rcodeName?: string;
+  rcodeName?: RcodeName | `RCODE${number}`;
   extendedErrors?: ExtendedErrorOption[];
 }
 
@@ -50,7 +51,7 @@ export class DnsError extends Error {
   type?: string;
   transport?: TransportName;
   rcode?: number;
-  rcodeName?: string;
+  rcodeName?: RcodeName | `RCODE${number}`;
   extendedErrors?: ExtendedErrorOption[];
   // from the authoritative resolver: the servers asked before the query failed
   trace?: TraceHop[];
@@ -61,7 +62,7 @@ export class DnsError extends Error {
   constructor(message: string, options: DnsErrorOptions = {}) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = 'DnsError';
-    this.addContext(options);
+    addErrorContext(this, options);
     if (options.rcode !== undefined) {
       this.rcode = options.rcode;
       this.rcodeName = rcodeName(options.rcode);
@@ -94,16 +95,18 @@ export class DnsError extends Error {
       })),
     };
   }
+}
 
-  // fill in whatever is not already known about the exchange the error came from. A layer
-  // deep in a transport knows the socket failed; only the caller knows what was being asked
-  addContext(context: Pick<DnsErrorOptions, 'server' | 'query' | 'type' | 'transport'>): this {
-    this.server ??= context.server;
-    this.query ??= context.query;
-    this.type ??= context.type;
-    this.transport ??= context.transport;
-    return this;
-  }
+// fill in whatever is not already known about the exchange an error came from. A layer
+// deep in a transport knows the socket failed; only the caller knows what was being asked
+export function addErrorContext(
+  error: DnsError,
+  context: Pick<DnsErrorOptions, 'server' | 'query' | 'type' | 'transport'>
+): void {
+  error.server ??= context.server;
+  error.query ??= context.query;
+  error.type ??= context.type;
+  error.transport ??= context.transport;
 }
 
 // bytes or text that are not valid DNS: a malformed message, record or name
@@ -135,7 +138,8 @@ export class RecordSyntaxError extends DnsError {
   }
 }
 
-// there is no server to ask: none was given, or its name does not resolve
+// there is no server to ask: none was given, or its name does not resolve. A server that
+// cannot be read at all is the caller's mistake, and a TypeError
 export class NoServerError extends DnsError {
   constructor(message: string, options?: DnsErrorOptions) {
     super(message, options);

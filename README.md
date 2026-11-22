@@ -90,7 +90,7 @@ This is a DNS client. It asks questions and reads answers.
 
 | Entry                           | What it holds                                                                                           | Runs on                               |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| `@aoxborrow/dns`                | the resolvers, answers, errors, `toDig`, caching, events, and everything in `/records` and `/wire`      | Node; Cloudflare Workers, without UDP |
+| `@aoxborrow/dns`                | the resolvers, answers, errors, `toDig`, caching, events, `createTransports`, and the record types      | Node; Cloudflare Workers, without UDP |
 | `@aoxborrow/dns/records`        | typed records, protocol tables, record decoding, formatting, parsing and validation                     | anywhere                              |
 | `@aoxborrow/dns/wire`           | encoding queries, decoding messages, names, byte helpers                                                | anywhere                              |
 | `@aoxborrow/dns/dnssec`         | the judging core, signature verification, DS digests, NSEC/NSEC3 proofs, trust anchors                  | anywhere                              |
@@ -236,21 +236,21 @@ NXDOMAIN is `ENOTFOUND`, NODATA is `ENODATA`.
 
 These can be set on a resolver for every query, or passed to one `query()`:
 
-| Option             | Default |                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| ------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `transport`        | `'udp'` | `'udp'`, `'tcp'`, `'tls'` or `'doh'`. DoH for a server given as a URL, TCP where there is no UDP. `AuthoritativeResolver` takes `'udp'` or `'tcp'`                                                                                                                                                                                                                                                                             |
-| `timeout`          | `5000`  | milliseconds of patience with one server                                                                                                                                                                                                                                                                                                                                                                                       |
-| `retries`          | `2`     | further attempts at a server that fails in a way worth retrying. With several `servers`, one: each server is asked once before any is asked again. `AuthoritativeResolver` asks a zone's next server instead (`0`), and only the last one a zone has left a second time (`1`)                                                                                                                                                  |
+| Option             | Default |                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `transport`        | `'udp'` | `'udp'`, `'tcp'`, `'tls'` or `'doh'`. DoH for a server given as a URL, TCP where there is no UDP. `AuthoritativeResolver` takes `'udp'` or `'tcp'`                                                                                                                                                                                                                                                                                                                       |
+| `timeout`          | `5000`  | milliseconds of patience with one server                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `retries`          | `2`     | further attempts at a server that fails in a way worth retrying. With several `servers`, one: each server is asked once before any is asked again. `AuthoritativeResolver` asks a zone's next server instead (`0`), and only the last one a zone has left a second time (`1`)                                                                                                                                                                                            |
 | `totalTimeout`     | `10000` | milliseconds one answer may take altogether: every server, retry and TCP fallback, time spent waiting under `concurrency` and `serverConcurrency`, and the queries `validate` makes for the chain. Where `timeout` or `retries` is set, the default is at least what one server's attempts take, `timeout × (retries + 1)`, so it never cuts them short. `AuthoritativeResolver` gives the last server a zone has left the rest of it, and counts nameserver lookups too |
-| `tcpFallback`      | `true`  | ask again over TCP when a UDP answer is truncated. When TCP fails (refused, timed out, no time left for it), the truncated answer comes back as it came, `flags.tc` set, with the TCP error in `tcpFallbackError`                                                                                                                                                                                                              |
-| `recursionDesired` | `true`  | the RD flag. `AuthoritativeResolver` never sets it                                                                                                                                                                                                                                                                                                                                                                             |
-| `dnssecOk`         | `false` | the DO bit: ask for signatures with the answer                                                                                                                                                                                                                                                                                                                                                                                 |
-| `checkingDisabled` | `false` | the CD flag: ask a validating resolver not to hold an answer back                                                                                                                                                                                                                                                                                                                                                              |
-| `authenticData`    | `false` | the AD flag in the query: ask to be told whether the answer validated                                                                                                                                                                                                                                                                                                                                                          |
-| `udpPayloadSize`   | `1232`  | the largest UDP answer this client will accept                                                                                                                                                                                                                                                                                                                                                                                 |
-| `ednsOptions`      | none    | EDNS options to send: `nsidOption()`, `clientSubnetOption()`, `cookieOption()`, `paddingOption()`                                                                                                                                                                                                                                                                                                                              |
-| `edns`             | on      | `false` sends a plain RFC 1035 query, with no EDNS record. `dnssecOk`, `udpPayloadSize` and `ednsOptions` travel in that record, so setting one of them together with `edns: false` is a `DnsError`. One exception: `edns: false` passed to a single `query()` sends that query plain, dropping any of the three that were set on the resolver                                                                                 |
-| `signal`           | none    | an `AbortSignal`, per query. An aborted query rejects with the signal's reason, including one still waiting for its turn under a concurrency limit                                                                                                                                                                                                                                                                             |
+| `tcpFallback`      | `true`  | ask again over TCP when a UDP answer is truncated. When TCP fails (refused, timed out, no time left for it), the truncated answer comes back as it came, `flags.tc` set, with the TCP error in `tcpFallbackError`                                                                                                                                                                                                                                                        |
+| `recursionDesired` | `true`  | the RD flag. `AuthoritativeResolver` never sets it                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `dnssecOk`         | `false` | the DO bit: ask for signatures with the answer                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `checkingDisabled` | `false` | the CD flag: ask a validating resolver not to hold an answer back                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `authenticData`    | `false` | the AD flag in the query: ask to be told whether the answer validated                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `udpPayloadSize`   | `1232`  | the largest UDP answer this client will accept                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `ednsOptions`      | none    | EDNS options to send: `nsidOption()`, `clientSubnetOption()`, `cookieOption()`, `paddingOption()`                                                                                                                                                                                                                                                                                                                                                                        |
+| `edns`             | on      | `false` sends a plain RFC 1035 query, with no EDNS record. `dnssecOk`, `udpPayloadSize` and `ednsOptions` travel in that record, so setting one of them together with `edns: false` is a `TypeError`. One exception: `edns: false` passed to a single `query()` sends that query plain, dropping any of the three that were set on the resolver                                                                                                                           |
+| `signal`           | none    | an `AbortSignal`, per query. An aborted query rejects with the signal's reason, including one still waiting for its turn under a concurrency limit                                                                                                                                                                                                                                                                                                                       |
 
 `Resolver` also takes:
 
@@ -438,6 +438,14 @@ error from `AuthoritativeResolver` also carries `trace`. `toJSON()` gives the sa
 data, and `errorData(error)` gives any error as the plain data events and results carry:
 `name`, `message`, `retryable`, and what a `DnsError` knows of the response code. An
 aborted query rejects with the signal's reason, not a `DnsError`.
+
+A mistake in what the program passed is a `TypeError`, not a `DnsError`, so it never lands
+in code that handles DNS failures or retries them: a server, proxy or DoH URL that cannot
+be read, and options that contradict each other (a set of `transports` beside transport
+options, `edns: false` beside `dnssecOk`, `udpPayloadSize`, `ednsOptions` or `validate`).
+The options are refused when the resolver is made, or the query is, before anything is sent.
+A resolver's `servers` are read when it is made, so one that cannot be read never stops
+the failover to the others.
 
 Classes are one set across entries, so `instanceof` holds whichever entry threw:
 
@@ -682,7 +690,8 @@ fetches nothing and keeps nothing, so the same records and time always give the 
 judgement.
 
 ```ts
-import { Resolver, typeCode } from '@aoxborrow/dns';
+import { Resolver } from '@aoxborrow/dns';
+import { typeCode } from '@aoxborrow/dns/records';
 import { judgeChain, toWireMessage } from '@aoxborrow/dns/dnssec';
 import type { DnssecResponse } from '@aoxborrow/dns/dnssec';
 
@@ -727,9 +736,9 @@ signed zone its data is `indeterminate`, whatever signatures it carries.
 `mode: 'first'` (what the resolvers use) stops at the first link that settles the outcome;
 `mode: 'all'` judges every link and every signature. `requireEveryAlgorithm` asks for each
 RRset to be signed with every algorithm in its zone's key set (RFC 4035 §2.2), which
-validators do not require (RFC 6840 §5.11). The checks it is made of are exported one by
-one, each returning codes: `checkAnchors`, `checkDsSet`, `checkKeySet`, `checkSignature`,
-`checkRrset`, and `judgeKeys` for a zone's key set as a whole.
+validators do not require (RFC 6840 §5.11). Three of the checks it is made of are
+exported, each returning codes: `checkAnchors` for the trust anchors against a key set,
+`checkRrset` for one RRset's signatures, and `judgeKeys` for a zone's key set as a whole.
 
 ### The primitives
 
@@ -773,10 +782,10 @@ Ed448). `computeDsDigest` and `computeKeyTag` match a DS record to the key it na
 `verifyNoDsProof`, `verifyNxdomainProof`, `verifyNodataProof` and `verifyWildcardProof`
 check NSEC and NSEC3 denial proofs and return the reasoning step by step;
 `verifyWildcardProof` takes the wildcard an answer was synthesised from, which
-`wildcardOwner` rebuilds from the RRSIG's labels field. `isAnchorCurrent` says whether a
-trust anchor is valid at a given time. Digests and NSEC3 hashes use the library's own
-SHA-1, SHA-256 and SHA-384. Owner names in `toWireMessage`'s records keep the case the
-server wrote them in; record data is in the canonical form signatures are computed over.
+`wildcardOwner` rebuilds from the RRSIG's labels field. Digests and NSEC3 hashes use the
+library's own SHA-1, SHA-256 and SHA-384. Owner names in `toWireMessage`'s records keep
+the case the server wrote them in; record data is in the canonical form signatures are
+computed over.
 The record-data decoders (`decodeRrsig`, `decodeDnskey` and the rest) are in `/records`.
 
 ### Codes, registries and helpers
@@ -786,24 +795,21 @@ What the judgements and the checks return is spelled out as constants:
 | Name                                                          |                                                                                                                                                                              |
 | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SECURITY_STATUSES`                                           | the four statuses: `secure`, `insecure`, `bogus`, `indeterminate`                                                                                                            |
-| `REASON_CODES`, `REASON_EDE`, `EDE_CODES`                     | every reason code a link can carry; the extended DNS error (RFC 8914) for each code that has one; and those error codes by name                                              |
-| `securityReason()`                                            | a reason made from a code and a zone, with its extended DNS error filled in                                                                                                  |
-| `DS_CODES`, `KEY_SET_CODES`, `RRSET_CODES`, `SIGNATURE_CODES` | the codes `checkDsSet`, `checkKeySet`, `checkRrset` and `checkSignature` return                                                                                              |
+| `REASON_CODES`                                                | every reason code a link can carry. A reason with an extended DNS error (RFC 8914) carries its code in `ede`                                                                 |
+| `DS_CODES`, `KEY_SET_CODES`, `RRSET_CODES`, `SIGNATURE_CODES` | the codes the checks give a DS set, a key set, an RRset and one signature                                                                                                    |
 | `CHECK_LIMITS`, `checkBudget()`                               | the default limits on signature checking (128 verifications in all, 4 keys tried per signature, 8 signatures per RRset), and a budget made from them to pass to `checkRrset` |
 | `VERIFICATION_RESULTS`                                        | what a signature or digest check came to: `verified`, `failed` or `unchecked`                                                                                                |
 | `PROOF_TYPES`, `PROOF_PURPOSES`, `PROOF_STATUSES`             | a denial proof's kind (NSEC or NSEC3), what it was asked to show, and how it came out                                                                                        |
 
 The registries the checks read:
 
-| Name                                                                         |                                                                                                                                                                                                                                                                             |
-| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DNSSEC_ALGORITHMS`, `ALGORITHM_STANDINGS`, `ALGORITHM_REGISTRY_REFRESHED`   | each signing algorithm's name, whether the library verifies it, and its standing in IANA's registry (RFC 9904); the standings themselves, which are `recommended`, `supported`, `deprecated`, `prohibited` and `regional`; and the date they were last checked against IANA |
-| `DS_DIGEST_TYPES`                                                            | each DS digest type's name, standing and strength. Strength picks among several digests published for one key (RFC 4509 §3)                                                                                                                                                 |
-| `NSEC3_HASH_ALGORITHMS`                                                      | the NSEC3 hash algorithms, which is SHA-1 alone                                                                                                                                                                                                                             |
-| `SIGNATURE_LENGTHS`                                                          | the signature length in bytes of each fixed-width algorithm                                                                                                                                                                                                                 |
-| `DNSKEY_FLAGS`, `DNSKEY_PROTOCOL`, `NSEC3_FLAGS`                             | the flag bits of a DNSKEY, the one protocol value it may carry (3), and the flag bits of an NSEC3                                                                                                                                                                           |
-| `NSEC3_ITERATIONS_INSECURE_THRESHOLD`, `NSEC3_ITERATIONS_SERVFAIL_THRESHOLD` | 50 and 500: the iteration counts past which validators commonly treat a zone as insecure, and answer SERVFAIL (RFC 9276)                                                                                                                                                    |
-| `ROOT_TRUST_ANCHOR_SOURCE`                                                   | the URL of the IANA file `ROOT_TRUST_ANCHORS` is taken from                                                                                                                                                                                                                 |
+| Name                                                                       |                                                                                                                                                                                                                                                                             |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DNSSEC_ALGORITHMS`, `ALGORITHM_STANDINGS`, `ALGORITHM_REGISTRY_REFRESHED` | each signing algorithm's name, whether the library verifies it, and its standing in IANA's registry (RFC 9904); the standings themselves, which are `recommended`, `supported`, `deprecated`, `prohibited` and `regional`; and the date they were last checked against IANA |
+| `DS_DIGEST_TYPES`                                                          | each DS digest type's name, standing and strength. Strength picks among several digests published for one key (RFC 4509 §3)                                                                                                                                                 |
+| `NSEC3_HASH_ALGORITHMS`                                                    | the NSEC3 hash algorithms, which is SHA-1 alone                                                                                                                                                                                                                             |
+| `DNSKEY_FLAGS`, `DNSKEY_PROTOCOL`, `NSEC3_FLAGS`                           | the flag bits of a DNSKEY, the one protocol value it may carry (3), and the flag bits of an NSEC3                                                                                                                                                                           |
+| `ROOT_TRUST_ANCHOR_SOURCE`                                                 | the URL of the IANA file `ROOT_TRUST_ANCHORS` is taken from                                                                                                                                                                                                                 |
 
 And the smaller functions:
 
@@ -811,13 +817,10 @@ And the smaller functions:
 | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `algorithmName()`, `isAlgorithmVerifiable()`, `keySizeBits()` | an algorithm's mnemonic; whether the library has code to verify it, which `isAlgorithmSupported` goes on to check against the runtime; and the size of a public key in bits |
 | `isDigestDeprecated()`                                        | whether a DS digest type is deprecated (SHA-1)                                                                                                                              |
-| `readKeys()`, `readRrsig()`, `keyAlgorithms()`                | the DNSKEYs among some records, decoded, leaving out any that do not decode; an RRSIG's fields, or `undefined`; and the algorithms a key set holds                          |
-| `coveringSignatures()`, `isAuthoritative()`                   | the RRSIGs that cover an RRset; and whether an RRset is the zone's own data, as a delegation's NS RRset and glue are not                                                    |
-| `canonicalRdata()`, `compareCanonicalNames()`                 | record data in canonical form (RFC 4034 §6.2), and the canonical order of two names (§6.1)                                                                                  |
+| `readKeys()`                                                  | the DNSKEYs among some records, decoded, leaving out any that do not decode                                                                                                 |
+| `canonicalRdata()`                                            | record data in canonical form (RFC 4034 §6.2)                                                                                                                               |
 | `nsec3Hash()`, `assessNsec3Params()`                          | a name's NSEC3 hash, and a zone's NSEC3 parameters held against RFC 9276                                                                                                    |
-| `denialTypesAt()`, `nextCloserOptOut()`                       | the types that NSEC or NSEC3 records say exist at a name; and whether the NSEC3 covering a name's next closer name sets opt-out                                             |
 | `presentRecord()`                                             | a record as `toWireMessage` gives it, in zone-file presentation format. `formatRecord` in `/records` does the same for a typed record                                       |
-| `sha1()`, `sha256()`, `sha384()`                              | the three digests DNSSEC uses, synchronous                                                                                                                                  |
 
 ## `/transports`
 
@@ -831,8 +834,9 @@ encoded yourself, as in the [`/wire`](#wire) example.
 | `createTlsTransport()` | DNS over TLS, pipelined by default                                                                                        |
 | `createDohTransport()` | DNS over HTTPS, GET by default (`dohMethod: 'POST'`)                                                                      |
 
-`/transports/doh` holds `createDohTransport()` alone, for a program that sends DNS over
-HTTPS and nothing else: it leaves out the UDP and TCP transports.
+`/transports/doh` holds `createDohTransport()` alone, with the types its `send()` takes and
+returns, for a program that sends DNS over HTTPS and nothing else: it leaves out the UDP
+and TCP transports.
 
 To share sockets and connections between resolvers, make one set with `createTransports`,
 which the root entry has too, and pass it to each. A resolver does not close a set it was
@@ -924,9 +928,13 @@ There: `resolve` and every `resolve*` Node has (`resolve4`, `resolve6`, `resolve
 `resolveCaa`, `resolveCname`, `resolveMx`, `resolveNaptr`, `resolveNs`, `resolvePtr`,
 `resolveSoa`, `resolveSrv`, `resolveTlsa`, `resolveTxt`), `reverse`, `lookup` with its hints
 (`ADDRCONFIG`, `ALL`, `V4MAPPED`), `getServers`, `setServers`, `getDefaultResultOrder`,
-`setDefaultResultOrder`, `Resolver` with `cancel()`, and the error-code constants
-(`NODATA`, `FORMERR`, `SERVFAIL`, `NOTFOUND`, `NOTIMP`, `REFUSED`, `BADNAME`, `BADRESP`,
-`CONNREFUSED`, `TIMEOUT`, `CANCELLED`). Added: `connectLookup`, and `close()` on a
+`setDefaultResultOrder`, `Resolver` with `cancel()`, and every error-code constant Node has
+(`NODATA`, `FORMERR`, `SERVFAIL`, `NOTFOUND`, `NOTIMP`, `REFUSED`, `BADQUERY`, `BADNAME`,
+`BADFAMILY`, `BADRESP`, `CONNREFUSED`, `TIMEOUT`, `EOF`, `FILE`, `NOMEM`, `DESTRUCTION`,
+`BADSTR`, `BADFLAGS`, `NONAME`, `BADHINTS`, `NOTINITIALIZED`, `LOADIPHLPAPI`,
+`ADDRGETNETWORKPARAMS`, `CANCELLED`), the ones the facade never gives included. The
+`default` export is all of it as one object, so `import dns from '@aoxborrow/dns/promises'`
+works as it does with `node:dns/promises`. Added: `connectLookup`, and `close()` on a
 `Resolver`. Not there: `lookupService`, `setLocalAddress`, the `maxTimeout` option.
 
 Where it differs from Node:
