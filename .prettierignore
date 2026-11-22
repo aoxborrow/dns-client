@@ -1,9 +1,0 @@
-node_modules
-dist
-out
-build
-coverage
-.eslintcache
-*.tsbuildinfo
-tsconfig.tsbuildinfo
-
