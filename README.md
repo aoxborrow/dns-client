@@ -267,7 +267,7 @@ interface AuthoritativeQueryOptions extends Omit<QuerySettings, 'recursionDesire
 
 An `Answer` is plain data: no methods, so it can be copied, cached, logged or sent as it
 is. Functions that read it stand alone, such as `toDig(answer)`. The values in the comments
-are from `query('example.com', 'A')`.
+are from the quick start's `new AuthoritativeResolver({ validate: true }).query('example.com', 'A')`.
 
 ```ts
 import type {
@@ -286,21 +286,21 @@ interface Answer<Rec extends DnsRecord = DnsRecord> {
   class: string; // 'IN'
   rcode: number; // 0
   rcodeName: RcodeName | `RCODE${number}`; // 'NOERROR'; 'NXDOMAIN' when the name does not exist
-  flags: HeaderFlags; // { qr: true, aa: false, tc: false, rd: true, ra: true, ad: false, cd: false }
+  flags: HeaderFlags; // { qr: true, aa: true, tc: false, rd: false, ra: false, ad: false, cd: false }
   records: Rec[]; // [{ name: 'example.com', type: 'A', class: 'IN', ttl: 300, address: '172.66.147.243' }, …]
-  answers: DnsRecord[]; // the whole answer section, with any aliases and signatures
-  authorities: DnsRecord[]; // [], or the SOA of a negative answer
-  additionals: DnsRecord[]; // []
+  answers: DnsRecord[]; // the whole answer section: the A records, and with validate their RRSIG
+  authorities: DnsRecord[]; // the authority section: the SOA of a negative answer, for one
+  additionals: DnsRecord[]; // the additional section
   extendedErrors: ExtendedErrorOption[]; // [], or why a server answered as it did (RFC 8914)
   message: Message; // the response decoded from the wire, record data as bytes
   bytes: Uint8Array; // the response exactly as it arrived
   query: SentQuery; // the query as it was sent
-  server: string; // '1.1.1.1'
-  serverName?: string; // 'hera.ns.cloudflare.com', where the resolver knows it, as AuthoritativeResolver does
+  server: string; // '173.245.58.162'
+  serverName?: string; // 'hera.ns.cloudflare.com', where the resolver knows it
   port: number; // 53
   url?: string; // 'https://cloudflare-dns.com/dns-query', for DoH
   transport: TransportName; // 'udp'
-  elapsed: number; // 4.4: milliseconds, every server and attempt included
+  elapsed: number; // milliseconds, every server and attempt included
   attempts: number; // 1
   timestamp: Date; // when the response arrived
   cached: boolean; // false; true from the cache, with the TTLs counted down
@@ -323,8 +323,8 @@ interface SentQuery {
   name: string; // 'example.com'
   type: string; // 'A'
   class: string; // 'IN'
-  flags: QueryFlags; // { rd: true, cd: false, ad: false }
-  edns: false | { udpPayloadSize: number; dnssecOk: boolean }; // { udpPayloadSize: 1232, dnssecOk: false }
+  flags: QueryFlags; // { rd: false, cd: false, ad: false }
+  edns: false | { udpPayloadSize: number; dnssecOk: boolean }; // { udpPayloadSize: 1232, dnssecOk: true }
 }
 
 interface QueryFlags {
