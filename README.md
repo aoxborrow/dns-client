@@ -266,22 +266,136 @@ interface AuthoritativeQueryOptions extends Omit<QuerySettings, 'recursionDesire
 ## The answer
 
 An `Answer` is plain data: no methods, so it can be copied, cached, logged or sent as it
-is. Functions that read it stand alone, such as `toDig(answer)`.
+is. Functions that read it stand alone, such as `toDig(answer)`. The values in the comments
+are from `query('example.com', 'A')`.
 
-| Field                                              |                                                                                                                                                                                                                               |
-| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`, `type`, `class`                            | the question, with the name as you wrote it, minus a trailing dot                                                                                                                                                             |
-| `rcode`, `rcodeName`, `flags`                      | what the server said: `0`, `'NOERROR'`, `{ aa: true, rd: true, … }`                                                                                                                                                           |
-| `records`                                          | the records that answer the question, typed by the type asked for, at the name or at the end of its alias chain                                                                                                               |
-| `answers`, `authorities`, `additionals`            | every record in each section, typed                                                                                                                                                                                           |
-| `extendedErrors`                                   | extended DNS errors (RFC 8914): `{ infoCode, purpose, extraText }[]`                                                                                                                                                          |
-| `message`, `bytes`                                 | the response decoded from the wire, and exactly as it arrived                                                                                                                                                                 |
-| `query`                                            | the query as it was sent: name, type, class, flags, EDNS                                                                                                                                                                      |
-| `server`, `serverName`, `port`, `url`, `transport` | who answered, and how                                                                                                                                                                                                         |
-| `elapsed`, `attempts`, `timestamp`, `cached`       | milliseconds taken, queries sent, when it arrived, whether it came from the cache                                                                                                                                             |
-| `tcpFallbackError`                                 | the answer is a truncated UDP one (`flags.tc`), with whatever records it carried, because asking again over TCP failed: why, as plain error data. A hop in `trace` carries it too, for a truncated referral the walk followed |
-| `trace`                                            | `AuthoritativeResolver` only: every server asked, from the root                                                                                                                                                               |
-| `security`                                         | with `validate: true` only: what DNSSEC validation made of it                                                                                                                                                                 |
+```ts
+import type {
+  DnsRecord,
+  LinkKind,
+  Message,
+  RcodeName,
+  ReasonCode,
+  SecurityStatus,
+  TransportName,
+} from '@aoxborrow/dns';
+
+interface Answer<Rec extends DnsRecord = DnsRecord> {
+  name: string; // 'example.com': the question as asked, with no trailing dot
+  type: string; // 'A'
+  class: string; // 'IN'
+  rcode: number; // 0
+  rcodeName: RcodeName | `RCODE${number}`; // 'NOERROR'; 'NXDOMAIN' when the name does not exist
+  flags: HeaderFlags; // { qr: true, aa: false, tc: false, rd: true, ra: true, ad: false, cd: false }
+  records: Rec[]; // [{ name: 'example.com', type: 'A', class: 'IN', ttl: 300, address: '172.66.147.243' }, …]
+  answers: DnsRecord[]; // the whole answer section, with any aliases and signatures
+  authorities: DnsRecord[]; // [], or the SOA of a negative answer
+  additionals: DnsRecord[]; // []
+  extendedErrors: ExtendedErrorOption[]; // [], or why a server answered as it did (RFC 8914)
+  message: Message; // the response decoded from the wire, record data as bytes
+  bytes: Uint8Array; // the response exactly as it arrived
+  query: SentQuery; // the query as it was sent
+  server: string; // '1.1.1.1'
+  serverName?: string; // 'hera.ns.cloudflare.com', where the resolver knows it, as AuthoritativeResolver does
+  port: number; // 53
+  url?: string; // 'https://cloudflare-dns.com/dns-query', for DoH
+  transport: TransportName; // 'udp'
+  elapsed: number; // 4.4: milliseconds, every server and attempt included
+  attempts: number; // 1
+  timestamp: Date; // when the response arrived
+  cached: boolean; // false; true from the cache, with the TTLs counted down
+  tcpFallbackError?: ErrorData; // a truncated UDP answer whose TCP retry failed: why
+  trace?: TraceHop[]; // AuthoritativeResolver only: every server asked, from the root
+  security?: Security; // with validate: true only
+}
+
+interface HeaderFlags {
+  qr: boolean; // true: a response
+  aa: boolean; // the zone's own server answered
+  tc: boolean; // truncated
+  rd: boolean; // recursion desired
+  ra: boolean; // recursion available
+  ad: boolean; // a validating resolver says the answer is authentic
+  cd: boolean; // checking disabled
+}
+
+interface SentQuery {
+  name: string; // 'example.com'
+  type: string; // 'A'
+  class: string; // 'IN'
+  flags: QueryFlags; // { rd: true, cd: false, ad: false }
+  edns: false | { udpPayloadSize: number; dnssecOk: boolean }; // { udpPayloadSize: 1232, dnssecOk: false }
+}
+
+interface QueryFlags {
+  rd: boolean;
+  cd: boolean;
+  ad: boolean;
+}
+
+interface ExtendedErrorOption {
+  name: 'EDE';
+  code: 15;
+  infoCode: number; // 18
+  purpose: string | null; // 'Prohibited'
+  extraText: string; // '', or whatever the server added
+}
+
+interface ErrorData {
+  name: string; // 'TimeoutError'
+  message: string; // 'No answer from 192.0.2.2 within 5000 ms'
+  retryable: boolean; // true
+  rcode?: number;
+  rcodeName?: RcodeName | `RCODE${number}`;
+  extendedErrors?: ExtendedErrorOption[];
+}
+
+// one server asked by AuthoritativeResolver
+interface TraceHop {
+  server: string; // '173.245.58.162'
+  serverName?: string; // 'hera.ns.cloudflare.com'
+  zone: string; // 'example.com': the zone it was asked as an authority for
+  name: string; // 'example.com'
+  type: string; // 'A'
+  transport?: TransportName; // 'udp'
+  rcode?: number; // 0
+  rcodeName?: RcodeName | `RCODE${number}`; // 'NOERROR'
+  referral?: string; // 'com' on the root's hop: the zone it referred the question on to
+  bytes?: number; // 179: the response's size
+  elapsed: number; // 3.3
+  timestamp: Date;
+  error?: ErrorData; // why this server gave nothing usable, when it did not
+  tcpFallbackError?: ErrorData;
+}
+
+// what DNSSEC validation made of the answer
+interface Security {
+  status: SecurityStatus; // 'secure', 'insecure', 'bogus' or 'indeterminate'
+  reason: SecurityReason; // { code: 'verified', zone: 'example.com', name: 'example.com', type: 'A' }
+  chain: ChainLink[]; // each zone's key set from the trust anchor down, then the data
+  failure?: ChainLink; // the first link that is bogus or indeterminate
+}
+
+interface SecurityReason {
+  code: ReasonCode; // 'verified'
+  zone: string; // 'example.com'
+  name?: string; // 'example.com'
+  type?: string; // 'A'
+  keyTag?: number; // 38696, on the root key set's link
+  algorithm?: number;
+  digestType?: number;
+  ede?: number; // the extended DNS error a validator would send for it
+}
+
+interface ChainLink {
+  kind: LinkKind; // 'keys', 'rrset' or 'denial'
+  zone: string; // '.'
+  name?: string;
+  type?: string;
+  status: SecurityStatus; // 'secure'
+  reason: SecurityReason;
+}
+```
 
 ### Reading a negative answer
 
