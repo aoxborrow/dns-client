@@ -173,7 +173,7 @@ interface QuerySettings {
   transport?: 'udp' | 'tcp' | 'tls' | 'doh'; // default 'udp'; 'doh' for a server given as a URL
   port?: number; // default 53, 853 for TLS, 443 for DoH
   timeout?: number; // milliseconds per attempt at one server (default 5000)
-  retries?: number; // further attempts at a server (default 2, or 1 with several servers)
+  retries?: number; // further attempts at a server (default 2, or 1 with several servers; see above for AuthoritativeResolver)
   tcpFallback?: boolean; // ask again over TCP when a UDP answer is truncated (default true)
   recursionDesired?: boolean; // the RD flag (default true)
   checkingDisabled?: boolean; // the CD flag (default false)

@@ -92,7 +92,7 @@ need more than a line:
 - **`server`**, on one `Resolver.query()`: an address, a name, `host:port`, a URL, or
   `{ address, port, serverName, url }`. The answer is neither taken from the cache nor put in
   it.
-- **`addressFamily`**: with `'both`', a server's IPv6 address is tried only once each of the
+- **`addressFamily`**: with `'both'`, a server's IPv6 address is tried only once each of the
   zone's servers has been tried at its first address, so a host with no IPv6 route does not
   wait out a timeout per server.
 - **`cache`** on `AuthoritativeResolver`: remembers delegations between queries, and shares
