@@ -38,24 +38,27 @@ export const PROOF_PURPOSES = {
 
 /**
  * an algorithm's standing, as IANA's DNSSEC algorithm registry gives it (RFC 9904), rather
- * than as any one RFC's table had it
+ * than as any one RFC's table had it. `optional` is MAY in every column, which the registry
+ * gives national algorithms and experimental ones alike
  */
 export const ALGORITHM_STANDINGS = {
   RECOMMENDED: 'recommended',
   SUPPORTED: 'supported',
   DEPRECATED: 'deprecated',
   PROHIBITED: 'prohibited',
-  REGIONAL: 'regional',
+  OPTIONAL: 'optional',
 } as const;
 
 /**
- * where `DNSSEC_ALGORITHMS` comes from: IANA's DNSSEC algorithm registry, checked by hand (no
- * script compares them). The `verify` flags are the library's own, so the table has no
- * version of the registry's to carry
+ * where `DNSSEC_ALGORITHMS` comes from: IANA's DNSSEC algorithm registry, which
+ * `scripts/refresh-algorithms.ts` compares it with (a weekly CI job runs it in check mode).
+ * `version` is the date of the registry's revision the names and standings were taken from;
+ * the `verify` flags are the library's own
  */
 export const DNSSEC_ALGORITHMS_INFO: DatasetInfo = {
   source: 'https://www.iana.org/assignments/dns-sec-alg-numbers/',
-  refreshed: '2026-07-27',
+  version: '2026-08-10',
+  refreshed: '2026-11-22',
 };
 
 /**
@@ -68,18 +71,16 @@ export const DNSSEC_ALGORITHMS = {
   5: { name: 'RSASHA1', verify: true, standing: ALGORITHM_STANDINGS.DEPRECATED },
   6: { name: 'DSA-NSEC3-SHA1', verify: false, standing: ALGORITHM_STANDINGS.PROHIBITED },
   7: { name: 'RSASHA1-NSEC3-SHA1', verify: true, standing: ALGORITHM_STANDINGS.DEPRECATED },
-  8: { name: 'RSASHA256', verify: true, standing: ALGORITHM_STANDINGS.SUPPORTED },
+  8: { name: 'RSASHA256', verify: true, standing: ALGORITHM_STANDINGS.RECOMMENDED },
   10: { name: 'RSASHA512', verify: true, standing: ALGORITHM_STANDINGS.SUPPORTED },
   12: { name: 'ECC-GOST', verify: false, standing: ALGORITHM_STANDINGS.PROHIBITED },
   13: { name: 'ECDSAP256SHA256', verify: true, standing: ALGORITHM_STANDINGS.RECOMMENDED },
   14: { name: 'ECDSAP384SHA384', verify: true, standing: ALGORITHM_STANDINGS.SUPPORTED },
-  15: { name: 'ED25519', verify: true, standing: ALGORITHM_STANDINGS.SUPPORTED },
+  15: { name: 'ED25519', verify: true, standing: ALGORITHM_STANDINGS.RECOMMENDED },
   16: { name: 'ED448', verify: true, standing: ALGORITHM_STANDINGS.SUPPORTED },
-  // 17 and 18 as IANA's registry of 2026-08-10 has them: MAY throughout, as for 23. For
-  // 18, a post-quantum algorithm (FIPS 204), `regional` stands only for that MAY profile
-  17: { name: 'SM2SM3', verify: false, standing: ALGORITHM_STANDINGS.REGIONAL },
-  18: { name: 'MLDSA44', verify: false, standing: ALGORITHM_STANDINGS.REGIONAL },
-  23: { name: 'ECC-GOST12', verify: false, standing: ALGORITHM_STANDINGS.REGIONAL },
+  17: { name: 'SM2SM3', verify: false, standing: ALGORITHM_STANDINGS.OPTIONAL },
+  18: { name: 'MLDSA44', verify: false, standing: ALGORITHM_STANDINGS.OPTIONAL },
+  23: { name: 'ECC-GOST12', verify: false, standing: ALGORITHM_STANDINGS.OPTIONAL },
 } as const;
 
 // expected signature length in bytes for the fixed-width algorithms. a wrong-length
@@ -92,12 +93,13 @@ export const SIGNATURE_LENGTHS: Record<number, number> = {
 };
 
 /**
- * where `DS_DIGEST_TYPES` comes from: IANA's DS digest type registry, checked by hand as
- * `DNSSEC_ALGORITHMS` is. `verify` and `strength` are the library's own
+ * where `DS_DIGEST_TYPES` comes from: IANA's DS digest type registry, compared and versioned
+ * as `DNSSEC_ALGORITHMS` is. `verify` and `strength` are the library's own
  */
 export const DS_DIGEST_TYPES_INFO: DatasetInfo = {
   source: 'https://www.iana.org/assignments/ds-rr-types/',
-  refreshed: '2026-07-27',
+  version: '2026-01-13',
+  refreshed: '2026-11-22',
 };
 
 /**
@@ -111,16 +113,16 @@ export const DS_DIGEST_TYPES = {
     name: 'GOST R 34.11-94',
     verify: false,
     strength: 0,
-    standing: ALGORITHM_STANDINGS.REGIONAL,
+    standing: ALGORITHM_STANDINGS.PROHIBITED,
   },
   4: { name: 'SHA-384', verify: true, strength: 4, standing: ALGORITHM_STANDINGS.SUPPORTED },
   5: {
     name: 'GOST R 34.11-2012',
     verify: false,
     strength: 0,
-    standing: ALGORITHM_STANDINGS.REGIONAL,
+    standing: ALGORITHM_STANDINGS.OPTIONAL,
   },
-  6: { name: 'SM3', verify: false, strength: 0, standing: ALGORITHM_STANDINGS.REGIONAL },
+  6: { name: 'SM3', verify: false, strength: 0, standing: ALGORITHM_STANDINGS.OPTIONAL },
 } as const;
 
 /** NSEC3 hash algorithms (RFC 5155 — only SHA-1 is defined) */

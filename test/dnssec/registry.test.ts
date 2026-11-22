@@ -37,7 +37,7 @@ describe('the DNSSEC algorithm registry', () => {
     expect(standing(algorithms, 5)).toBe('deprecated');
     expect(standing(algorithms, 13)).toBe('recommended');
     expect(standing(algorithms, 14)).toBe('supported');
-    expect(standing(algorithms, 23)).toBe('regional');
+    expect(standing(algorithms, 23)).toBe('optional');
   });
 
   it('tells the bundle apart when IANA changes a row', () => {
@@ -60,7 +60,7 @@ describe('the DNSSEC algorithm registry', () => {
       "13: { name: 'ECDSAP256SHA256', verify: true, standing: ALGORITHM_STANDINGS.RECOMMENDED },"
     );
     expect(literal).toContain(
-      "23: { name: 'ECC-GOST12', verify: false, standing: ALGORITHM_STANDINGS.REGIONAL },"
+      "23: { name: 'ECC-GOST12', verify: false, standing: ALGORITHM_STANDINGS.OPTIONAL },"
     );
     expect(literal).toMatch(/^export const DNSSEC_ALGORITHMS = \{\n[\s\S]*\n\} as const;$/);
   });
@@ -82,7 +82,7 @@ describe('the DS digest registry', () => {
     expect(standing(digests, 1)).toBe('deprecated');
     expect(standing(digests, 2)).toBe('recommended');
     expect(standing(digests, 4)).toBe('supported');
-    expect(standing(digests, 6)).toBe('regional');
+    expect(standing(digests, 6)).toBe('optional');
   });
 
   it('rewrites the table keeping each digest strength', () => {

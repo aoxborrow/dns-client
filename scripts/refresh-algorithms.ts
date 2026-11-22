@@ -13,12 +13,19 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import prettier from 'prettier';
-import { DNSSEC_ALGORITHMS, DS_DIGEST_TYPES } from '../src/dnssec/constants';
+import {
+  DNSSEC_ALGORITHMS,
+  DNSSEC_ALGORITHMS_INFO,
+  DS_DIGEST_TYPES,
+  DS_DIGEST_TYPES_INFO,
+} from '../src/dnssec/constants';
+import type { DatasetInfo } from '../src/dataset';
 import {
   parseAlgorithmRegistry,
   parseDigestRegistry,
   registryChanges,
   registryLiteral,
+  registryUpdated,
 } from './iana-data';
 
 export const ALGORITHM_REGISTRY_SOURCE =
@@ -39,8 +46,24 @@ async function fetchText(url: string): Promise<string> {
 
 function replace(source: string, pattern: RegExp, text: string): string {
   if (!pattern.test(source)) throw new Error(`${CONSTANTS_FILE}: nothing matches ${pattern}`);
-  return source.replace(pattern, text);
+  return source.replace(pattern, () => text);
 }
+
+// a table's info object, checked today against the registry revision `xml` is
+function infoLiteral(name: string, info: DatasetInfo, xml: string): string {
+  const version = registryUpdated(xml);
+  if (!version) throw new Error(`${info.source}: the registry names no <updated> date`);
+  return [
+    `export const ${name}: DatasetInfo = {`,
+    `  source: '${info.source}',`,
+    `  version: '${version}',`,
+    `  refreshed: '${today}',`,
+    '};',
+  ].join('\n');
+}
+
+const infoPattern = (name: string) =>
+  new RegExp(`export const ${name}: DatasetInfo = \\{[\\s\\S]*?\\n\\};`);
 
 async function main() {
   const [algorithmXml, digestXml] = await Promise.all([
@@ -83,8 +106,13 @@ async function main() {
   let source = readFileSync(CONSTANTS_FILE, 'utf8');
   source = replace(
     source,
-    /export const ALGORITHM_REGISTRY_REFRESHED = '[^']*';/,
-    `export const ALGORITHM_REGISTRY_REFRESHED = '${today}';`
+    infoPattern('DNSSEC_ALGORITHMS_INFO'),
+    infoLiteral('DNSSEC_ALGORITHMS_INFO', DNSSEC_ALGORITHMS_INFO, algorithmXml)
+  );
+  source = replace(
+    source,
+    infoPattern('DS_DIGEST_TYPES_INFO'),
+    infoLiteral('DS_DIGEST_TYPES_INFO', DS_DIGEST_TYPES_INFO, digestXml)
   );
   if (changes.length) {
     source = replace(

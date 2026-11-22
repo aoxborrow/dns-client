@@ -142,7 +142,7 @@ export interface RegistryEntry {
   implementValidate: string;
 }
 
-export type Standing = 'recommended' | 'supported' | 'deprecated' | 'prohibited' | 'regional';
+export type Standing = 'recommended' | 'supported' | 'deprecated' | 'prohibited' | 'optional';
 
 function rows(xml: string): string[] {
   return [...xml.matchAll(/<record\b[^>]*>([\s\S]*?)<\/record>/g)].map(([, body]) => body!);
@@ -187,16 +187,22 @@ export function parseDigestRegistry(xml: string): RegistryEntry[] {
     }));
 }
 
+// the date a registry was last updated, its own version
+export function registryUpdated(xml: string): string | undefined {
+  return /<updated>(\d{4}-\d{2}-\d{2})<\/updated>/.exec(xml)?.[1];
+}
+
 // a row's standing, read from its columns in this order: one validators MUST NOT use is
 // prohibited; one signers (or parents) MUST NOT use is deprecated; one RECOMMENDED for
-// signing is recommended; one that is MAY in every column (the national algorithms, and
-// any row added through Specification Required) is regional; the rest are supported
+// signing is recommended; one that is MAY in every column (the national algorithms, the
+// experimental ones, and any row added through Specification Required) is optional; the
+// rest are supported
 export function registryStanding(entry: RegistryEntry): Standing {
   if (entry.validate === 'MUST NOT') return 'prohibited';
   if (entry.sign === 'MUST NOT') return 'deprecated';
   if (entry.sign === 'RECOMMENDED') return 'recommended';
   const columns = [entry.sign, entry.validate, entry.implementSign, entry.implementValidate];
-  if (columns.every(column => column === 'MAY')) return 'regional';
+  if (columns.every(column => column === 'MAY')) return 'optional';
   return 'supported';
 }
 

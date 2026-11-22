@@ -204,10 +204,10 @@ yarn refresh-algorithms           # rewrite the bundled tables
 A rewrite takes each row's name and standing from IANA and keeps what only the code
 knows: whether the library verifies the algorithm, and a digest's strength. A standing is
 read from RFC 9904's columns: `prohibited` when validators MUST NOT use it, `deprecated`
-when signers MUST NOT, `recommended` when signing is RECOMMENDED, `regional` when every
+when signers MUST NOT, `recommended` when signing is RECOMMENDED, `optional` when every
 column is MAY, and `supported` otherwise. A row new to the bundle starts with
-`verify: false`; check that `regional` describes it, since IANA gives MAY in every column
-to anything registered through Specification Required. Then save the two registry files
+`verify: false`; it is likely `optional`, since IANA gives MAY in every column to anything
+registered through Specification Required. Then save the two registry files
 over the copies in `test/fixtures/iana/` (`dns-sec-alg-numbers.xml`, `ds-rr-types.xml`)
 and run `yarn test`.
 
