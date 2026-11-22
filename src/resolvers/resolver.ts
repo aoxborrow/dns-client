@@ -24,7 +24,7 @@ import type { Message } from '../wire/message';
 import { comparableName, toAsciiName } from '../wire/names';
 import { dnssecResponse, requireEdns, Validator } from '../dnssec/validate';
 import type { TrustAnchor } from '../dnssec/types';
-import { buildAnswer, matchingRecords } from './answer';
+import { aliasTarget, buildAnswer, matchingRecords, negativeLifetime } from './answer';
 import type { Answer, QuerySettings } from './answer';
 import { MAX_NEGATIVE_TTL, MAX_TTL, resolveCache } from './cache';
 import type { Cache, CacheOption } from './cache';
@@ -112,24 +112,21 @@ const TRY_NEXT = new Set<number>([RCODES.SERVFAIL, RCODES.NOTIMP, RCODES.REFUSED
 export function cacheLifetime(message: Message): number {
   if (message.flags.tc) return 0;
   if (message.rcode !== RCODES.NOERROR && message.rcode !== RCODES.NXDOMAIN) return 0;
-  const answerTtl = Math.min(...message.answers.map(record => record.ttl));
+  const answers = decodeRecords(message.answers);
   const [question] = message.questions;
-  if (message.rcode === RCODES.NOERROR && message.answers.length > 0) {
+  if (message.rcode === RCODES.NOERROR && answers.length > 0) {
     // records that answer the question: they live as long as the shortest TTL. Only an
     // alias chain, with nothing of the type at its end, is a negative answer as well
     const answered =
-      !question ||
-      matchingRecords(question.name, typeName(question.type), decodeRecords(message.answers))
-        .length > 0;
-    if (answered) return answerTtl;
+      !question || matchingRecords(question.name, typeName(question.type), answers).length > 0;
+    if (answered) return Math.min(...answers.map(record => record.ttl));
   }
-  // a negative answer lives for the smaller of the SOA's TTL and its minimum field
-  // (RFC 2308 §5), no longer than an alias that led to it, and at most an hour; with no
-  // SOA there is nothing to say how long
-  const soa = decodeRecords(message.authorities.filter(record => record.type === 6)).find(
-    (record): record is Extract<DnsRecord, { type: 'SOA' }> => record.type === 'SOA'
-  );
-  return soa ? Math.min(soa.ttl, soa.minimum, answerTtl, MAX_NEGATIVE_TTL) : 0;
+  if (!question) return 0;
+  // a negative answer lives as long as the answer's `negativeTtl` says, and at most an hour;
+  // with no SOA for the name there is nothing to say how long
+  const authorities = decodeRecords(message.authorities.filter(record => record.type === 6));
+  const lifetime = negativeLifetime(aliasTarget(question.name, answers), answers, authorities);
+  return Math.min(lifetime ?? 0, MAX_NEGATIVE_TTL);
 }
 
 /**

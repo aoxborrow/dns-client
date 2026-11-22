@@ -1,15 +1,29 @@
 import type { Security } from '../dnssec/validate';
 import type { ErrorData } from '../errors';
 import type { ExchangeOptions, ExchangeResult, SentQuery } from '../exchange';
-import { rcodeName } from '../protocol/header';
+import { RCODES, rcodeName } from '../protocol/header';
 import type { RcodeName } from '../protocol/header';
 import { decodeRecords } from '../records/decode';
 import { extendedErrors } from '../records/edns';
 import type { ExtendedErrorOption } from '../records/edns';
-import type { DnsRecord } from '../records/types';
+import type { DnsRecord, SoaRecord } from '../records/types';
 import type { TransportName } from '../transports/types';
 import type { HeaderFlags, Message, ResourceRecord } from '../wire/message';
 import { canonicalName, comparableName, encodeName, isSubdomain, splitName } from '../wire/names';
+
+/**
+ * what an answer amounts to:
+ * - `ok`: `records` holds what was asked for
+ * - `nxdomain`: the name does not exist, or the name at the end of its alias chain does not
+ * - `nodata`: the name exists, with nothing of the type asked for
+ * - `referral`: the server sent the question on to another zone's servers instead of answering
+ * - `alias`: the name is an alias, and its target's records are not here because it was not
+ *   followed
+ * - `failed`: the servers gave up on the question (SERVFAIL, REFUSED and the like), an empty
+ *   answer came truncated and asking again over TCP did not help, or every server of a zone
+ *   answered without authority or the zone's SOA, NXDOMAIN included (AuthoritativeResolver)
+ */
+export type AnswerStatus = 'ok' | 'nxdomain' | 'nodata' | 'referral' | 'alias' | 'failed';
 
 /**
  * the answer both resolvers return: what the server said, typed and raw. Plain data, with no
@@ -26,13 +40,22 @@ export interface Answer<Rec extends DnsRecord = DnsRecord> {
   rcodeName: RcodeName | `RCODE${number}`;
   /** the response's header flags */
   flags: HeaderFlags;
+  /** what the answer amounts to, read from the rcode and the sections: see {@link AnswerStatus} */
+  status: AnswerStatus;
+  /**
+   * `nxdomain` and `nodata` only: how many seconds the negative answer may be kept. The
+   * smaller of the SOA's TTL and its `minimum` field (RFC 2308 §5), and of the TTL of any alias
+   * that led to it; 0 when no SOA for the name came with it, or the answer is truncated. From
+   * the cache, what is left of it
+   */
+  negativeTtl?: number;
 
   /**
    * the records that answer the question: those of the type asked for, at the name asked
-   * about or at the end of the alias chain it leads to. Empty for NXDOMAIN and for a name
-   * with no records of that type; `rcodeName` tells the two apart. From
-   * AuthoritativeResolver, only records the answering zone holds authority for: an alias
-   * out of the zone ends `records` there, unless `followCnames` resolves its target
+   * about or at the end of the alias chain it leads to. Read them when `status` is `ok`: with
+   * another status they are usually empty, but an error response may still carry some. From
+   * AuthoritativeResolver, only records the answering zone holds authority for: an
+   * alias out of the zone ends `records` there, unless `followCnames` resolves its target
    */
   records: Rec[];
   /**
@@ -187,6 +210,28 @@ export function matchingRecords(
   return answers.filter(record => record.type === type && canonicalName(record.name) === owner);
 }
 
+// how long a negative answer may be kept, in seconds: the smaller of the TTL and the minimum
+// field of an SOA that speaks for `end` (RFC 2308 §5), and no longer than an alias that led to
+// it. Only an SOA at or above the name, and at or below the zone that was asked when one was,
+// speaks for it; undefined when none does. `age` is how long the response sat in a cache,
+// already taken off the record TTLs
+export function negativeLifetime(
+  end: string,
+  answers: readonly DnsRecord[],
+  authorities: readonly DnsRecord[],
+  zone?: string,
+  age = 0
+): number | undefined {
+  const soa = authorities.find(
+    (record): record is SoaRecord =>
+      record.type === 'SOA' &&
+      isSubdomain(end, record.name) &&
+      (zone === undefined || isSubdomain(record.name, zone))
+  );
+  if (!soa) return undefined;
+  return Math.max(0, Math.min(soa.ttl, soa.minimum - age, ...answers.map(record => record.ttl)));
+}
+
 export interface AnswerExtras {
   // seconds to take off every TTL: how long the response sat in a cache
   age?: number;
@@ -248,6 +293,36 @@ export function buildAnswer(result: ExchangeResult, extras: AnswerExtras = {}): 
     ? [...(extras.before ?? []), ...own.filter(record => isSubdomain(record.name, zone))]
     : answers;
   const name = extras.name ?? result.query.name;
+  const { type } = result.query;
+  const asked = comparableName(name);
+  const records = matchingRecords(asked, type, vouched);
+  const authorities = aged(decodeRecords(message.authorities, options));
+
+  // the name the answer ends at, and whether an SOA speaks for it there. An alias chain whose
+  // end was not asked about was not followed, and no SOA for its end means its records are
+  // simply not here. With one, the end exists with nothing of the type (RFC 2308 §2.2). An
+  // empty truncated answer cannot tell that from records lost to the truncation
+  const end = type === 'ANY' || ALIASES.has(type) ? asked : aliasTarget(asked, vouched);
+  const lifetime = negativeLifetime(end, answers, authorities, zone, extras.age);
+  const { tc, aa } = message.flags;
+  // from a zone's server, a denial needs authority or the zone's SOA behind it, as the walk
+  // requires: without either it is lame, returned only when every server was the same
+  const unvouched =
+    zone !== undefined &&
+    !aa &&
+    !authorities.some(record => record.type === 'SOA' && isSubdomain(record.name, zone));
+  let status: AnswerStatus;
+  if (message.rcode === RCODES.NXDOMAIN) status = unvouched ? 'failed' : 'nxdomain';
+  else if (message.rcode !== RCODES.NOERROR) status = 'failed';
+  else if (records.length > 0) status = 'ok';
+  else if (tc) status = 'failed';
+  else if (lifetime !== undefined) status = 'nodata';
+  else if (end !== comparableName(result.query.name)) status = 'alias';
+  else if (!aa && authorities.some(record => record.type === 'NS')) status = 'referral';
+  // nothing at all, from a zone's server that does not claim authority: it is not serving
+  // the zone
+  else if (zone !== undefined && !aa) status = 'failed';
+  else status = 'nodata';
 
   return {
     name,
@@ -256,9 +331,13 @@ export function buildAnswer(result: ExchangeResult, extras: AnswerExtras = {}): 
     rcode: message.rcode,
     rcodeName: rcodeName(message.rcode),
     flags: { ...message.flags },
-    records: matchingRecords(comparableName(name), result.query.type, vouched),
+    status,
+    ...((status === 'nxdomain' || status === 'nodata') && {
+      negativeTtl: tc ? 0 : (lifetime ?? 0),
+    }),
+    records,
     answers,
-    authorities: aged(decodeRecords(message.authorities, options)),
+    authorities,
     additionals: aged(decodeRecords(message.additionals, options)),
     extendedErrors: extendedErrors(message.edns),
     message: copyMessage(message),

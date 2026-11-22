@@ -112,9 +112,9 @@ An `Answer` is plain data, with no methods: it can be cached, logged or sent as 
 | `trace` | `trace`, on answers from `AuthoritativeResolver` only. A hop is `{ server, serverName, zone, name, type, transport, rcode, rcodeName, referral, bytes, elapsed, timestamp, error }` |
 | `error` | removed. Errors are thrown |
 
-New on the answer: `class`, `message` (the decoded response), `query` (the query as sent),
-`port`, `url`, `transport`, `attempts`, `timestamp`, `cached`, and `security` when
-validating.
+New on the answer: `class`, `status` (`'ok'`, `'nxdomain'`, `'nodata'` and so on) and
+`negativeTtl`, `message` (the decoded response), `query` (the query as sent), `port`, `url`,
+`transport`, `attempts`, `timestamp`, `cached`, and `security` when validating.
 
 The `dig` command for an answer is a function of it:
 
@@ -129,8 +129,8 @@ toDig(answer); // 'dig @192.0.2.53 example.com A'
 
 A failed query now throws. In 0.x it came back as an answer with `error` set; in 1.0 an
 `Answer` is always a response from a server, and an error is always thrown. A name that
-does not exist, or has no records of the type, is still an answer: `rcodeName: 'NXDOMAIN'`,
-or `'NOERROR'` with empty `records`. See
+does not exist, or has no records of the type, is still an answer, with `status: 'nxdomain'`
+or `'nodata'`. See
 [Reading a negative answer](README.md#reading-a-negative-answer).
 
 ```ts

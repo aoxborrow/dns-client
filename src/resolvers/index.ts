@@ -12,6 +12,6 @@ export {
   ROOT_HINTS_SOURCE,
 } from './root-hints';
 export type { NameserverHint } from './root-hints';
-export type { Answer, QuerySettings, TraceHop } from './answer';
+export type { Answer, AnswerStatus, QuerySettings, TraceHop } from './answer';
 export { toDig } from '../exchange';
 export type { DigSource, ExchangeResult, QueryFlags, SentQuery } from '../exchange';

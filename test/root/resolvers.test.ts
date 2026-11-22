@@ -203,6 +203,9 @@ describe('Resolver', () => {
       const again = await stub.query('missing.example.com', 'A');
       expect(again.cached).toBe(true);
       expect(again.rcodeName).toBe('NXDOMAIN');
+      expect(again.status).toBe('nxdomain');
+      // what is left of the 300 seconds
+      expect(again.negativeTtl).toBe(1);
       vi.setSystemTime(Date.now() + 2000);
       await stub.query('missing.example.com', 'A');
       expect(network.queries).toHaveLength(2);
@@ -429,6 +432,7 @@ describe('Resolver', () => {
       const stub = resolver({ '10.0.0.1': failing, '10.0.0.2': failing });
       const answer = await stub.query('example.com', 'A');
       expect(answer.rcodeName).toBe('SERVFAIL');
+      expect(answer.status).toBe('failed');
       expect(answer.server).toBe('10.0.0.2');
       // and a failure is not remembered
       await stub.query('example.com', 'A');
@@ -831,6 +835,8 @@ describe('Resolver', () => {
       expect(answer.flags.tc).toBe(true);
       expect(answer.records).toEqual([]);
       expect(answer.tcpFallbackError?.name).toBe('ConnectionError');
+      // nothing says whether the name has records: they may have been cut off
+      expect(answer.status).toBe('failed');
     });
 
     it('is the answer: the next server is not asked', async () => {
@@ -1382,6 +1388,7 @@ describe('AuthoritativeResolver', () => {
         const answer = await resolver({}, { '10.1.0.1': nodata }).query('example.com', 'MX');
         expect(answer.server).toBe('10.1.0.1');
         expect(answer.records).toEqual([]);
+        expect(answer).toMatchObject({ status: 'nodata', negativeTtl: 300 });
       });
 
       it("moves on from an NXDOMAIN without authority that carries another zone's SOA", async () => {
@@ -1405,6 +1412,7 @@ describe('AuthoritativeResolver', () => {
         );
         expect(answer.server).toBe('10.1.0.2');
         expect(answer.rcodeName).toBe('NOERROR');
+        expect(answer.status).toBe('failed');
       });
     });
 
@@ -1582,6 +1590,7 @@ describe('AuthoritativeResolver', () => {
         'A'
       );
       expect(answer.rcodeName).toBe('REFUSED');
+      expect(answer.status).toBe('failed');
       expect(answer.records).toEqual([]);
     });
 
@@ -1846,6 +1855,7 @@ describe('AuthoritativeResolver', () => {
       expect(answer.rcodeName).toBe('NOERROR');
       expect(answer.records).toEqual([]);
       expect(answer.answers).toMatchObject([{ type: 'CNAME', target: 'target.other.net' }]);
+      expect(answer.status).toBe('alias');
       expect(answer.server).toBe('10.1.0.1');
       expect(network.queries.some(query => query.name === 'target.other.net')).toBe(false);
     });
@@ -1854,6 +1864,7 @@ describe('AuthoritativeResolver', () => {
       const answer = await resolver({ followCnames: true }).query('away.example.com', 'A');
 
       expect(answer.name).toBe('away.example.com');
+      expect(answer.status).toBe('ok');
       expect(answer.records.map(record => record.address)).toEqual(['203.0.113.5']);
       expect(answer.answers.map(record => `${record.name} ${record.type}`)).toEqual([
         'away.example.com CNAME',

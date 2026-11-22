@@ -271,6 +271,7 @@ are from the quick start's `new AuthoritativeResolver({ validate: true }).query(
 
 ```ts
 import type {
+  AnswerStatus,
   DnsRecord,
   LinkKind,
   Message,
@@ -287,6 +288,8 @@ interface Answer<Rec extends DnsRecord = DnsRecord> {
   rcode: number; // 0
   rcodeName: RcodeName | `RCODE${number}`; // 'NOERROR'; 'NXDOMAIN' when the name does not exist
   flags: HeaderFlags; // { qr: true, aa: true, tc: false, rd: false, ra: false, ad: false, cd: false }
+  status: AnswerStatus; // 'ok'; or 'nxdomain', 'nodata', 'referral', 'alias', 'failed': see below
+  negativeTtl?: number; // 300, for 'nxdomain' and 'nodata' only: seconds the negative answer may be kept
   records: Rec[]; // [{ name: 'example.com', type: 'A', class: 'IN', ttl: 300, address: '172.66.147.243' }, …]
   answers: DnsRecord[]; // the whole answer section: the A records, and with validate their RRSIG
   authorities: DnsRecord[]; // the authority section: the SOA of a negative answer, for one
@@ -400,41 +403,27 @@ interface ChainLink {
 ### Reading a negative answer
 
 A name that does not exist, or has no records of the type asked for, is an answer, not an
-error. Neither is thrown.
-
-- **NXDOMAIN**: the name does not exist. `rcodeName` is `'NXDOMAIN'` and `records` is
-  empty.
-- **NODATA**: the name exists, with nothing of that type. `rcodeName` is `'NOERROR'` and
-  `records` is empty.
-
-Both carry the zone's SOA record in `authorities`; how long the negative answer may be
-cached is the smaller of the SOA's TTL and its `minimum` field (RFC 2308). In a signed zone,
-asked with `dnssecOk: true`, `authorities` also holds the NSEC or NSEC3 records that prove
-the denial.
-
-An error means no usable response arrived at all.
+error: `status` says what it amounts to. An error means no usable response arrived at all.
 
 ```ts network
 import { DnsError, Resolver } from '@aoxborrow/dns';
-import type { SoaRecord } from '@aoxborrow/dns';
 
 const resolver = new Resolver({ servers: ['1.1.1.1'] });
 
 try {
   const answer = await resolver.query('www.example.com', 'MX');
-  const soa = answer.authorities.find((record): record is SoaRecord => record.type === 'SOA');
-
-  if (answer.rcodeName === 'NXDOMAIN') {
-    // the name does not exist
-  } else if (answer.rcodeName === 'NOERROR' && answer.records.length === 0) {
-    // the name exists, with no MX records
-  } else if (answer.rcodeName === 'NOERROR') {
-    // records
-  } else {
-    // SERVFAIL, REFUSED and the like: every server gave up on the question
+  switch (answer.status) {
+    case 'ok': // the MX records are in answer.records
+      break;
+    case 'nxdomain': // the name does not exist
+    case 'nodata': // the name exists, with no MX records
+      console.log(`no MX records, for the next ${answer.negativeTtl} seconds`);
+      break;
+    case 'referral': // the server sent the question on to another zone's servers
+    case 'alias': // an alias whose target was not followed
+    case 'failed': // SERVFAIL, REFUSED and the like, an empty truncated answer, or lame servers
+      break;
   }
-  // how long this negative answer may be kept, in seconds
-  const negativeTtl = soa ? Math.min(soa.ttl, soa.minimum) : 0;
 } catch (error) {
   if (error instanceof DnsError) {
     // no usable response: a timeout, a connection refused, a malformed reply
@@ -442,7 +431,12 @@ try {
 }
 ```
 
-The [`/promises`](docs/promises.md) facade turns both into errors, as `node:dns` does:
+`negativeTtl` is the smaller of the SOA's TTL and its `minimum` field (RFC 2308 §5), and 0
+when no SOA for the name came with the answer. It is what the zone says; the resolver's own
+cache keeps a negative answer an hour at most. The SOA is in `authorities`, with the NSEC or
+NSEC3 records that prove the denial in a signed zone asked with `dnssecOk: true`.
+
+The [`/promises`](docs/promises.md) facade turns `nxdomain` and `nodata` into errors, as `node:dns` does:
 NXDOMAIN is `ENOTFOUND`, NODATA is `ENODATA`.
 
 ## Errors

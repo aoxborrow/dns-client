@@ -119,7 +119,7 @@ both `transports` and a transport option throws a `TypeError`.
 ## Caching
 
 `Resolver` keeps each response for its TTL (the smallest in the answer section; for a
-negative answer, the SOA's, as above), and for no more than a day, or an hour for a negative
+negative answer, its `negativeTtl`), and for no more than a day, or an hour for a negative
 answer (RFC 2308 §5); a cache of your own may keep things longer. A cached answer comes
 back with `cached: true` and its TTLs reduced by the time it has spent in the cache. A query
 with a `server` of its own neither reads nor fills the cache.
