@@ -1,6 +1,7 @@
 import { RecordSyntaxError } from '../errors';
 import { classCode, className } from '../protocol/classes';
 import { typeCode, typeName } from '../protocol/types';
+import { unescapeText } from '../wire/bytes';
 import { canonicalName, endsWithRootDot, isSubdomain, toAsciiName } from '../wire/names';
 import { formatRecordData } from './format';
 import type { FlatRecord, FlatRecordInput } from './helpers';
@@ -198,7 +199,7 @@ const utf8 = new TextEncoder();
 
 // the record's data holds the strings and one length byte for each
 function checkTextLength(strings: readonly string[]): void {
-  const total = strings.reduce((sum, text) => sum + utf8.encode(text).length + 1, 0);
+  const total = strings.reduce((sum, text) => sum + unescapeText(text).length + 1, 0);
   if (total > 0xffff) {
     throw recordError('data-too-long', {}, 'TXT data is longer than a record can hold');
   }
@@ -218,7 +219,8 @@ function textStrings(text: string): string[] {
       current = '';
       bytes = 0;
     }
-    current += char;
+    // a backslash in plain text is itself, so the field escapes it
+    current += char === '\\' ? '\\\\' : char;
     bytes += size;
   }
   strings.push(current);

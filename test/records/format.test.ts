@@ -84,7 +84,7 @@ describe('formatRecordData', () => {
       {
         ...base,
         type: 'TXT',
-        strings: ['one', '', 'say "hi"', 'back\\slash', 'tab\there', 'größe'],
+        strings: ['one', '', 'say "hi"', 'back\\\\slash', 'tab\there', 'größe'],
       },
       '"one" "" "say \\"hi\\"" "back\\\\slash" "tab\\009here" "größe"',
     ],

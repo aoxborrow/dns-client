@@ -82,7 +82,7 @@ describe('the same answers as node:dns', () => {
     ['resolveSrv', `_sip._tcp.${ZONE}`],
     ['resolveTlsa', `_443._tcp.www.${ZONE}`],
     ['resolveTxt', ZONE],
-    ['reverse', '192.0.2.1'],
+    ['reverse', '198.51.100.1'],
     ['reverse', '2001:db8::1'],
     ['resolve', `www.${ZONE}`],
     ['resolve', `www.${ZONE}`, 'AAAA'],

@@ -1,6 +1,6 @@
 import type { ClientHttp2Session, ClientHttp2Stream, IncomingHttpHeaders } from 'node:http2';
 import type { TLSSocket } from 'node:tls';
-import { ConnectionError } from '../errors';
+import { ConnectionError, InvalidResponseError } from '../errors';
 import { nodeTlsOptions, whenReady } from './node';
 import { openTunnel } from './proxy';
 import type { Proxy } from './proxy';
@@ -19,6 +19,13 @@ import type { Connection, OnEvent, TlsOptions } from './types';
 //
 // TLS is set up here, with ALPN, before the session starts. A server that does not pick
 // h2 is remembered, and its queries are handed back to the caller to send with `fetch`.
+// a DNS message is at most 65,535 bytes (RFC 1035 §4.2.2), so a longer body is not one,
+// and reading stops there rather than holding whatever a server streams
+export const MAX_BODY_BYTES = 0xffff;
+
+export const bodyTooLong = (host: string) =>
+  new InvalidResponseError(`DoH server ${host} sent a body longer than a DNS message`);
+
 // Node's modules are imported when the first query is sent, never at load
 
 type Modules = {
@@ -270,6 +277,7 @@ export function createHttp2Client(options: Http2ClientOptions = {}): Http2Client
       let status: number | undefined;
       let contentType: string | null = null;
       const chunks: Buffer[] = [];
+      let size = 0;
       let stream: ClientHttp2Stream | undefined;
       let finished = false;
 
@@ -333,7 +341,17 @@ export function createHttp2Client(options: Http2ClientOptions = {}): Http2Client
         status = Number(headers[':status']);
         contentType = headers['content-type'] ?? null;
       });
-      stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+      stream.on('data', (chunk: Buffer) => {
+        // an error status is reported for what it is, whatever its body
+        if (status !== undefined && (status < 200 || status >= 300)) return;
+        size += chunk.length;
+        if (size > MAX_BODY_BYTES) {
+          stream?.close(constants.NGHTTP2_CANCEL);
+          finish(bodyTooLong(url.hostname));
+          return;
+        }
+        chunks.push(chunk);
+      });
       stream.on('end', () => {
         if (status === undefined) finish(new Error('HTTP/2 stream ended with no response'), true);
         else finish();

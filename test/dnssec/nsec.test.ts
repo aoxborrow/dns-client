@@ -391,10 +391,12 @@ describe('assessNsec3Params', () => {
   });
 
   it('flags a non-zero iteration count and names the validator thresholds', () => {
-    expect(assessNsec3Params(1, 150, Buffer.alloc(0), false).notes[0]).toMatch(
-      /insecure above 100|above 100/
+    expect(assessNsec3Params(1, 51, Buffer.alloc(0), false).notes[0]).toMatch(
+      /counts above 50 as insecure/
     );
-    expect(assessNsec3Params(1, 600, Buffer.alloc(0), false).notes[0]).toMatch(/SERVFAIL/);
+    expect(assessNsec3Params(1, 600, Buffer.alloc(0), false).notes[0]).toMatch(
+      /SERVFAIL above 500/
+    );
   });
 
   it('flags a salt', () => {

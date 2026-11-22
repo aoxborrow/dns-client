@@ -2,9 +2,9 @@ import { ParseError } from '../errors';
 import { className } from '../protocol/classes';
 import { RECORD_TYPES, typeName } from '../protocol/types';
 import {
+  escapeText,
   formatIpv4,
   formatIpv6,
-  latin1Decode,
   readU16,
   readU32,
   toBase32Hex,
@@ -390,13 +390,13 @@ const DECODERS: Record<number, Decoder> = {
   [RECORD_TYPES.MX]: reader => ({ preference: reader.u16(), exchange: reader.name() }),
   [RECORD_TYPES.TXT]: reader => {
     const strings: string[] = [];
-    while (reader.remaining > 0) strings.push(utf8Decode(reader.characterString()));
+    while (reader.remaining > 0) strings.push(escapeText(reader.characterString()));
     return { strings };
   },
   [RECORD_TYPES.CAA]: reader => ({
     flags: reader.u8(),
-    tag: latin1Decode(reader.characterString()),
-    value: utf8Decode(reader.rest()),
+    tag: escapeText(reader.characterString()),
+    value: escapeText(reader.rest()),
   }),
   [RECORD_TYPES.TLSA]: reader => ({
     usage: reader.u8(),
@@ -450,8 +450,8 @@ const DECODERS: Record<number, Decoder> = {
     certificate: toBase64(reader.rest()),
   }),
   [RECORD_TYPES.HINFO]: reader => ({
-    cpu: utf8Decode(reader.characterString()),
-    os: utf8Decode(reader.characterString()),
+    cpu: escapeText(reader.characterString()),
+    os: escapeText(reader.characterString()),
   }),
   [RECORD_TYPES.TSIG]: reader => {
     const algorithm = reader.name();
@@ -474,14 +474,14 @@ const DECODERS: Record<number, Decoder> = {
   [RECORD_TYPES.URI]: reader => ({
     priority: reader.u16(),
     weight: reader.u16(),
-    target: utf8Decode(reader.rest()),
+    target: escapeText(reader.rest()),
   }),
   [RECORD_TYPES.NAPTR]: reader => ({
     order: reader.u16(),
     preference: reader.u16(),
-    flags: latin1Decode(reader.characterString()),
-    services: latin1Decode(reader.characterString()),
-    regexp: utf8Decode(reader.characterString()),
+    flags: escapeText(reader.characterString()),
+    services: escapeText(reader.characterString()),
+    regexp: escapeText(reader.characterString()),
     replacement: reader.name(),
   }),
   [RECORD_TYPES.LOC]: reader => {

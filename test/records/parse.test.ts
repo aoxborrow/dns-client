@@ -40,7 +40,7 @@ describe('parseRecordData is the inverse of formatRecordData', () => {
     {
       ...base,
       type: 'TXT',
-      strings: ['one', '', 'say "hi"', 'back\\slash', 'tab\there', 'größe', 'semi;colon (paren)'],
+      strings: ['one', '', 'say "hi"', 'back\\\\slash', 'tab\there', 'größe', 'semi;colon (paren)'],
     },
     { ...base, type: 'CAA', flags: 128, tag: 'issuewild', value: 'ca.example; policy=ev' },
     { ...base, type: 'KEY', flags: 256, protocol: 3, algorithm: 8, publicKey: 'AQIDBA==' },

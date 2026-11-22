@@ -1,6 +1,6 @@
 import { ParseError } from '../errors';
 import { typeCode, typeName } from '../protocol/types';
-import { formatIpv4, formatIpv6, toHex, utf8Decode } from '../wire/bytes';
+import { escapeText, formatIpv4, formatIpv6, toHex, utf8Decode } from '../wire/bytes';
 import { endsWithRootDot, nameToLabels } from '../wire/names';
 import { parseIpv4, parseIpv6 } from './addresses';
 import { decodeRecord, isKnownRecordType } from './decode';
@@ -186,7 +186,7 @@ class Fields {
     if (token.bytes.length > 255) {
       throw recordError('string-too-long', { field: what }, `${what} is longer than 255 bytes`);
     }
-    return utf8Decode(Uint8Array.from(token.bytes));
+    return escapeText(Uint8Array.from(token.bytes));
   }
 
   // the bytes of a <character-string>
@@ -749,7 +749,7 @@ const PARSERS: Record<KnownRecordType, Parser> = {
     priority: fields.u16('priority'),
     weight: fields.u16('weight'),
     // a URI may be longer than one character-string, so it is not length-checked as one
-    target: utf8Decode(fields.bytes('target')),
+    target: escapeText(fields.bytes('target')),
   }),
   NAPTR: fields => ({
     order: fields.u16('order'),

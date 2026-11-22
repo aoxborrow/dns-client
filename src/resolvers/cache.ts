@@ -1,6 +1,14 @@
 // what a resolver needs from a cache, and the default: a small least-recently-used map
 // whose entries expire
 
+// the longest anything is kept, in seconds, whatever its TTL says: one day, as Unbound
+// keeps (cache-max-ttl). Answers, delegations and nameserver addresses alike
+export const MAX_TTL = 86_400;
+// the longest a negative answer (NXDOMAIN, or no records of the type) is kept, in
+// seconds. RFC 2308 §5 calls one to three hours a sensible default and more than a day
+// problematic; Unbound and PowerDNS keep an hour
+export const MAX_NEGATIVE_TTL = 3600;
+
 export interface Cache<Value> {
   get(key: string): Value | undefined;
   // keep `value` for `ttl` milliseconds

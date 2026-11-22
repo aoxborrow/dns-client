@@ -669,6 +669,58 @@ describe('exchange', () => {
     });
   });
 
+  describe('a server that does not speak EDNS', () => {
+    // answers FORMERR, with no EDNS record, to any query that carries one (RFC 6891 §7)
+    const old: Responder = ({ query }) => {
+      const asked = decodeMessage(query);
+      if (asked.edns) {
+        return { response: answerTo(query, { rcode: 1, answers: [], flags: { qr: true } }) };
+      }
+      return { response: answerTo(query) };
+    };
+
+    it('is asked again without EDNS, and the plain query is what the result reports', async () => {
+      const events: DnsEvent[] = [];
+      const options = await serve(old);
+      const result = await exchange(QUESTION, server.address, {
+        ...options,
+        onEvent: event => events.push(event),
+      });
+
+      expect(result.message.rcode).toBe(0);
+      expect(result.message.answers).toHaveLength(1);
+      expect(result.query.edns).toBe(false);
+      expect(result.attempts).toBe(2);
+      expect(server.received.map(({ query }) => Boolean(decodeMessage(query).edns))).toEqual([
+        true,
+        false,
+      ]);
+      expect(events.find(event => event.event === 'retry')).toMatchObject({
+        error: { message: expect.stringContaining('without it') },
+      });
+    });
+
+    it('is not asked again when the query needs EDNS', async () => {
+      const options = await serve(old);
+      const result = await exchange(QUESTION, server.address, { ...options, dnssecOk: true });
+      expect(result.message.rcode).toBe(1);
+      expect(server.received).toHaveLength(1);
+    });
+
+    it('is not asked again when the FORMERR carries an EDNS record', async () => {
+      const options = await serve(({ query }) => ({
+        response: answerTo(query, {
+          rcode: 1,
+          answers: [],
+          edns: { udpPayloadSize: 1232, version: 0, dnssecOk: false, options: [] },
+        }),
+      }));
+      const result = await exchange(QUESTION, server.address, options);
+      expect(result.message.rcode).toBe(1);
+      expect(server.received).toHaveLength(1);
+    });
+  });
+
   describe('before the network', () => {
     it('rejects a type it does not know', async () => {
       const options = await serve(({ query }) => ({ response: answerTo(query) }));

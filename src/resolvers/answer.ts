@@ -27,10 +27,14 @@ export interface Answer<Rec extends DnsRecord = DnsRecord> {
 
   // the records that answer the question: those of the type asked for, at the name asked
   // about or at the end of the alias chain it leads to. Empty for NXDOMAIN and for a name
-  // with no records of that type; `rcodeName` tells the two apart
+  // with no records of that type; `rcodeName` tells the two apart. From
+  // AuthoritativeResolver, only records the answering zone holds authority for: an alias
+  // out of the zone ends `records` there, unless `followCnames` resolves its target
   records: Rec[];
-  // every record in each section of the response, typed. `answers` holds the aliases a
-  // name went through and, when DNSSEC records were asked for, the signatures
+  // every record in each section of the response, typed, as the server sent it and not
+  // vetted: a zone's server can put anything here, records about other zones included.
+  // `answers` holds the aliases a name went through and, when DNSSEC records were asked
+  // for, the signatures
   answers: DnsRecord[];
   authorities: DnsRecord[];
   additionals: DnsRecord[];
@@ -182,6 +186,9 @@ export interface AnswerExtras {
   name?: string;
   // records from earlier responses to put before this one's answers: the aliases followed
   before?: DnsRecord[];
+  // the zone the answering server was asked as an authority for: `records` holds only
+  // what is at or below it, and what came before
+  zone?: string;
 }
 
 const copyRecord = (record: ResourceRecord): ResourceRecord => ({
@@ -218,7 +225,12 @@ export function buildAnswer(result: ExchangeResult, extras: AnswerExtras = {}): 
     for (const record of records) record.ttl = Math.max(0, record.ttl - (extras.age ?? 0));
     return records;
   };
-  const answers = [...(extras.before ?? []), ...aged(decodeRecords(message.answers, options))];
+  const own = aged(decodeRecords(message.answers, options));
+  const answers = [...(extras.before ?? []), ...own];
+  const { zone } = extras;
+  const vouched = zone
+    ? [...(extras.before ?? []), ...own.filter(record => isSubdomain(record.name, zone))]
+    : answers;
   const name = extras.name ?? result.query.name;
 
   return {
@@ -228,7 +240,7 @@ export function buildAnswer(result: ExchangeResult, extras: AnswerExtras = {}): 
     rcode: message.rcode,
     rcodeName: rcodeName(message.rcode),
     flags: { ...message.flags },
-    records: matchingRecords(comparableName(name), result.query.type, answers),
+    records: matchingRecords(comparableName(name), result.query.type, vouched),
     answers,
     authorities: aged(decodeRecords(message.authorities, options)),
     additionals: aged(decodeRecords(message.additionals, options)),

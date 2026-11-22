@@ -626,8 +626,11 @@ function rrsetLifetime(check: RrsetCheck, now: Date): number {
 }
 
 function signatureLifetime(signature: SignatureCheck, now: Date): number {
-  const expires = Math.floor((signature.rrsig.expiration * 1000 - now.getTime()) / 1000);
-  return Math.max(0, Math.min(signature.rrsig.originalTtl, expires));
+  // seconds until the expiration, read with serial arithmetic (RFC 4034 §3.1.5)
+  const expires =
+    (((signature.rrsig.expiration - Math.floor(now.getTime() / 1000)) % 2 ** 32) + 2 ** 32) %
+    2 ** 32;
+  return expires >= 2 ** 31 ? 0 : Math.min(signature.rrsig.originalTtl, expires);
 }
 
 const signaturesIn = (response: DnssecResponse) =>

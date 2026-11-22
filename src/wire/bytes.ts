@@ -99,6 +99,72 @@ export function utf8Decode(bytes: Uint8Array): string {
   return utf8.decode(bytes);
 }
 
+// the bytes of a <character-string> as text that loses nothing: valid UTF-8 as it is, a
+// backslash as `\\`, and any byte outside a valid UTF-8 sequence as `\DDD`. Names follow
+// the same convention, and so does `dig` for the bytes it escapes
+export function escapeText(bytes: Uint8Array): string {
+  let out = '';
+  let i = 0;
+  while (i < bytes.length) {
+    const [length, point] = utf8Sequence(bytes, i);
+    if (length === 0) {
+      out += `\\${String(bytes[i]).padStart(3, '0')}`;
+      i += 1;
+    } else {
+      out += point === 0x5c ? '\\\\' : String.fromCodePoint(point);
+      i += length;
+    }
+  }
+  return out;
+}
+
+// the bytes `escapeText` wrote: `\DDD` is that byte, a backslash before any other character
+// is that character, and one at the very end stands for itself
+export function unescapeText(text: string): Uint8Array {
+  const out: number[] = [];
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] === '\\' && i + 1 < text.length) {
+      const digits = text.slice(i + 1, i + 4);
+      if (/^\d{3}$/.test(digits) && Number(digits) <= 255) {
+        out.push(Number(digits));
+        i += 4;
+        continue;
+      }
+      i += 1;
+    }
+    const char = String.fromCodePoint(text.codePointAt(i)!);
+    out.push(...utf8Encoder.encode(char));
+    i += char.length;
+  }
+  return Uint8Array.from(out);
+}
+
+const utf8Encoder = new TextEncoder();
+
+// the length and code point of the valid UTF-8 sequence at `i`, or a length of 0 where
+// none starts: a stray continuation byte, a sequence cut short, an overlong form, a
+// surrogate or a code point past U+10FFFF
+function utf8Sequence(bytes: Uint8Array, i: number): [number, number] {
+  const lead = bytes[i];
+  if (lead < 0x80) return [1, lead];
+  let length: number;
+  let least: number;
+  if (lead >= 0xc2 && lead <= 0xdf) [length, least] = [2, 0x80];
+  else if (lead >= 0xe0 && lead <= 0xef) [length, least] = [3, 0x800];
+  else if (lead >= 0xf0 && lead <= 0xf4) [length, least] = [4, 0x10000];
+  else return [0, 0];
+  if (i + length > bytes.length) return [0, 0];
+  let point = lead & (0x7f >> length);
+  for (let k = 1; k < length; k++) {
+    const next = bytes[i + k];
+    if ((next & 0xc0) !== 0x80) return [0, 0];
+    point = (point << 6) | (next & 0x3f);
+  }
+  if (point < least || point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff)) return [0, 0];
+  return [length, point];
+}
+
 export function formatIpv4(bytes: Uint8Array): string {
   return `${bytes[0]}.${bytes[1]}.${bytes[2]}.${bytes[3]}`;
 }

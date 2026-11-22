@@ -7,7 +7,8 @@
 // `http.Agent` and undici's `connect` option take.
 //
 // not here: `lookupService` (it needs the system's service database), `setLocalAddress`,
-// and the hosts file for anything but `lookup`, as in Node
+// and the hosts file for anything but `lookup`. Node's `reverse` reads the hosts file
+// first, through c-ares; this one only asks the DNS servers
 import { ParseError } from '../errors';
 import { reverseIp } from '../records/addresses';
 import type { DnsRecord, KnownRecordType } from '../records/types';
@@ -34,7 +35,17 @@ import type {
   LookupOptions,
   ResultOrder,
 } from './lookup';
-import { nodeName, toAnyList, toCaa, toMx, toNaptr, toSoa, toSrv, toTlsa } from './records';
+import {
+  nodeName,
+  nodeText,
+  toAnyList,
+  toCaa,
+  toMx,
+  toNaptr,
+  toSoa,
+  toSrv,
+  toTlsa,
+} from './records';
 import type {
   AnyRecord,
   CaaRecord,
@@ -333,7 +344,7 @@ export class Resolver {
   }
 
   resolveTxt(hostname: string): Promise<string[][]> {
-    return this.#typed(hostname, 'TXT', record => record.strings);
+    return this.#typed(hostname, 'TXT', record => record.strings.map(nodeText));
   }
 
   // the names an address has: its PTR records under in-addr.arpa or ip6.arpa

@@ -1,4 +1,4 @@
-import { ConnectionError, DnsError, TimeoutError } from '../../src/errors';
+import { ConnectionError, DnsError, InvalidResponseError, TimeoutError } from '../../src/errors';
 import { exchange } from '../../src/exchange';
 import { createTransports } from '../../src/transports/index';
 import type { Transports } from '../../src/transports/index';
@@ -152,6 +152,23 @@ describe('DNS over HTTPS on HTTP/2', () => {
     }).catch(caught => caught);
     expect(error).toBeInstanceOf(ConnectionError);
     expect(error.message).toContain('DoH request to 127.0.0.1 failed');
+  });
+
+  it('cancels the stream of a body longer than a DNS message', async () => {
+    let asked = 0;
+    server = await startDoh2Server(query =>
+      asked++ === 0 ? new Uint8Array(70_000) : answerTo(query)
+    );
+    make();
+    const error = await exchange(QUESTION, server.url, { transports, retries: 0 }).catch(
+      caught => caught
+    );
+    expect(error).toBeInstanceOf(InvalidResponseError);
+    expect(error.message).toContain('longer than a DNS message');
+    // and the session stays usable
+    const result = await exchange(QUESTION, server.url, { transports });
+    expect(result.message.answers).toHaveLength(1);
+    expect(server.sessions).toBe(1);
   });
 
   it('times out, and cancels the stream', async () => {

@@ -112,5 +112,5 @@ export const NSEC3_FLAGS = {
 
 // RFC 9276 §3.1: NSEC3 iterations MUST be 0. validators commonly treat higher counts as
 // insecure, and higher still as outright SERVFAIL
-export const NSEC3_ITERATIONS_INSECURE_THRESHOLD = 100;
+export const NSEC3_ITERATIONS_INSECURE_THRESHOLD = 50;
 export const NSEC3_ITERATIONS_SERVFAIL_THRESHOLD = 500;

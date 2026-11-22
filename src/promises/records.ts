@@ -1,5 +1,5 @@
 import type { DnsRecord } from '../records/types';
-import { fromHex } from '../wire/bytes';
+import { fromHex, unescapeText, utf8Decode } from '../wire/bytes';
 
 // the library's records in the shapes `node:dns` returns them in. The interfaces repeat
 // Node's own (`@types/node`'s `dns` module) field for field
@@ -117,17 +117,24 @@ type Of<Type extends DnsRecord['type']> = Extract<DnsRecord, { type: Type }>;
 // target meaning "no such service"), where the library writes `.`
 export const nodeName = (name: string): string => (name === '.' ? '' : name);
 
+// a character-string as Node gives it: plain text, with the library's escapes undone
+export const nodeText = (field: string): string => utf8Decode(unescapeText(field));
+
 // Node 24 puts `type` on MX, SRV and CAA results, though its types leave it out
 export const toCaa = (record: Of<'CAA'>): CaaRecord =>
-  ({ critical: record.flags, type: 'CAA', [record.tag]: record.value }) as CaaRecord;
+  ({
+    critical: record.flags,
+    type: 'CAA',
+    [nodeText(record.tag)]: nodeText(record.value),
+  }) as CaaRecord;
 
 export const toMx = (record: Of<'MX'>): MxRecord =>
   ({ exchange: nodeName(record.exchange), priority: record.preference, type: 'MX' }) as MxRecord;
 
 export const toNaptr = (record: Of<'NAPTR'>): NaptrRecord => ({
-  flags: record.flags,
-  service: record.services,
-  regexp: record.regexp,
+  flags: nodeText(record.flags),
+  service: nodeText(record.services),
+  regexp: nodeText(record.regexp),
   replacement: nodeName(record.replacement),
   order: record.order,
   preference: record.preference,
@@ -198,7 +205,7 @@ function toAny(record: DnsRecord, aliasTtl: number): AnyRecord | undefined {
     case 'MX':
       return { ...toMx(record), type: 'MX' };
     case 'TXT':
-      return { entries: record.strings, type: 'TXT' };
+      return { entries: record.strings.map(nodeText), type: 'TXT' };
     case 'SOA':
       return { ...toSoa(record), type: 'SOA' };
     case 'SRV':

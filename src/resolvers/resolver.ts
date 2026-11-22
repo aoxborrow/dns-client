@@ -1,6 +1,12 @@
-import { DnsError, InvalidQueryError, NoServerError } from '../errors';
+import { DnsError, InvalidQueryError, NoServerError, TimeoutError } from '../errors';
 import type { ServerFailure } from '../errors';
-import { checkEdnsSettings, exchange, transportsFor } from '../exchange';
+import {
+  checkEdnsSettings,
+  DEFAULT_RETRIES,
+  DEFAULT_TIMEOUT,
+  exchange,
+  transportsFor,
+} from '../exchange';
 import type { ExchangeResult } from '../exchange';
 import { classCode, RECORD_CLASSES } from '../protocol/classes';
 import { DEFAULT_UDP_PAYLOAD_SIZE } from '../protocol/edns';
@@ -19,7 +25,7 @@ import { dnssecResponse, requireEdns, Validator } from '../dnssec/validate';
 import type { TrustAnchor } from '../dnssec/types';
 import { buildAnswer, matchingRecords } from './answer';
 import type { Answer, QuerySettings } from './answer';
-import { resolveCache } from './cache';
+import { MAX_NEGATIVE_TTL, MAX_TTL, resolveCache } from './cache';
 import type { Cache, CacheOption } from './cache';
 import { createKeyedLimiter, createLimiter } from './limiter';
 import type { KeyedLimiter, Limiter } from './limiter';
@@ -41,6 +47,11 @@ export interface ResolverOptions extends TransportOptions, QuerySettings {
   // how many queries may be in flight to one server at once. Default 16; Infinity for no
   // limit
   serverConcurrency?: number;
+  // how long one answer may take altogether, in milliseconds, every server, attempt and
+  // TCP fallback included, and time spent waiting for a turn under `concurrency` or
+  // `serverConcurrency`. With `validate`, the queries for the chain share it with the
+  // data. Default 10000
+  totalTimeout?: number;
   // malformed record data is an error. By default such a record comes back in the
   // generic form
   strict?: boolean;
@@ -60,6 +71,8 @@ export interface ResolverQueryOptions extends QuerySettings {
   // ask this server and no other, for this query only. The answer is not taken from the
   // cache or put in it
   server?: string | Server;
+  // in place of the resolver's `totalTimeout`, for this query
+  totalTimeout?: number;
   signal?: AbortSignal;
 }
 
@@ -70,10 +83,12 @@ export interface CachedResponse {
   receivedAt: Date;
 }
 
-// the longest an answer is kept, in seconds, whatever its TTL says: one day
-const MAX_TTL = 86_400;
 // queries in flight to one server at once
 const DEFAULT_SERVER_CONCURRENCY = 16;
+// how long one answer may take altogether
+const DEFAULT_TOTAL_TIMEOUT = 10_000;
+// the longest a timer can be set for; anything longer fires at once
+const MAX_TIMER = 2_147_483_647;
 // a response that says the server could not or would not do the work: another may
 const TRY_NEXT = new Set<number>([RCODES.SERVFAIL, RCODES.NOTIMP, RCODES.REFUSED]);
 
@@ -93,12 +108,12 @@ export function cacheLifetime(message: Message): number {
     if (answered) return answerTtl;
   }
   // a negative answer lives for the smaller of the SOA's TTL and its minimum field
-  // (RFC 2308 §5), and no longer than an alias that led to it; with no SOA there is
-  // nothing to say how long
+  // (RFC 2308 §5), no longer than an alias that led to it, and at most an hour; with no
+  // SOA there is nothing to say how long
   const soa = decodeRecords(message.authorities.filter(record => record.type === 6)).find(
     (record): record is Extract<DnsRecord, { type: 'SOA' }> => record.type === 'SOA'
   );
-  return soa ? Math.min(soa.ttl, soa.minimum, answerTtl) : 0;
+  return soa ? Math.min(soa.ttl, soa.minimum, answerTtl, MAX_NEGATIVE_TTL) : 0;
 }
 
 export class Resolver {
@@ -147,11 +162,15 @@ export class Resolver {
     checkEdnsSettings(options, this.options);
     if (!this.validator) return this.lookup(name, type, options);
     requireEdns(options.edns);
+    // one deadline for the data and the chain together
+    const totalTimeout =
+      options.totalTimeout ?? this.options.totalTimeout ?? this.defaultTotalTimeout(options);
+    const deadline = now() + totalTimeout;
     // the data and every record of the chain are asked for with their signatures, and with
     // Checking Disabled, so a validating resolver upstream hands over what is broken
     // instead of answering SERVFAIL
     const dnssec = { dnssecOk: true, checkingDisabled: true };
-    const answer = await this.lookup(name, type, { ...options, ...dnssec });
+    const answer = await this.lookup(name, type, { ...options, ...dnssec, totalTimeout });
     // a server asked to recurse owes the whole answer, the target of every alias included
     const recursive = (options.recursionDesired ?? this.options.recursionDesired) !== false;
     // the chain goes where the data query went, the same way: the same server, transport,
@@ -161,12 +180,41 @@ export class Resolver {
       authenticData: _authenticData,
       ...sameWay
     } = options;
-    answer.security = await this.validator.validate(
-      [{ ...dnssecResponse(answer.message, answer.query.name, typeCode(type)), recursive }],
-      async (chainName, chainType) =>
-        (await this.lookup(chainName, chainType, { ...sameWay, ...dnssec })).message,
-      options.signal
-    );
+    // the chain gets what the data left. When that runs out, the query times out as one
+    // whose data took too long does, as it does with the caller's own abort
+    const budget = new AbortController();
+    const timedOut = () => budget.abort(totalTimeoutError(name, type, totalTimeout));
+    const forward = () => budget.abort(options.signal?.reason);
+    if (options.signal?.aborted) forward();
+    else options.signal?.addEventListener('abort', forward, { once: true });
+    const left = deadline - now();
+    if (left <= 0) timedOut();
+    const timer = left > 0 && left <= MAX_TIMER ? setTimeout(timedOut, left) : undefined;
+    try {
+      answer.security = await this.validator.validate(
+        [{ ...dnssecResponse(answer.message, answer.query.name, typeCode(type)), recursive }],
+        async (chainName, chainType) => {
+          if (budget.signal.aborted) throw budget.signal.reason;
+          try {
+            const chainOptions = {
+              ...sameWay,
+              ...dnssec,
+              totalTimeout: Math.max(1, deadline - now()),
+            };
+            return (await this.lookup(chainName, chainType, chainOptions)).message;
+          } catch (error) {
+            // running out of time always rejects the query, never leaves a link undecided
+            if (!budget.signal.aborted && now() >= deadline) timedOut();
+            if (budget.signal.aborted) throw budget.signal.reason;
+            throw error;
+          }
+        },
+        budget.signal
+      );
+    } finally {
+      clearTimeout(timer);
+      options.signal?.removeEventListener('abort', forward);
+    }
     return answer;
   }
 
@@ -182,11 +230,13 @@ export class Resolver {
     options: ResolverQueryOptions
   ): Promise<Answer> {
     const { strict } = this.options;
-    const { server, signal, ...settings } = options;
+    const { server, signal, totalTimeout: perQuery, ...settings } = options;
+    const totalTimeout =
+      perQuery ?? this.options.totalTimeout ?? this.defaultTotalTimeout(settings);
 
     if (server !== undefined) {
       const started = now();
-      const result = await this.ask(name, type, [server], settings, signal);
+      const result = await this.ask(name, type, [server], settings, signal, totalTimeout);
       return buildAnswer(result.result, {
         strict,
         attempts: result.attempts,
@@ -208,31 +258,7 @@ export class Resolver {
     }
 
     const started = now();
-    // callers asking the same thing at the same moment share one query. One that brings
-    // a signal asks for itself, so that aborting it stops only its own
-    let pending = key && !signal ? this.inFlight.get(key) : undefined;
-    if (!pending) {
-      pending = this.servers().then(servers => this.ask(name, type, servers, settings, signal));
-      if (key && !signal) {
-        const shared = pending;
-        this.inFlight.set(key, shared);
-        const forget = () => {
-          if (this.inFlight.get(key) === shared) this.inFlight.delete(key);
-        };
-        shared.then(forget, forget);
-      }
-      if (key && this.cache) {
-        const { cache } = this;
-        pending.then(
-          response => {
-            const lifetime = Math.min(cacheLifetime(response.result.message), MAX_TTL);
-            if (lifetime > 0) cache.set(key, response, lifetime * 1000);
-          },
-          () => undefined
-        );
-      }
-    }
-    const response = await pending;
+    const response = await this.shared(name, type, key, settings, signal, totalTimeout);
     return buildAnswer(response.result, {
       strict,
       attempts: response.attempts,
@@ -249,6 +275,64 @@ export class Resolver {
   }
 
   // ---- inside
+
+  // callers asking the same thing at the same moment share one query. One that brings a
+  // signal asks for itself, so that aborting it stops only its own. One that joins gives up
+  // at its own deadline, and when the shared query runs out of time before that, joins or
+  // starts the next shared query with what is left of its own
+  private shared(
+    name: string,
+    type: string | number,
+    key: string | undefined,
+    settings: QuerySettings,
+    signal: AbortSignal | undefined,
+    totalTimeout: number
+  ): Promise<CachedResponse> {
+    const deadline = now() + totalTimeout;
+    const joined = key && !signal ? this.inFlight.get(key) : undefined;
+    if (joined) {
+      const rest = (error: unknown) => {
+        const left = deadline - now();
+        if (!(error instanceof TimeoutError) || left <= 0) throw error;
+        return this.shared(name, type, key, settings, signal, left);
+      };
+      return withinDeadline(joined.catch(rest), deadline, () =>
+        totalTimeoutError(name, type, totalTimeout)
+      );
+    }
+    const pending = this.servers().then(servers =>
+      this.ask(name, type, servers, settings, signal, totalTimeout)
+    );
+    if (key && !signal) {
+      this.inFlight.set(key, pending);
+      const forget = () => {
+        if (this.inFlight.get(key) === pending) this.inFlight.delete(key);
+      };
+      pending.then(forget, forget);
+    }
+    if (key && this.cache) {
+      const { cache } = this;
+      pending.then(
+        response => {
+          const lifetime = Math.min(cacheLifetime(response.result.message), MAX_TTL);
+          if (lifetime > 0) cache.set(key, response, lifetime * 1000);
+        },
+        () => undefined
+      );
+    }
+    return pending;
+  }
+
+  // the budget of a query that sets none: ten seconds, or, where a timeout or retries is
+  // set, as long as one server's attempts take, so a default never cuts them short
+  private defaultTotalTimeout(settings: QuerySettings): number {
+    const merged = { ...this.options, ...settings };
+    if (merged.timeout === undefined && merged.retries === undefined) return DEFAULT_TOTAL_TIMEOUT;
+    return Math.max(
+      DEFAULT_TOTAL_TIMEOUT,
+      (merged.timeout ?? DEFAULT_TIMEOUT) * ((merged.retries ?? DEFAULT_RETRIES) + 1)
+    );
+  }
 
   // what makes two questions the same question: the name, the type and class, and the
   // settings that change what comes back. Those are the header flags, EDNS on or off with
@@ -294,69 +378,131 @@ export class Resolver {
     });
   }
 
-  // ask each server in turn until one gives a usable response
+  // ask the servers until one gives a usable response. One server is asked as `exchange`
+  // asks, its retries sent again from the same socket so that a late answer to an earlier
+  // copy still counts. Several are asked a round at a time: each once, in order, before
+  // any is asked again, as glibc and c-ares do, so a dead first server costs one timeout,
+  // not all of them. All of it within `totalTimeout`
   private async ask(
     name: string,
     type: string | number,
     servers: readonly (string | Server)[],
     settings: QuerySettings,
-    signal: AbortSignal | undefined
+    signal: AbortSignal | undefined,
+    totalTimeout: number
   ): Promise<CachedResponse> {
     const merged = { ...this.options, ...settings };
+    const deadline = now() + totalTimeout;
+    const wait = { signal, deadline, expired: () => totalTimeoutError(name, type, totalTimeout) };
+    const single = servers.length === 1;
     // with somewhere else to turn, less patience with any one server
-    const retries = merged.retries ?? (servers.length > 1 ? 1 : undefined);
+    const rounds = single ? 1 : (merged.retries ?? 1) + 1;
     let attempts = 0;
     let lastResult: ExchangeResult | undefined;
     let lastError: DnsError | undefined;
     const failures: ServerFailure[] = [];
+    // the servers still worth asking: not those that answered, or failed in a way that
+    // asking again will not mend
+    let left = [...servers];
 
-    for (const [index, server] of servers.entries()) {
-      const isLast = index === servers.length - 1;
-      try {
-        const result = await this.limit(() =>
-          this.limitServer(serverKey(server), () =>
-            exchange({ name, type }, server, {
-              transport: merged.transport,
-              port: merged.port,
-              recursionDesired: merged.recursionDesired,
-              checkingDisabled: merged.checkingDisabled,
-              authenticData: merged.authenticData,
-              dnssecOk: merged.dnssecOk,
-              udpPayloadSize: merged.udpPayloadSize,
-              ednsOptions: merged.ednsOptions,
-              edns: merged.edns,
-              timeout: merged.timeout,
-              tcpFallback: merged.tcpFallback,
-              ...(retries !== undefined && { retries }),
-              transports: this.transports,
-              onEvent: this.options.onEvent,
-              signal,
-            })
-          )
-        );
-        attempts += result.attempts;
-        if (!TRY_NEXT.has(result.message.rcode) || isLast) {
-          return { result, attempts, receivedAt: new Date() };
+    rounds: for (let round = 0; round < rounds && left.length > 0; round++) {
+      for (const server of left) {
+        if (now() >= deadline) break rounds;
+        try {
+          const result = await this.limit(
+            () =>
+              this.limitServer(
+                serverKey(server),
+                () =>
+                  exchange({ name, type }, server, {
+                    transport: merged.transport,
+                    port: merged.port,
+                    recursionDesired: merged.recursionDesired,
+                    checkingDisabled: merged.checkingDisabled,
+                    authenticData: merged.authenticData,
+                    dnssecOk: merged.dnssecOk,
+                    udpPayloadSize: merged.udpPayloadSize,
+                    ednsOptions: merged.ednsOptions,
+                    edns: merged.edns,
+                    timeout: merged.timeout,
+                    totalTimeout: Math.max(1, deadline - now()),
+                    tcpFallback: merged.tcpFallback,
+                    ...(single
+                      ? merged.retries !== undefined && { retries: merged.retries }
+                      : { retries: 0 }),
+                    transports: this.transports,
+                    onEvent: this.options.onEvent,
+                    signal,
+                  }),
+                wait
+              ),
+            wait
+          );
+          attempts += result.attempts;
+          if (!TRY_NEXT.has(result.message.rcode)) {
+            return { result, attempts, receivedAt: new Date() };
+          }
+          lastResult = result;
+          left = left.filter(other => other !== server);
+        } catch (error) {
+          // a question that cannot be asked will not get better elsewhere, and neither
+          // will one the caller has given up on
+          if (
+            signal?.aborted ||
+            !(error instanceof DnsError) ||
+            error instanceof InvalidQueryError
+          ) {
+            throw error;
+          }
+          failures.push({ server: error.server ?? serverKey(server), error });
+          lastError = error;
+          if (!error.retryable) left = left.filter(other => other !== server);
         }
-        lastResult = result;
-      } catch (error) {
-        // a question that cannot be asked will not get better elsewhere, and neither
-        // will one the caller has given up on
-        if (signal?.aborted || !(error instanceof DnsError) || error instanceof InvalidQueryError) {
-          throw error;
-        }
-        failures.push({ server: error.server ?? serverKey(server), error });
-        lastError = error;
       }
     }
     // every server failed: the last response says more than the last error does
     if (lastResult) return { result: lastResult, attempts, receivedAt: new Date() };
-    if (lastError) {
-      lastError.failures ??= failures;
-      throw lastError;
+    const error =
+      lastError ?? (now() >= deadline ? totalTimeoutError(name, type, totalTimeout) : undefined);
+    if (error) {
+      error.failures ??= failures;
+      throw error;
     }
     throw new NoServerError('No DNS servers to ask');
   }
+}
+
+// the error for a query that ran out of its `totalTimeout`
+function totalTimeoutError(
+  name: string,
+  type: string | number,
+  totalTimeout: number
+): TimeoutError {
+  const typeText = typeName(typeCode(type));
+  return new TimeoutError(`No answer for ${name} ${typeText} within ${totalTimeout} ms`, {
+    query: name,
+    type: typeText,
+  });
+}
+
+// a shared query as one caller waits for it: rejected with `expired()` at the caller's
+// deadline, while the query itself goes on for the others
+function withinDeadline<T>(work: Promise<T>, deadline: number, expired: () => Error): Promise<T> {
+  const left = deadline - now();
+  if (left > MAX_TIMER) return work;
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(expired()), Math.max(0, left));
+    work.then(
+      value => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
 }
 
 // a server as the key its queries are counted under

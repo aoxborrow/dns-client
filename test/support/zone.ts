@@ -90,7 +90,9 @@ export const RECORDS: PacketRecord[] = [
       ),
     },
   } as PacketRecord,
-  { name: '1.2.0.192.in-addr.arpa', type: 'PTR', ttl: 300, data: `www.${ZONE}` },
+  // in TEST-NET-2, an address no hosts file is likely to name: Node's `reverse` reads the
+  // hosts file before it asks, and a parity test must not depend on the machine
+  { name: '1.100.51.198.in-addr.arpa', type: 'PTR', ttl: 300, data: `www.${ZONE}` },
   {
     name: '1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa',
     type: 'PTR',

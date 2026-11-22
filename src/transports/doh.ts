@@ -7,7 +7,7 @@ import {
 } from '../errors';
 import { toBase64Url } from '../wire/bytes';
 import { parseDohUrl } from './endpoint';
-import { createHttp2Client } from './http2';
+import { bodyTooLong, createHttp2Client, MAX_BODY_BYTES } from './http2';
 import type { Http2Client } from './http2';
 import { resolveProxy } from './proxy';
 import type { Proxy } from './proxy';
@@ -40,6 +40,32 @@ const messageOf = (error: unknown) => (error instanceof Error ? error.message : 
 // whether to send DoH with `node:http2`: on Node and Bun, which have it. Deno's `fetch`
 // negotiates HTTP/2 by itself
 const useHttp2 = (): boolean => isNode() && !('Deno' in globalThis);
+
+// a response body, read only as far as a DNS message can go. A response with no readable
+// body, as a caller's own `fetch` may give, is read whole and then measured
+async function readBody(
+  response: Awaited<ReturnType<FetchLike>>,
+  host: string
+): Promise<Uint8Array> {
+  const reader = (response as { body?: ReadableStream<Uint8Array> | null }).body?.getReader?.();
+  if (!reader) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.length > MAX_BODY_BYTES) throw bodyTooLong(host);
+    return bytes;
+  }
+  const bytes = new Uint8Array(MAX_BODY_BYTES);
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return bytes.slice(0, size);
+    if (size + value.length > MAX_BODY_BYTES) {
+      reader.cancel().catch(() => undefined);
+      throw bodyTooLong(host);
+    }
+    bytes.set(value, size);
+    size += value.length;
+  }
+}
 
 export function createDohTransport(options: DohTransportOptions = {}): Transport {
   const method = options.dohMethod ?? 'GET';
@@ -121,7 +147,17 @@ export function createDohTransport(options: DohTransportOptions = {}): Transport
           }
           status = response.status;
           contentType = response.headers.get('content-type');
-          bytes = new Uint8Array(await response.arrayBuffer());
+          // an error status is reported for what it is, whatever its body; only a DNS
+          // message's body is read
+          if (status >= 200 && status < 300) {
+            bytes = await readBody(response, endpoint.host);
+          } else {
+            const unread = (response as { body?: { cancel?: () => unknown } | null }).body;
+            void Promise.resolve()
+              .then(() => unread?.cancel?.())
+              .catch(() => undefined);
+            bytes = new Uint8Array(0);
+          }
         }
       } catch (error) {
         if (signal?.aborted) throw signal.reason;

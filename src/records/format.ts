@@ -1,4 +1,4 @@
-import { fromHex, latin1Decode } from '../wire/bytes';
+import { escapeText, fromHex, latin1Decode, unescapeText } from '../wire/bytes';
 import { serviceParamName } from './decode';
 import type { DnsRecord, ServiceParams } from './types';
 
@@ -21,6 +21,20 @@ function quote(text: string): string {
   for (const char of text) {
     const code = char.codePointAt(0)!;
     if (char === '"' || char === '\\') out += `\\${char}`;
+    else if (code < 0x20 || code === 0x7f) out += `\\${String(code).padStart(3, '0')}`;
+    else out += char;
+  }
+  return `${out}"`;
+}
+
+// a <character-string> field in quotes. The field already holds its escapes (`\\` and
+// `\DDD`); it is read back to bytes and written again so a stray backslash cannot open an
+// escape the field did not mean, then quotes and control characters are escaped
+function quoteString(field: string): string {
+  let out = '"';
+  for (const char of escapeText(unescapeText(field))) {
+    const code = char.codePointAt(0)!;
+    if (char === '"') out += '\\"';
     else if (code < 0x20 || code === 0x7f) out += `\\${String(code).padStart(3, '0')}`;
     else out += char;
   }
@@ -105,9 +119,9 @@ export function formatRecordData(record: DnsRecord, options: FormatOptions = {})
     case 'MX':
       return `${record.preference} ${absolute(record.exchange)}`;
     case 'TXT':
-      return record.strings.map(quote).join(' ');
+      return record.strings.map(quoteString).join(' ');
     case 'CAA':
-      return `${record.flags} ${record.tag} ${quote(record.value)}`;
+      return `${record.flags} ${record.tag} ${quoteString(record.value)}`;
     case 'TLSA':
       return `${record.usage} ${record.selector} ${record.matchingType} ${record.certificate}`;
     case 'DS':
@@ -151,7 +165,7 @@ export function formatRecordData(record: DnsRecord, options: FormatOptions = {})
     case 'CERT':
       return `${record.certificateType} ${record.keyTag} ${record.algorithm} ${record.certificate}`;
     case 'HINFO':
-      return `${quote(record.cpu)} ${quote(record.os)}`;
+      return `${quoteString(record.cpu)} ${quoteString(record.os)}`;
     case 'TSIG':
       return [
         absolute(record.algorithm),
@@ -169,14 +183,14 @@ export function formatRecordData(record: DnsRecord, options: FormatOptions = {})
     case 'SSHFP':
       return `${record.algorithm} ${record.fingerprintType} ${record.fingerprint}`;
     case 'URI':
-      return `${record.priority} ${record.weight} ${quote(record.target)}`;
+      return `${record.priority} ${record.weight} ${quoteString(record.target)}`;
     case 'NAPTR':
       return [
         record.order,
         record.preference,
-        quote(record.flags),
-        quote(record.services),
-        quote(record.regexp),
+        quoteString(record.flags),
+        quoteString(record.services),
+        quoteString(record.regexp),
         absolute(record.replacement),
       ].join(' ');
     case 'LOC':

@@ -125,9 +125,9 @@ export function assessNsec3Params(
   if (iterations > 0) {
     let note = `RFC 9276 requires 0 iterations; this zone uses ${iterations}.`;
     if (iterations > NSEC3_ITERATIONS_SERVFAIL_THRESHOLD) {
-      note += ' Validators commonly return SERVFAIL above 500.';
+      note += ` Validators commonly return SERVFAIL above ${NSEC3_ITERATIONS_SERVFAIL_THRESHOLD}.`;
     } else if (iterations > NSEC3_ITERATIONS_INSECURE_THRESHOLD) {
-      note += ' Validators commonly treat counts above 100 as insecure.';
+      note += ` Validators commonly treat counts above ${NSEC3_ITERATIONS_INSECURE_THRESHOLD} as insecure.`;
     }
     notes.push(note);
   }

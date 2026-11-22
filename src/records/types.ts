@@ -67,7 +67,8 @@ export interface MxRecord extends RecordBase {
 
 export interface TxtRecord extends RecordBase {
   type: 'TXT';
-  // the character-strings in the record, in order, each at most 255 bytes
+  // the character-strings in the record, in order, each at most 255 bytes. A backslash is
+  // written `\\` and a byte that is not UTF-8 `\DDD`, as in a zone file
   strings: string[];
 }
 

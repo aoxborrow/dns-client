@@ -247,9 +247,20 @@ async function selfSigned(
   return false;
 }
 
+// RRSIG times are 32-bit seconds that wrap, compared with RFC 1982 serial arithmetic
+// (RFC 4034 §3.1.5): whether `a` comes after `b`
+function serialAfter(a: number, b: number): boolean {
+  const distance = (((a - b) % 2 ** 32) + 2 ** 32) % 2 ** 32;
+  return distance > 0 && distance < 2 ** 31;
+}
+
+const expired = (sig: RrsigFields, now: Date) =>
+  serialAfter(Math.floor(now.getTime() / 1000), sig.expiration);
+const notYetValid = (sig: RrsigFields, now: Date) =>
+  serialAfter(sig.inception, Math.floor(now.getTime() / 1000));
+
 function withinValidity(sig: RrsigFields, now: Date): boolean {
-  const at = now.getTime();
-  return at <= sig.expiration * 1000 && at >= sig.inception * 1000;
+  return !expired(sig, now) && !notYetValid(sig, now);
 }
 
 // ---------------------------------------------------------------------------
@@ -481,9 +492,8 @@ export async function checkSignature(
   check.key = usable[0];
 
   // temporal validity, before the crypto, so an expired signature reads as expired
-  const at = now.getTime();
-  if (at > rrsig.expiration * 1000) return fail(SIGNATURE_CODES.EXPIRED);
-  if (at < rrsig.inception * 1000) return fail(SIGNATURE_CODES.NOT_YET_VALID);
+  if (expired(rrsig, now)) return fail(SIGNATURE_CODES.EXPIRED);
+  if (notYetValid(rrsig, now)) return fail(SIGNATURE_CODES.NOT_YET_VALID);
 
   if (rrset.ttl > rrsig.originalTtl) check.ttlExceedsOriginal = true;
 

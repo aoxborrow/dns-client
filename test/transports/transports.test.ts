@@ -346,6 +346,43 @@ describe('DNS over HTTPS', () => {
     expect(error.message).toContain('text/html');
   });
 
+  it('stops reading a body longer than a DNS message', async () => {
+    server = await startDohServer(() => new Uint8Array(70_000));
+    transports = createTransports();
+    const error = await exchange(QUESTION, server.url, { transports, retries: 0 }).catch(
+      caught => caught
+    );
+    expect(error).toBeInstanceOf(InvalidResponseError);
+    expect(error.message).toContain('longer than a DNS message');
+  });
+
+  it('reports an error status for what it is, however long its body', async () => {
+    server = await startDohServer(() => new Uint8Array(70_000), { status: 503 });
+    transports = createTransports();
+    const error = await exchange(QUESTION, server.url, { transports, retries: 0 }).catch(
+      caught => caught
+    );
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(error.message).toContain('HTTP 503');
+  });
+
+  it('measures a body from a fetch that only hands it over whole', async () => {
+    server = await startDohServer(() => new Uint8Array(70_000));
+    const custom: FetchLike = async (url, init) => {
+      const response = await fetch(url, init as RequestInit);
+      return {
+        status: response.status,
+        headers: response.headers,
+        arrayBuffer: () => response.arrayBuffer(),
+      };
+    };
+    const error = await exchange(QUESTION, server.url, { fetch: custom, retries: 0 }).catch(
+      caught => caught
+    );
+    expect(error).toBeInstanceOf(InvalidResponseError);
+    expect(error.message).toContain('longer than a DNS message');
+  });
+
   it('reports an empty body', async () => {
     server = await startDohServer(() => new Uint8Array(0));
     transports = createTransports();

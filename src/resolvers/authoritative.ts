@@ -15,7 +15,7 @@ import {
 } from '../exchange';
 import type { ExchangeResult } from '../exchange';
 import { RCODES, rcodeName } from '../protocol/header';
-import { typeCode, typeName } from '../protocol/types';
+import { RECORD_TYPES, typeCode, typeName } from '../protocol/types';
 import { decodeRecords } from '../records/decode';
 import type { DnsRecord, KnownRecordType, RecordOf } from '../records/types';
 import { isIp, isIpv4, isIpv6, normalizeAddress } from '../transports/endpoint';
@@ -34,6 +34,7 @@ import { dnssecResponse, requireEdns, Validator } from '../dnssec/validate';
 import type { DnssecResponse } from '../dnssec/judge';
 import type { TrustAnchor } from '../dnssec/types';
 import { aliasTarget, buildAnswer } from './answer';
+import { MAX_TTL } from './cache';
 import type { Answer, QuerySettings, TraceHop } from './answer';
 import { createKeyedLimiter, createLimiter, createPacer } from './limiter';
 import type { KeyedLimiter, Limiter, Pacer } from './limiter';
@@ -79,14 +80,14 @@ export interface AuthoritativeResolverOptions
   // how many queries may be in flight to one server address at once. Default 8; Infinity
   // for no limit
   serverConcurrency?: number;
-  // remember delegations between queries, for as long as their TTLs allow, and for no
-  // longer than the resolver lives. A query then starts at the deepest zone it knows, and
+  // remember delegations between queries, for as long as their TTLs allow and at most a
+  // day, and for no longer than the resolver lives. A query then starts at the deepest zone it knows, and
   // its trace starts there too. Queries running at the same time that need the same
   // delegation share one referral: the others wait for the one asking, at the root, a
   // top-level domain or a zone already seen to give referrals. Default true. With false every query starts again from the root, and its trace is the whole path
   cache?: boolean;
   // remember the addresses of nameservers that came without glue between queries, for as
-  // long as their TTLs allow, even with `cache` false: a later query that meets the same
+  // long as their TTLs allow and at most a day, even with `cache` false: a later query that meets the same
   // nameserver asks it straight away instead of looking it up again. Lookups of one
   // nameserver made by queries running at the same time are shared. Default true
   nameserverCache?: boolean;
@@ -273,12 +274,20 @@ const DEFAULT_MAX_ALIASES = 8;
 const MAX_NESTING = 4;
 
 // rcodes that mean this server is not going to help with this zone: ask its neighbour
-const LAME = new Set<number>([RCODES.SERVFAIL, RCODES.REFUSED, RCODES.NOTIMP, RCODES.NOTAUTH]);
+const LAME = new Set<number>([
+  RCODES.FORMERR,
+  RCODES.SERVFAIL,
+  RCODES.REFUSED,
+  RCODES.NOTIMP,
+  RCODES.NOTAUTH,
+]);
 
 // a response that gave the walk something to go on, and what it means
 interface Step {
   result: ExchangeResult;
   outcome: Outcome;
+  // the zone the answering server was asked as an authority for
+  zone: string;
 }
 
 type Outcome =
@@ -361,7 +370,8 @@ export class AuthoritativeResolver {
     if (!this.validator) return this.walk(name, type, options, follow);
     requireEdns(options.edns);
     // one deadline for the data and the chain together
-    const totalTimeout = options.totalTimeout ?? this.options.totalTimeout ?? DEFAULT_TOTAL_TIMEOUT;
+    const totalTimeout =
+      options.totalTimeout ?? this.options.totalTimeout ?? this.defaultTotalTimeout(options);
     const deadline = now() + totalTimeout;
     // every response on the way is judged, the aliases followed included
     const responses: DnssecResponse[] = [];
@@ -443,7 +453,8 @@ export class AuthoritativeResolver {
     responses?: DnssecResponse[]
   ): Promise<Answer> {
     const { signal, totalTimeout: perQuery, onEvent, startAt, fromRoot, ...settings } = options;
-    const totalTimeout = perQuery ?? this.options.totalTimeout ?? DEFAULT_TOTAL_TIMEOUT;
+    const totalTimeout =
+      perQuery ?? this.options.totalTimeout ?? this.defaultTotalTimeout(settings);
     const started = now();
     // the name as the caller wrote it, for the answer, and as it is compared and sent
     let shown: string;
@@ -493,7 +504,7 @@ export class AuthoritativeResolver {
     const visited = new Set([asked]);
     let current = asked;
     for (;;) {
-      const { result, outcome } = await this.resolve(run, current, typeText, trace, 0).catch(
+      const { result, outcome, zone } = await this.resolve(run, current, typeText, trace, 0).catch(
         (error: unknown) => {
           // a walk that fails still says how far it got, and what went wrong on the way
           if (error instanceof DnsError) {
@@ -509,6 +520,7 @@ export class AuthoritativeResolver {
           strict: this.options.strict,
           name: shown,
           before: aliases,
+          zone,
           trace,
           // the name of the nameserver that was asked: two names can share an address
           serverName:
@@ -520,9 +532,10 @@ export class AuthoritativeResolver {
       }
       // keep the alias records, and start again from the name they point at
       aliases.push(
-        ...decodeRecords(result.message.answers, { strict: this.options.strict }).filter(
-          record => record.type === 'CNAME' || record.type === 'DNAME'
-        )
+        ...inZone(
+          decodeRecords(result.message.answers, { strict: this.options.strict }),
+          zone
+        ).filter(record => record.type === 'CNAME' || record.type === 'DNAME')
       );
       // `visited` holds the name asked about and every alias target followed so far
       if (visited.size > maxAliases) {
@@ -870,7 +883,9 @@ export class AuthoritativeResolver {
               if (
                 tcpFailure &&
                 !result.message.flags.aa &&
-                (outcome.kind === 'answer' || outcome.kind === 'alias')
+                (outcome.kind === 'answer' ||
+                  outcome.kind === 'alias' ||
+                  (outcome.kind === 'lame' && !LAME.has(result.message.rcode) && !outcome.loop))
               ) {
                 throw tcpFailure;
               }
@@ -919,7 +934,7 @@ export class AuthoritativeResolver {
                 turn.done = true;
                 continue;
               }
-              step = { result, outcome };
+              step = { result, outcome, zone: cut.zone };
               break servers;
             } catch (error) {
               hop.elapsed = now() - hopStarted;
@@ -957,7 +972,7 @@ export class AuthoritativeResolver {
         // nobody in the zone helped. An error response is still what its servers said,
         // and is returned as the answer; with only failures, the first is thrown, from the
         // server that would have answered. The others are in the trace
-        if (lastLame) return { result: lastLame, outcome: { kind: 'answer' } };
+        if (lastLame) return { result: lastLame, outcome: { kind: 'answer' }, zone: cut.zone };
         if (loop) throw new InvalidResponseError(`Referral loop: ${loop}`, { query: name, type });
         if (firstError) throw firstError;
         if (outOfTime(run)) {
@@ -982,7 +997,19 @@ export class AuthoritativeResolver {
   // what a response means for the walk
   private read(result: ExchangeResult, name: string, type: string, zone: string): Outcome {
     const { message } = result;
-    if (message.rcode === RCODES.NXDOMAIN) return { kind: 'answer' };
+    // a server that says nothing exists, or has nothing to give, owes either authority or
+    // the zone's SOA to say so. Without both it is not serving the zone: a lame server,
+    // and the zone's next one is asked
+    const unvouched =
+      !message.flags.aa &&
+      !message.authorities.some(
+        record => record.type === RECORD_TYPES.SOA && isSubdomain(record.name, zone)
+      );
+    if (message.rcode === RCODES.NXDOMAIN) {
+      return unvouched
+        ? { kind: 'lame', reason: `${result.server} answered NXDOMAIN without authority` }
+        : { kind: 'answer' };
+    }
     if (LAME.has(message.rcode)) {
       return { kind: 'lame', reason: `${result.server} answered ${rcodeName(message.rcode)}` };
     }
@@ -995,7 +1022,9 @@ export class AuthoritativeResolver {
         const referral = this.referral(result, name, zone);
         if (referral?.kind === 'referral') return referral;
       }
-      const answers = decodeRecords(message.answers);
+      // only what the server has authority for: an alias out of the zone is followed there,
+      // not answered for by this server
+      const answers = inZone(decodeRecords(message.answers), zone);
       // records of the type asked for, at the name or at the end of its aliases
       if (type === 'ANY' || type === 'CNAME' || type === 'DNAME') return { kind: 'answer' };
       const owner = aliasTarget(name, answers);
@@ -1008,7 +1037,15 @@ export class AuthoritativeResolver {
     }
 
     // no answer: a referral names the servers of a zone further down
-    return this.referral(result, name, zone) ?? { kind: 'answer' };
+    const referral = this.referral(result, name, zone);
+    if (referral) return referral;
+    if (unvouched) {
+      return {
+        kind: 'lame',
+        reason: `${result.server} answered with nothing and without authority`,
+      };
+    }
+    return { kind: 'answer' };
   }
 
   // the delegation in a response's authority section, or undefined when it has none: no
@@ -1077,7 +1114,8 @@ export class AuthoritativeResolver {
         zone: child,
         ...(childWritten !== child && { written: childWritten }),
         servers,
-        expires: Date.now() + ttl * 1000,
+        // kept no longer than anything else the resolvers keep, whatever the TTL says
+        expires: Date.now() + Math.min(ttl, MAX_TTL) * 1000,
       },
     };
   }
@@ -1131,6 +1169,17 @@ export class AuthoritativeResolver {
     }
   }
 
+  // the budget of a query that sets none: ten seconds, or, where a timeout or retries is
+  // set, as long as the attempts at a zone's last server take, as in `Resolver`
+  private defaultTotalTimeout(settings: { timeout?: number; retries?: number }): number {
+    const merged = { ...this.options, ...settings };
+    if (merged.timeout === undefined && merged.retries === undefined) return DEFAULT_TOTAL_TIMEOUT;
+    return Math.max(
+      DEFAULT_TOTAL_TIMEOUT,
+      (merged.timeout ?? DEFAULT_TIMEOUT) * ((merged.retries ?? 1) + 1)
+    );
+  }
+
   // look a nameserver up for every query that meets it while the lookup lasts. It has a
   // whole query's time of its own, from now, however little the query that started it has
   // left: a query that joins later may have more. It stops when the last query waiting on
@@ -1139,7 +1188,7 @@ export class AuthoritativeResolver {
     const { name } = server;
     const totalTimeout = Math.max(
       starter.totalTimeout,
-      this.options.totalTimeout ?? DEFAULT_TOTAL_TIMEOUT
+      this.options.totalTimeout ?? this.defaultTotalTimeout({})
     );
     const stop = new AbortController();
     const run: Run = {
@@ -1230,10 +1279,17 @@ export class AuthoritativeResolver {
     let answered: string | undefined;
     for (const type of types) {
       try {
-        const { result } = await this.resolve(run, name, type, undefined, nesting + 1, answered);
-        answered = result.server;
-        for (const record of decodeRecords(result.message.answers)) {
-          if (record.type === 'A' || record.type === 'AAAA') {
+        const step = await this.resolve(run, name, type, undefined, nesting + 1, answered);
+        answered = step.result.server;
+        // the addresses at the nameserver's name, or at the end of an alias inside the zone
+        // that answered: an address for any other name is not the nameserver's
+        const records = inZone(decodeRecords(step.result.message.answers), step.zone);
+        const owner = aliasTarget(name, records);
+        for (const record of records) {
+          if (
+            (record.type === 'A' || record.type === 'AAAA') &&
+            canonicalName(record.name) === owner
+          ) {
             found.push(normalizeAddress(record.address));
             ttl = Math.min(ttl, record.ttl);
           }
@@ -1248,7 +1304,7 @@ export class AuthoritativeResolver {
     // only what was found is kept past this call. A lookup that failed, or found
     // nothing, is tried again by the next query
     if (addresses.length > 0 && ttl > 0) {
-      const expires = Date.now() + ttl * 1000;
+      const expires = Date.now() + Math.min(ttl, MAX_TTL) * 1000;
       this.learn(run.knowledge.addresses, name, { addresses, expires }, MAX_ADDRESSES);
     }
     run.lookedUp.set(name, addresses);
@@ -1266,42 +1322,62 @@ export class AuthoritativeResolver {
   ): Promise<ExchangeResult> {
     const merged = { ...this.options, ...run.settings };
     const patience = merged.timeout ?? DEFAULT_TIMEOUT;
-    // the zone has other servers to turn to, so less patience with each
-    const retries = merged.retries ?? 1;
-    await this.pace(address);
-    const result = await this.limit(() =>
-      this.limitServer(address, () =>
-        withRest(run, left =>
-          // as an object, so that the address is taken whole and nothing in it is read as a
-          // port: the port is the resolver's to choose
-          exchange(
-            { name, type },
-            { address },
-            {
-              transport: merged.transport,
-              port: merged.port,
-              recursionDesired: false,
-              checkingDisabled: merged.checkingDisabled,
-              authenticData: merged.authenticData,
-              dnssecOk: merged.dnssecOk,
-              udpPayloadSize: merged.udpPayloadSize,
-              ednsOptions: merged.ednsOptions,
-              edns: merged.edns,
-              // the last server to ask has what is left shared among its attempts, and never
-              // less than any other server would have had
-              timeout: last ? restOfTime(left, patience, retries) : patience,
-              // no longer than what is left of the time for the whole query, retries and a
-              // TCP fallback included
-              totalTimeout: left,
-              tcpFallback: merged.tcpFallback,
-              retries,
-              transports: this.transports,
-              onEvent: eventsTo(this.options.onEvent, run.onEvent),
-              signal: run.signal,
-            }
-          )
-        )
-      )
+    // a server that stays silent is most likely down or filtered, so the zone's next server
+    // is asked rather than this one again. The last a zone has left is sent the question a
+    // second time within the rest of the time, since a datagram may simply have been lost
+    const retries = merged.retries ?? (last ? 1 : 0);
+    // waiting for a turn counts against the walk's time, and stops when the caller gives up
+    const wait = {
+      signal: run.signal,
+      deadline: run.deadline,
+      expired: () => {
+        run.expired = true;
+        return new TimeoutError(`No turn to ask ${address} within ${run.totalTimeout} ms`, {
+          server: address,
+          query: name,
+          type,
+        });
+      },
+    };
+    await this.pace(address, wait);
+    const result = await this.limit(
+      () =>
+        this.limitServer(
+          address,
+          () =>
+            withRest(run, left =>
+              // as an object, so that the address is taken whole and nothing in it is read as a
+              // port: the port is the resolver's to choose
+              exchange(
+                { name, type },
+                { address },
+                {
+                  transport: merged.transport,
+                  port: merged.port,
+                  recursionDesired: false,
+                  checkingDisabled: merged.checkingDisabled,
+                  authenticData: merged.authenticData,
+                  dnssecOk: merged.dnssecOk,
+                  udpPayloadSize: merged.udpPayloadSize,
+                  ednsOptions: merged.ednsOptions,
+                  edns: merged.edns,
+                  // the last server to ask has what is left shared among its attempts, and never
+                  // less than any other server would have had
+                  timeout: last ? restOfTime(left, patience, retries) : patience,
+                  // no longer than what is left of the time for the whole query, retries and a
+                  // TCP fallback included
+                  totalTimeout: left,
+                  tcpFallback: merged.tcpFallback,
+                  retries,
+                  transports: this.transports,
+                  onEvent: eventsTo(this.options.onEvent, run.onEvent),
+                  signal: run.signal,
+                }
+              )
+            ),
+          wait
+        ),
+      wait
     );
     run.attempts += result.attempts;
     return result;
@@ -1324,6 +1400,13 @@ function stepDown(zone: string, name: string): { key: string; deeper: boolean } 
 const isTopLevel = (zone: string): boolean => zone === '.' || splitName(zone).length === 1;
 
 const isString = (value: string | undefined): value is string => typeof value === 'string';
+
+// the records a zone's server holds authority for: those at or below the zone it was asked
+// as a server of (RFC 2181 §5.4.1). One for a name elsewhere, after an alias out of the
+// zone, is not taken at the server's word
+function inZone(records: DnsRecord[], zone: string): DnsRecord[] {
+  return records.filter(record => isSubdomain(record.name, zone));
+}
 
 // a name the caller gave for a server, as it is shown. One that cannot be written is
 // shown in its canonical form rather than refused here: asking for it is what fails

@@ -21,8 +21,10 @@ import {
   decodeNsec3Param,
   decodeRrsig,
   decodeTypeBitmap,
+  formatRecordData,
+  parseRecordData,
 } from '../../src/records/index';
-import { toBase32Hex } from '../../src/wire/bytes';
+import { escapeText, toBase32Hex, unescapeText } from '../../src/wire/bytes';
 import { CORPUS, corpusAnswer, seededRandom } from '../support/corpus';
 
 // ---- helpers
@@ -58,6 +60,9 @@ const rawName = (escaped: string) =>
   escaped.replace(/\\(\d{3}|.)/g, (_, sequence: string) =>
     sequence.length === 3 ? String.fromCharCode(Number(sequence)) : sequence
   );
+// dns-packet returns a character-string as plain text; this library escapes backslashes
+// and bytes that are not UTF-8
+const text = (plain: string) => escapeText(Buffer.from(plain));
 const NAME_FIELDS = [
   'target',
   'exchange',
@@ -96,10 +101,10 @@ function fromPacket(answer: dnsPacket.Answer): Record<string, unknown> | undefin
       return { preference: data.preference, exchange: data.exchange };
     case 'TXT':
       return {
-        strings: (Array.isArray(data) ? data : [data]).map((part: Buffer) => part.toString()),
+        strings: (Array.isArray(data) ? data : [data]).map((part: Buffer) => escapeText(part)),
       };
     case 'CAA':
-      return { flags: data.flags, tag: data.tag, value: data.value };
+      return { flags: data.flags, tag: text(data.tag), value: text(data.value) };
     case 'DS':
       return {
         keyTag: data.keyTag,
@@ -143,9 +148,9 @@ function fromPacket(answer: dnsPacket.Answer): Record<string, unknown> | undefin
       return {
         order: data.order,
         preference: data.preference,
-        flags: data.flags,
-        services: data.services,
-        regexp: data.regexp,
+        flags: text(data.flags),
+        services: text(data.services),
+        regexp: text(data.regexp),
         replacement: data.replacement,
       };
     case 'TLSA':
@@ -867,5 +872,49 @@ describe('the DNSSEC field decoders', () => {
   it.each(malformed)('throws ParseError, never null, for %s', (_, decode, rdata, message) => {
     expect(() => decode(Uint8Array.from(rdata))).toThrow(ParseError);
     expect(() => decode(Uint8Array.from(rdata))).toThrow(message);
+  });
+});
+
+describe('character-strings', () => {
+  const txt = (...parts: number[][]) =>
+    decodeRecord(
+      record(
+        'TXT',
+        parts.flatMap(part => [part.length, ...part])
+      )
+    ) as Extract<DnsRecord, { type: 'TXT' }>;
+
+  it('keeps every byte: UTF-8 as it is, a backslash as \\\\, anything else as \\DDD', () => {
+    const decoded = txt([0x22, 0x5c, 0xff], []);
+    expect(decoded.strings).toEqual(['"\\\\\\255', '']);
+    // as dig writes it
+    expect(formatRecordData(decoded)).toBe('"\\"\\\\\\255" ""');
+    expect(txt([...Buffer.from('größe')]).strings).toEqual(['größe']);
+  });
+
+  it('decodes two different strings to two different fields', () => {
+    expect(txt([...Buffer.from('\\255')]).strings).not.toEqual(txt([0xff]).strings);
+  });
+
+  it('survives decode, format and parse with any bytes', () => {
+    const random = seededRandom(0x5c);
+    for (let run = 0; run < 500; run++) {
+      const parts = Array.from({ length: 1 + Math.floor(random() * 3) }, () =>
+        Array.from({ length: Math.floor(random() * 40) }, () => Math.floor(random() * 256))
+      );
+      const decoded = txt(...parts);
+      expect(decoded.strings.map(field => [...unescapeText(field)])).toEqual(parts);
+      expect(parseRecordData('TXT', formatRecordData(decoded))).toEqual({
+        strings: decoded.strings,
+      });
+    }
+  });
+
+  it('carries the same escapes in the other types with character-strings', () => {
+    const naptr = decodeRecord(
+      record('NAPTR', [0, 100, 0, 10, 1, 0x75, 1, 0xe9, 8, ...ascii('!^.*$!\\1'), 0])
+    );
+    expect(fields(naptr)).toMatchObject({ flags: 'u', services: '\\233', regexp: '!^.*$!\\\\1' });
+    expect(parseRecordData('NAPTR', formatRecordData(naptr))).toEqual(fields(naptr));
   });
 });

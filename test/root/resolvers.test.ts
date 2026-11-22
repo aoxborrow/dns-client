@@ -270,6 +270,10 @@ describe('Resolver', () => {
       ).toBe(300);
       // with no SOA, nothing says how long the empty part lives
       expect(lifetime({ ...header, answers: [alias] })).toBe(0);
+      // a negative answer is kept an hour at most, whatever the SOA says (RFC 2308 §5)
+      expect(
+        lifetime({ ...header, rcode: 3, authorities: [soaRecord('example.com', 86_400, 86_400)] })
+      ).toBe(3600);
       // a question for the alias itself is answered by it
       expect(
         cacheLifetime(
@@ -400,8 +404,7 @@ describe('Resolver', () => {
       expect(answer.server).toBe('10.0.0.2');
       expect(answer.records).toHaveLength(2);
       expect(network.log()).toEqual([
-        // one retry on the first, then the second
-        '10.0.0.1 example.com A',
+        // the second server before the first again
         '10.0.0.1 example.com A',
         '10.0.0.2 example.com A',
       ]);
@@ -652,10 +655,146 @@ describe('Resolver', () => {
       .catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(TimeoutError);
     const { failures } = error as TimeoutError;
-    expect(failures?.map(failure => failure.server)).toEqual(['10.0.0.8', '10.0.0.9']);
+    // every attempt, a round at a time: each server once, then each again
+    expect(failures?.map(failure => failure.server)).toEqual([
+      '10.0.0.8',
+      '10.0.0.9',
+      '10.0.0.8',
+      '10.0.0.9',
+    ]);
     expect(failures?.every(failure => failure.error instanceof TimeoutError)).toBe(true);
     // the error thrown is the last server's, and is among them
     expect(failures?.at(-1)?.error).toBe(error);
+  });
+
+  describe('totalTimeout', () => {
+    const silent: SimulatedServer = () => undefined;
+
+    it('bounds one answer, every attempt included', async () => {
+      const started = performance.now();
+      const error = await resolver({ '10.0.0.8': silent }, { timeout: 100, totalTimeout: 150 })
+        .query('example.com', 'A')
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(TimeoutError);
+      expect(performance.now() - started).toBeLessThan(250);
+      // the second attempt is cut short to fit, and there is no time for a third
+      expect(network.queries).toHaveLength(2);
+    });
+
+    it('defaults to ten seconds', async () => {
+      vi.useFakeTimers();
+      const stub = resolver({ '10.0.0.8': silent, '10.0.0.9': silent }, { timeout: undefined });
+      const settled = vi.fn();
+      void stub.query('example.com', 'A').catch(settled);
+      await vi.advanceTimersByTimeAsync(9_990);
+      expect(settled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(20);
+      expect(settled).toHaveBeenCalledWith(expect.any(TimeoutError));
+      // each server once, five seconds each: the second round has no time left
+      expect(network.log()).toEqual(['10.0.0.8 example.com A', '10.0.0.9 example.com A']);
+    });
+
+    it("stretches to one server's own attempts when the timeout asks for more", async () => {
+      vi.useFakeTimers();
+      const stub = resolver({ '10.0.0.8': silent }, { timeout: 20_000, retries: 0 });
+      const settled = vi.fn();
+      void stub.query('example.com', 'A').catch(settled);
+      await vi.advanceTimersByTimeAsync(19_990);
+      expect(settled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(20);
+      expect(settled).toHaveBeenCalledWith(expect.any(TimeoutError));
+    });
+
+    it('leaves time for every attempt at one server when the timeout is set', async () => {
+      vi.useFakeTimers();
+      const stub = resolver({ '10.0.0.8': silent }, { timeout: 6000, retries: undefined });
+      const settled = vi.fn();
+      void stub.query('example.com', 'A').catch(settled);
+      await vi.advanceTimersByTimeAsync(17_990);
+      expect(settled).not.toHaveBeenCalled();
+      // three attempts, as exchange makes by default
+      expect(network.queries).toHaveLength(3);
+      await vi.advanceTimersByTimeAsync(20);
+      expect(settled).toHaveBeenCalledWith(expect.any(TimeoutError));
+    });
+
+    it('can be set for one query', async () => {
+      const started = performance.now();
+      const error = await resolver({ '10.0.0.8': silent }, { timeout: 1000 })
+        .query('example.com', 'A', { totalTimeout: 50 })
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(TimeoutError);
+      expect(performance.now() - started).toBeLessThan(200);
+    });
+  });
+
+  describe('the same question asked twice at once', () => {
+    it('gives up at its own deadline when it joins a query with a later one', async () => {
+      const stub = resolver({ '10.0.0.1': late(200, recursiveServer(RECORDS)) }, { timeout: 1000 });
+      const first = stub.query('example.com', 'A');
+      const started = performance.now();
+      const error = await stub
+        .query('example.com', 'A', { totalTimeout: 50 })
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(TimeoutError);
+      expect(performance.now() - started).toBeLessThan(150);
+      // the first still gets its answer, from the one query sent
+      expect((await first).records).not.toHaveLength(0);
+      expect(network.queries).toHaveLength(1);
+    });
+
+    it('asks for itself with the time it has left when the query it joined runs out first', async () => {
+      const stub = resolver({ '10.0.0.1': late(150, recursiveServer(RECORDS)) }, { timeout: 1000 });
+      const first = stub.query('example.com', 'A', { totalTimeout: 50 }).catch(caught => caught);
+      const [second, third] = await Promise.all([
+        stub.query('example.com', 'A'),
+        stub.query('example.com', 'A'),
+      ]);
+      expect(await first).toBeInstanceOf(TimeoutError);
+      expect(second.records).not.toHaveLength(0);
+      expect(third.records).not.toHaveLength(0);
+      // and the callers asking again share one query too
+      expect(network.queries).toHaveLength(2);
+    });
+  });
+
+  describe('a query waiting for its turn', () => {
+    const silent: SimulatedServer = () => undefined;
+
+    it('stops waiting when its caller gives up', async () => {
+      const stub = resolver(
+        { '10.0.0.8': silent },
+        { serverConcurrency: 1, timeout: 1000, retries: 0, cache: false }
+      );
+      const first = stub.query('a.example.com', 'A').catch(() => undefined);
+      const controller = new AbortController();
+      const reason = new Error('caller gave up');
+      const started = performance.now();
+      const second = stub
+        .query('b.example.com', 'A', { signal: controller.signal })
+        .catch((caught: unknown) => caught);
+      setTimeout(() => controller.abort(reason), 20);
+      expect(await second).toBe(reason);
+      expect(performance.now() - started).toBeLessThan(200);
+      // it never reached the server
+      expect(network.log()).toEqual(['10.0.0.8 a.example.com A']);
+      await first;
+    });
+
+    it('stops waiting when its time runs out', async () => {
+      const stub = resolver(
+        { '10.0.0.8': silent },
+        { serverConcurrency: 1, timeout: 1000, retries: 0, cache: false }
+      );
+      const first = stub.query('a.example.com', 'A').catch(() => undefined);
+      const started = performance.now();
+      const error = await stub
+        .query('b.example.com', 'A', { totalTimeout: 30 })
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(TimeoutError);
+      expect(performance.now() - started).toBeLessThan(200);
+      await first;
+    });
   });
 
   describe('a truncated answer whose TCP retry fails', () => {
@@ -1012,6 +1151,25 @@ describe('AuthoritativeResolver', () => {
     expect(error.server).toBe('ns1.dnshost.net');
   });
 
+  it("stretches its default total timeout to one server's own attempts when the timeout asks for more", async () => {
+    vi.useFakeTimers();
+    try {
+      const silent: SimulatedServer = () => undefined;
+      const walk = resolver(
+        { timeout: 20_000, retries: 0 },
+        { '10.1.0.1': silent, '10.1.0.2': silent }
+      );
+      const settled = vi.fn();
+      void walk.query('example.com', 'A').catch(settled);
+      await vi.advanceTimersByTimeAsync(19_900);
+      expect(settled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(200);
+      expect(settled).toHaveBeenCalledWith(expect.any(TimeoutError));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("asks for a nameserver's IPv6 address where its IPv4 address came from", async () => {
     // dnshost.net's first server says nothing. Asked for A and then AAAA in the zone's order,
     // the lookup waited for it twice, which is more than the walk had
@@ -1185,6 +1343,111 @@ describe('AuthoritativeResolver', () => {
   });
 
   describe('servers that do not help', () => {
+    describe('lame servers', () => {
+      // a server not serving the zone: no authority, no SOA, and nothing else to go on
+      const lame =
+        (rcode: number): SimulatedServer =>
+        query =>
+          encodeMessage({ id: query.id, flags: { qr: true }, rcode, questions: query.questions });
+
+      it('moves on from an empty answer without authority', async () => {
+        const answer = await resolver({}, { '10.1.0.1': lame(0) }).query('example.com', 'A');
+        expect(answer.server).toBe('10.1.0.2');
+        expect(answer.records.map(record => record.address)).toEqual(['192.0.2.1']);
+        expect(answer.trace?.find(hop => hop.server === '10.1.0.1')?.error?.message).toContain(
+          'without authority'
+        );
+      });
+
+      it('moves on from an NXDOMAIN without authority', async () => {
+        const answer = await resolver({}, { '10.1.0.1': lame(3) }).query('example.com', 'A');
+        expect(answer.server).toBe('10.1.0.2');
+        expect(answer.rcodeName).toBe('NOERROR');
+      });
+
+      it('moves on from FORMERR', async () => {
+        const answer = await resolver({}, { '10.1.0.1': lame(1) }).query('example.com', 'A');
+        expect(answer.server).toBe('10.1.0.2');
+      });
+
+      it('takes an empty answer without authority that carries the SOA', async () => {
+        // a NODATA from behind a cache or load balancer that drops AA
+        const nodata: SimulatedServer = query =>
+          encodeMessage({
+            id: query.id,
+            flags: { qr: true },
+            questions: query.questions,
+            authorities: [soaRecord('example.com', 3600, 300)],
+          });
+        const answer = await resolver({}, { '10.1.0.1': nodata }).query('example.com', 'MX');
+        expect(answer.server).toBe('10.1.0.1');
+        expect(answer.records).toEqual([]);
+      });
+
+      it("moves on from an NXDOMAIN without authority that carries another zone's SOA", async () => {
+        const elsewhere: SimulatedServer = query =>
+          encodeMessage({
+            id: query.id,
+            flags: { qr: true },
+            rcode: 3,
+            questions: query.questions,
+            authorities: [soaRecord('com', 3600, 300)],
+          });
+        const answer = await resolver({}, { '10.1.0.1': elsewhere }).query('example.com', 'A');
+        expect(answer.server).toBe('10.1.0.2');
+        expect(answer.rcodeName).toBe('NOERROR');
+      });
+
+      it("returns the last server's response when every one is lame", async () => {
+        const answer = await resolver({}, { '10.1.0.1': lame(0), '10.1.0.2': lame(0) }).query(
+          'example.com',
+          'A'
+        );
+        expect(answer.server).toBe('10.1.0.2');
+        expect(answer.rcodeName).toBe('NOERROR');
+      });
+    });
+
+    it('asks the next server, not the same one again, when one stays silent', async () => {
+      // with the default retries: the first server is asked once, and its silence costs one
+      // timeout, not the whole walk
+      const answer = await resolver(
+        { retries: undefined, timeout: 200, totalTimeout: 400 },
+        { '10.1.0.1': () => undefined }
+      ).query('example.com', 'A');
+      expect(answer.server).toBe('10.1.0.2');
+      expect(network.log().filter(line => line.startsWith('10.1.0.1'))).toHaveLength(1);
+    });
+
+    it("asks the zone's last server a second time when the first copy goes unanswered", async () => {
+      let asked = 0;
+      const dropsFirst: SimulatedServer = query => (++asked === 1 ? undefined : example(query));
+      const answer = await resolver(
+        { retries: undefined, timeout: 100, totalTimeout: 1000 },
+        { '10.1.0.1': () => undefined, '10.1.0.2': dropsFirst }
+      ).query('example.com', 'A');
+      expect(answer.server).toBe('10.1.0.2');
+      expect(asked).toBe(2);
+    });
+
+    it('stops a query waiting for its turn when its caller gives up', async () => {
+      const stub = resolver(
+        { serverConcurrency: 1, timeout: 1000 },
+        { '10.0.0.1': () => undefined }
+      );
+      const first = stub.query('example.com', 'A').catch(() => undefined);
+      const controller = new AbortController();
+      const reason = new Error('caller gave up');
+      const started = performance.now();
+      const second = stub
+        .query('example.com', 'MX', { signal: controller.signal })
+        .catch((caught: unknown) => caught);
+      setTimeout(() => controller.abort(reason), 20);
+      expect(await second).toBe(reason);
+      expect(performance.now() - started).toBeLessThan(200);
+      await first;
+    });
+
     it('moves on from one that cannot be reached, and says so in the trace', async () => {
       const answer = await resolver({}, { '10.1.0.1': undefined }).query('example.com', 'A');
       expect(answer.server).toBe('10.1.0.2');
@@ -1663,6 +1926,77 @@ describe('AuthoritativeResolver', () => {
       expect(error).toBeInstanceOf(InvalidResponseError);
       expect(error.message).toContain('longer than 1');
     });
+
+    describe('records about another zone, after an alias out of the asked one', () => {
+      // a server answering for its name with an alias out of its zone and, beside it, an
+      // address for the alias's target that is not its to give
+      const forging =
+        (owner: string, target: string, address: number[]): SimulatedServer =>
+        query =>
+          encodeMessage({
+            id: query.id,
+            flags: { qr: true, aa: true },
+            questions: query.questions,
+            answers: [
+              {
+                name: owner,
+                type: 5,
+                class: 1,
+                ttl: 300,
+                rdata: encodeName(target),
+                section: 'answer',
+              },
+              {
+                name: target,
+                type: 1,
+                class: 1,
+                ttl: 300,
+                rdata: Uint8Array.from(address),
+                section: 'answer',
+              },
+            ],
+          });
+
+      it('leaves them out of the records, and keeps them in the raw answers', async () => {
+        const forged = {
+          '10.1.0.1': forging('away.example.com', 'target.other.net', [6, 6, 6, 6]),
+        };
+        const answer = await resolver({}, forged).query('away.example.com', 'A');
+
+        expect(answer.records).toEqual([]);
+        expect(answer.answers.map(record => `${record.name} ${record.type}`)).toEqual([
+          'away.example.com CNAME',
+          'target.other.net A',
+        ]);
+      });
+
+      it('asks the target zone for the target when following aliases', async () => {
+        const forged = {
+          '10.1.0.1': forging('away.example.com', 'target.other.net', [6, 6, 6, 6]),
+        };
+        const answer = await resolver({ followCnames: true }, forged).query(
+          'away.example.com',
+          'A'
+        );
+
+        expect(answer.records.map(record => record.address)).toEqual(['203.0.113.5']);
+        expect(answer.server).toBe('10.3.0.1');
+      });
+
+      it('takes no nameserver address from them', async () => {
+        // ns1.dnshost.net, glueless.com's only nameserver, is answered with an alias out of
+        // dnshost.net and an address for the alias's target
+        const forged = {
+          '10.2.0.1': forging('ns1.dnshost.net', 'ns.attacker.test', [10, 6, 6, 6]),
+        };
+        const error = await resolver({}, forged)
+          .query('glueless.com', 'A')
+          .catch(caught => caught);
+
+        expect(error).toBeInstanceOf(InvalidResponseError);
+        expect(network.queries.some(query => query.server === '10.6.6.6')).toBe(false);
+      });
+    });
   });
 
   describe('what it remembers', () => {
@@ -1689,6 +2023,48 @@ describe('AuthoritativeResolver', () => {
         network.queries.length = 0;
         await iterative.query('example.com', 'A');
         expect(network.queries).toHaveLength(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('keeps a delegation a day at most, whatever its TTL says', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        // com hands out example.com's servers with a TTL of two days
+        const iterative = resolver();
+        await iterative.query('example.com', 'A');
+        vi.setSystemTime(Date.now() + 86_399_000);
+        network.queries.length = 0;
+        await iterative.query('example.com', 'A');
+        expect(network.queries).toHaveLength(1);
+        vi.setSystemTime(Date.now() + 2_000);
+        network.queries.length = 0;
+        await iterative.query('example.com', 'A');
+        expect(network.queries).toHaveLength(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps a nameserver's looked-up address a day at most, whatever its TTL says", async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        const longLived = zoneServer({
+          zone: 'dnshost.net',
+          records: [['ns1.dnshost.net', 'A', '10.2.0.53', 172_800]],
+        });
+        const iterative = resolver({ cache: false }, { '10.2.0.1': longLived });
+        await iterative.query('glueless.com', 'A');
+        const lookups = () => network.log().filter(line => line === '10.2.0.1 ns1.dnshost.net A');
+        vi.setSystemTime(Date.now() + 86_399_000);
+        network.queries.length = 0;
+        await iterative.query('glueless.com', 'A');
+        expect(lookups()).toHaveLength(0);
+        vi.setSystemTime(Date.now() + 2_000);
+        network.queries.length = 0;
+        await iterative.query('glueless.com', 'A');
+        expect(lookups()).toHaveLength(1);
       } finally {
         vi.useRealTimers();
       }

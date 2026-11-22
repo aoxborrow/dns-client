@@ -597,9 +597,14 @@ describe('validate: proofs of non-existence', () => {
   });
 
   it('is insecure past the NSEC3 iteration count validators hash (RFC 9276)', async () => {
-    const answers = await both(zones({ iterations: 150 }), 'nothing.secure.example', 'A');
+    const answers = await both(zones({ iterations: 51 }), 'nothing.secure.example', 'A');
     expectStatus(answers, 'insecure', 'nsec3-iterations');
     for (const answer of answers) expect(answer.security?.reason.ede).toBe(27);
+  });
+
+  it('still hashes 50 NSEC3 iterations, as Unbound and BIND do', async () => {
+    const answers = await both(zones({ iterations: 50 }), 'nothing.secure.example', 'A');
+    expectStatus(answers, 'secure');
   });
 });
 
@@ -764,6 +769,22 @@ describe('validate: signatures', () => {
     );
     expectStatus(answers, 'bogus', 'signature-not-yet-valid');
     for (const answer of answers) expect(answer.security?.reason.ede).toBe(8);
+  });
+
+  it('reads signature times across the wrap of 32-bit seconds in 2106 (RFC 4034 §3.1.5)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      // ten days before the wrap, so the expiration, thirty days on, is written past it
+      vi.setSystemTime((2 ** 32 - 10 * 86_400) * 1000);
+      const answers = await both(
+        [root, tld, secure('wrap.example', [['www.wrap.example', 'A', '192.0.2.1']])],
+        'www.wrap.example',
+        'A'
+      );
+      expectStatus(answers, 'secure');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('is bogus when a signed zone serves its data without signatures', async () => {

@@ -9,7 +9,7 @@ import {
 import type { ErrorData } from './errors';
 import { className, classCode, RECORD_CLASSES } from './protocol/classes';
 import { DEFAULT_UDP_PAYLOAD_SIZE } from './protocol/edns';
-import { rcodeName } from './protocol/header';
+import { RCODES, rcodeName } from './protocol/header';
 import { typeCode, typeName } from './protocol/types';
 import { DEFAULT_PORTS, toEndpoint } from './transports/endpoint';
 import { createTransports, defaultTransports } from './transports/set';
@@ -138,8 +138,8 @@ export function tcpFallbackFailure(result: ExchangeResult): DnsError | undefined
   return tcpFailures.get(result);
 }
 
-const DEFAULT_TIMEOUT = 5000;
-const DEFAULT_RETRIES = 2;
+export const DEFAULT_TIMEOUT = 5000;
+export const DEFAULT_RETRIES = 2;
 
 // a name as the library hands it back: with no trailing dot, in the case it was written,
 // spelled as a decoded message spells it, and the root as '.'. Throws for a name that
@@ -389,7 +389,7 @@ export async function exchange(
   const type = typeCode(question.type);
   const cls = classCode(question.class ?? RECORD_CLASSES.IN);
   const typeText = typeName(type);
-  const edns: ExchangeResult['query']['edns'] =
+  let edns: ExchangeResult['query']['edns'] =
     options.edns === false
       ? false
       : {
@@ -586,6 +586,35 @@ export async function exchange(
       clearTimeout(timer);
       const { message } = checked;
       report(response, message);
+
+      // a server too old for EDNS answers FORMERR or NOTIMP to a query that carries it,
+      // with no EDNS record of its own: asked once more without it (RFC 6891 §7). Not
+      // when the query needs EDNS, for signatures or its options, which a plain query
+      // cannot carry
+      if (
+        edns &&
+        !message.edns &&
+        (message.rcode === RCODES.FORMERR || message.rcode === RCODES.NOTIMP) &&
+        !edns.dnssecOk &&
+        !options.ednsOptions?.length
+      ) {
+        onEvent?.({
+          event: 'retry',
+          ...context(),
+          attempt: attempt + 1,
+          error: errorData(
+            new InvalidResponseError(
+              `${endpoint.host} answered ${rcodeName(message.rcode)} to a query with EDNS: asking again without it`,
+              { ...context(), rcode: message.rcode }
+            )
+          ),
+        });
+        edns = false;
+        if (transportName !== 'doh') id = randomId();
+        expected.id = id;
+        queryBytes = encode(id);
+        continue;
+      }
 
       if (message.flags.tc) {
         if (response.transport !== 'udp') {
