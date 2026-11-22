@@ -1,6 +1,6 @@
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { buildSignedData, computeDsDigest, computeKeyTag } from '../../src/dnssec/canonical';
-import type { Rrset, WireRecord } from '../../src/dnssec/canonical';
+import type { Rrset } from '../../src/dnssec/canonical';
 import type { TrustAnchor } from '../../src/dnssec/types';
 import { typeCode, typeName } from '../../src/protocol/types';
 import { parseIpv4 } from '../../src/records/addresses';
@@ -499,8 +499,8 @@ function nextCloser(name: string, encloser: string): string {
   return labels.slice(labels.length - countLabels(encloser) - 1).join('.');
 }
 
-function wire(name: string, type: number, ttl: number, rdata: Uint8Array): WireRecord {
-  return { name, type, typeName: typeName(type), class: 1, ttl, rdata, section: 'answer' };
+function wire(name: string, type: number, ttl: number, rdata: Uint8Array): ResourceRecord {
+  return { name, type, class: 1, ttl, rdata, section: 'answer' };
 }
 
 function soaRdata(zone: string): Uint8Array {

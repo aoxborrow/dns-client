@@ -7,7 +7,7 @@ import {
   assessNsec3Params,
 } from '../../src/dnssec/nsec';
 import { nsec3Hash } from '../../src/dnssec/canonical';
-import type { WireRecord } from '../../src/dnssec/canonical';
+import type { ResourceRecord } from '../../src/wire/message';
 import { RECORD_TYPES } from '../../src/protocol/types';
 import { encodeName } from '../../src/wire/names';
 import { PROOF_STATUSES, VERIFICATION_RESULTS } from '../../src/dnssec/constants';
@@ -31,11 +31,10 @@ function typeBitmap(types: number[]): Buffer {
   return Buffer.concat([Buffer.from([0, bytes.length]), bytes]);
 }
 
-function nsecRecord(owner: string, next: string, types: number[]): WireRecord {
+function nsecRecord(owner: string, next: string, types: number[]): ResourceRecord {
   return {
     name: owner,
     type: TYPE_NSEC,
-    typeName: 'NSEC',
     class: 1,
     ttl: 3600,
     rdata: Buffer.concat([encodeName(next), typeBitmap(types)]),
@@ -67,7 +66,7 @@ function nsec3Record(
   nextHash: string,
   types: number[],
   options: { salt?: Buffer; iterations?: number; optOut?: boolean } = {}
-): WireRecord {
+): ResourceRecord {
   const salt = options.salt ?? Buffer.alloc(0);
   const next = fromBase32Hex(nextHash);
   const head = Buffer.alloc(5);
@@ -79,7 +78,6 @@ function nsec3Record(
   return {
     name: `${ownerHash}.${zone}`,
     type: TYPE_NSEC3,
-    typeName: 'NSEC3',
     class: 1,
     ttl: 3600,
     rdata: Buffer.concat([head, salt, Buffer.from([next.length]), next, typeBitmap(types)]),

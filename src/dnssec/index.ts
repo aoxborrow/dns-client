@@ -31,10 +31,9 @@ export {
   computeKeyTag,
   groupRrsets,
   nsec3Hash,
-  toWireMessage,
   wildcardOwner,
 } from './canonical';
-export type { Rrset, WireMessage, WireRecord } from './canonical';
+export type { Rrset } from './canonical';
 export {
   checkAnchors,
   checkBudget,
@@ -82,7 +81,6 @@ export type {
 export { REASON_CODES, SECURITY_STATUSES } from './reasons';
 export type { ReasonCode, SecurityReason, SecurityStatus } from './reasons';
 export type { Security } from './validate';
-export { presentRecord } from './present';
 export {
   ALGORITHM_REGISTRY_REFRESHED,
   ALGORITHM_STANDINGS,

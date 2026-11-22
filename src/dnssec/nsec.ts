@@ -11,7 +11,7 @@ import {
   splitName,
 } from '../wire/names';
 import { nsec3Hash, toNsec3Label } from './canonical';
-import type { WireRecord } from './canonical';
+import type { ResourceRecord } from '../wire/message';
 import { presentRecord } from './present';
 import { DenialProof, ProofStep, Nsec3Params, ProofPurpose } from './types';
 import {
@@ -144,14 +144,14 @@ export function assessNsec3Params(
 // ---------------------------------------------------------------------------
 
 interface NsecEntry {
-  record: WireRecord;
+  record: ResourceRecord;
   owner: string;
   next: string;
   types: number[];
 }
 
 interface Nsec3Entry {
-  record: WireRecord;
+  record: ResourceRecord;
   // the first label of the owner name, which is the base32hex hash
   ownerHash: string;
   // the zone the NSEC3 belongs to (the owner name minus the hash label)
@@ -175,7 +175,7 @@ function orSkip<T>(decode: () => T): T | undefined {
   }
 }
 
-function collectNsec(records: WireRecord[]): NsecEntry[] {
+function collectNsec(records: ResourceRecord[]): NsecEntry[] {
   const out: NsecEntry[] = [];
   for (const rr of records) {
     if (rr.type !== RECORD_TYPES.NSEC) continue;
@@ -191,7 +191,7 @@ function collectNsec(records: WireRecord[]): NsecEntry[] {
   return out;
 }
 
-function collectNsec3(records: WireRecord[]): Nsec3Entry[] {
+function collectNsec3(records: ResourceRecord[]): Nsec3Entry[] {
   const out: Nsec3Entry[] = [];
   for (const rr of records) {
     if (rr.type !== RECORD_TYPES.NSEC3) continue;
@@ -263,7 +263,7 @@ function coverNsec3(
 // ---------------------------------------------------------------------------
 
 // the parent answered a DS query with NODATA. establish that no DS exists at the delegation
-export function verifyNoDsProof(qname: string, records: WireRecord[]): DenialProof {
+export function verifyNoDsProof(qname: string, records: ResourceRecord[]): DenialProof {
   const nsec3 = collectNsec3(records);
   if (nsec3.length > 0) return verifyNoDsNsec3(qname, nsec3);
 
@@ -608,7 +608,7 @@ function bitmapStep(qtype: number, present: boolean, aliased: boolean) {
 export function verifyNodataProof(
   qname: string,
   qtype: number,
-  records: WireRecord[]
+  records: ResourceRecord[]
 ): DenialProof {
   const name = canonicalName(qname);
   const nsec3 = collectNsec3(records);
@@ -844,7 +844,7 @@ function nsec3NodataWithoutMatch(
 }
 
 // the zone said the name does not exist at all
-export function verifyNxdomainProof(qname: string, records: WireRecord[]): DenialProof {
+export function verifyNxdomainProof(qname: string, records: ResourceRecord[]): DenialProof {
   const name = canonicalName(qname);
   const nsec3 = collectNsec3(records);
 
@@ -976,7 +976,7 @@ export function verifyNxdomainProof(qname: string, records: WireRecord[]): Denia
 // signature binds it, so it is the closest encloser the proof has to agree with
 export function verifyWildcardProof(
   qname: string,
-  records: WireRecord[],
+  records: ResourceRecord[],
   wildcard: string
 ): DenialProof {
   const name = canonicalName(qname);
@@ -1121,7 +1121,11 @@ function sameLabel(a: string, b: string): boolean {
 // the answer (RFC 5155 §9.2). `encloser` is the closest encloser where it is already
 // known, as for a wildcard answer; otherwise it is found from the records. False for NSEC,
 // and when no closest encloser or covering NSEC3 is there
-export function nextCloserOptOut(qname: string, records: WireRecord[], encloser?: string): boolean {
+export function nextCloserOptOut(
+  qname: string,
+  records: ResourceRecord[],
+  encloser?: string
+): boolean {
   const nsec3 = collectNsec3(records);
   if (nsec3.length === 0) return false;
   const name = canonicalName(qname);
@@ -1141,7 +1145,7 @@ export function nextCloserOptOut(qname: string, records: WireRecord[], encloser?
 // records prove is only as good as their signatures, which are checked elsewhere
 export function denialTypesAt(
   name: string,
-  records: WireRecord[]
+  records: ResourceRecord[]
 ): { types?: number[]; optOut: boolean } {
   const owner = canonicalName(name);
   const nsec3 = collectNsec3(records);

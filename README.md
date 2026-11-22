@@ -692,7 +692,7 @@ judgement.
 ```ts
 import { Resolver } from '@aoxborrow/dns';
 import { typeCode } from '@aoxborrow/dns/records';
-import { judgeChain, toWireMessage } from '@aoxborrow/dns/dnssec';
+import { judgeChain } from '@aoxborrow/dns/dnssec';
 import type { DnssecResponse } from '@aoxborrow/dns/dnssec';
 
 const resolver = new Resolver({ servers: ['1.1.1.1'], dnssecOk: true, checkingDisabled: true });
@@ -701,7 +701,7 @@ const resolver = new Resolver({ servers: ['1.1.1.1'], dnssecOk: true, checkingDi
 // signatures
 async function ask(name: string, type: string): Promise<DnssecResponse> {
   const answer = await resolver.query(name, type);
-  const { answers, authorities } = toWireMessage(answer.message);
+  const { answers, authorities } = answer.message;
   return {
     name: answer.query.name,
     type: typeCode(type),
@@ -748,10 +748,9 @@ import {
   buildSignedData,
   computeKeyTag,
   groupRrsets,
-  toWireMessage,
   verifySignature,
 } from '@aoxborrow/dns/dnssec';
-import { decodeDnskey, decodeRrsig } from '@aoxborrow/dns/records';
+import { decodeDnskey, decodeRrsig, RECORD_TYPES } from '@aoxborrow/dns/records';
 
 // a zone's keys and the signatures over them, from a resolver asked not to validate
 const resolver = new Resolver({ servers: ['1.1.1.1'] });
@@ -759,10 +758,10 @@ const answer = await resolver.query('example.com', 'DNSKEY', {
   dnssecOk: true,
   checkingDisabled: true,
 });
-const { answers } = toWireMessage(answer.message);
+const { answers } = answer.message;
 const [keys] = groupRrsets(answers);
 
-for (const record of answers.filter(rr => rr.typeName === 'RRSIG')) {
+for (const record of answers.filter(rr => rr.type === RECORD_TYPES.RRSIG)) {
   const rrsig = decodeRrsig(record.rdata); // throws ParseError for malformed data
   const key = keys.records.find(rr => computeKeyTag(rr.rdata) === rrsig.keyTag);
   const signed = buildSignedData(rrsig, keys);
@@ -783,9 +782,9 @@ Ed448). `computeDsDigest` and `computeKeyTag` match a DS record to the key it na
 check NSEC and NSEC3 denial proofs and return the reasoning step by step;
 `verifyWildcardProof` takes the wildcard an answer was synthesised from, which
 `wildcardOwner` rebuilds from the RRSIG's labels field. Digests and NSEC3 hashes use the
-library's own SHA-1, SHA-256 and SHA-384. Owner names in `toWireMessage`'s records keep
-the case the server wrote them in; record data is in the canonical form signatures are
-computed over.
+library's own SHA-1, SHA-256 and SHA-384. They all take records as the library decodes them,
+the `ResourceRecord`s of `answer.message`; `buildSignedData` puts their data in the canonical
+form signatures are computed over (RFC 4034 §6.2).
 The record-data decoders (`decodeRrsig`, `decodeDnskey` and the rest) are in `/records`.
 
 ### Codes, registries and helpers
@@ -820,7 +819,6 @@ And the smaller functions:
 | `readKeys()`                                                  | the DNSKEYs among some records, decoded, leaving out any that do not decode                                                                                                 |
 | `canonicalRdata()`                                            | record data in canonical form (RFC 4034 §6.2)                                                                                                                               |
 | `nsec3Hash()`, `assessNsec3Params()`                          | a name's NSEC3 hash, and a zone's NSEC3 parameters held against RFC 9276                                                                                                    |
-| `presentRecord()`                                             | a record as `toWireMessage` gives it, in zone-file presentation format. `formatRecord` in `/records` does the same for a typed record                                       |
 
 ## `/transports`
 

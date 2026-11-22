@@ -6,7 +6,8 @@ import { bytesEqual, toHex } from '../wire/bytes';
 import { canonicalName, countLabels, isSubdomain } from '../wire/names';
 import { isAnchorCurrent } from './anchors';
 import { buildSignedData, computeDsDigest, computeKeyTag } from './canonical';
-import type { Rrset, WireRecord } from './canonical';
+import type { ResourceRecord } from '../wire/message';
+import type { Rrset } from './canonical';
 import {
   DNSKEY_FLAGS,
   DNSKEY_PROTOCOL,
@@ -37,7 +38,7 @@ function decoded<T>(decode: (rdata: Uint8Array) => T, rdata: Uint8Array): T | un
 }
 
 // an RRSIG's fields, or undefined for one that does not decode
-export function readRrsig(record: WireRecord): RrsigFields | undefined {
+export function readRrsig(record: ResourceRecord): RrsigFields | undefined {
   return decoded(decodeRrsig, record.rdata);
 }
 
@@ -94,7 +95,7 @@ function spend(budget: CheckBudget | undefined): boolean {
 // ---------------------------------------------------------------------------
 
 export interface DnssecKey {
-  record: WireRecord;
+  record: ResourceRecord;
   keyTag: number;
   flags: number;
   protocol: number;
@@ -109,7 +110,7 @@ export interface DnssecKey {
 }
 
 // the DNSKEY records among `records`, read. One that does not decode is left out
-export function readKeys(records: readonly WireRecord[]): DnssecKey[] {
+export function readKeys(records: readonly ResourceRecord[]): DnssecKey[] {
   const keys: DnssecKey[] = [];
   for (const record of records) {
     if (record.type !== DNSKEY) continue;
@@ -180,7 +181,7 @@ export async function checkAnchors(
   keys: readonly DnssecKey[],
   anchors: readonly TrustAnchor[],
   now: Date,
-  signed?: { rrset: Rrset; rrsigs: readonly WireRecord[] },
+  signed?: { rrset: Rrset; rrsigs: readonly ResourceRecord[] },
   budget?: CheckBudget
 ): Promise<AnchorCheck> {
   const current = anchors.filter(
@@ -224,7 +225,7 @@ export async function checkAnchors(
 async function selfSigned(
   key: DnssecKey,
   rrset: Rrset,
-  rrsigs: readonly WireRecord[],
+  rrsigs: readonly ResourceRecord[],
   now: Date,
   budget?: CheckBudget
 ): Promise<boolean> {
@@ -284,7 +285,7 @@ export const DS_CODES = {
 export type DsCode = (typeof DS_CODES)[keyof typeof DS_CODES];
 
 export interface DsCheck {
-  record: WireRecord;
+  record: ResourceRecord;
   ds: DsFields;
   code: DsCode;
   result: VerificationResult;
@@ -323,12 +324,12 @@ export function isDigestDeprecated(type: number): boolean {
 // real one nor stand in for it
 export function checkDsSet(
   child: string,
-  dsRecords: readonly WireRecord[],
+  dsRecords: readonly ResourceRecord[],
   keys: readonly DnssecKey[]
 ): DsSetCheck {
   const read = dsRecords
     .map(record => ({ record, ds: decoded(decodeDs, record.rdata) }))
-    .filter((entry): entry is { record: WireRecord; ds: DsFields } => Boolean(entry.ds));
+    .filter((entry): entry is { record: ResourceRecord; ds: DsFields } => Boolean(entry.ds));
 
   const supported = read.filter(({ ds }) => digestInfo(ds.digestType)?.verify);
   const selectedDigestType = supported.length
@@ -430,7 +431,7 @@ export const SIGNATURE_CODES = {
 export type SignatureCode = (typeof SIGNATURE_CODES)[keyof typeof SIGNATURE_CODES];
 
 export interface SignatureCheck {
-  record: WireRecord;
+  record: ResourceRecord;
   rrsig: RrsigFields;
   code: SignatureCode;
   result: VerificationResult;
@@ -452,7 +453,7 @@ export interface SignatureCheck {
 // precondition before any crypto runs. Where keys share the signature's tag and
 // algorithm, each that may sign is tried
 export async function checkSignature(
-  record: WireRecord,
+  record: ResourceRecord,
   rrset: Rrset,
   zone: string,
   keys: readonly DnssecKey[],
@@ -590,7 +591,10 @@ export interface RrsetCheckOptions {
 }
 
 // the RRSIGs among `rrsigs` that cover `rrset`
-export function coveringSignatures(rrset: Rrset, rrsigs: readonly WireRecord[]): WireRecord[] {
+export function coveringSignatures(
+  rrset: Rrset,
+  rrsigs: readonly ResourceRecord[]
+): ResourceRecord[] {
   const owner = canonicalName(rrset.name);
   return rrsigs.filter(record => {
     const sig = readRrsig(record);
@@ -614,7 +618,7 @@ export function isAuthoritative(rrset: Rrset, zone: string, delegationOf?: strin
 export async function checkRrset(
   zone: ZoneKeys,
   rrset: Rrset,
-  rrsigs: readonly WireRecord[],
+  rrsigs: readonly ResourceRecord[],
   options: RrsetCheckOptions
 ): Promise<RrsetCheck> {
   const authoritative = isAuthoritative(rrset, zone.zone, options.delegationOf);
@@ -717,7 +721,7 @@ export interface KeySetCheck {
 // a chain. The signature is bound to the vouched-for key's material, not its tag
 export async function checkKeySet(
   zone: string,
-  dnskey: { answers: readonly WireRecord[] } | undefined,
+  dnskey: { answers: readonly ResourceRecord[] } | undefined,
   keys: readonly DnssecKey[],
   entryKeys: readonly DnssecKey[],
   entryAlgorithms: readonly number[],
@@ -787,7 +791,7 @@ export async function checkKeySet(
 }
 
 // one RRset from records already known to share an owner and type
-function groupRrsets1(records: readonly WireRecord[]): Rrset {
+function groupRrsets1(records: readonly ResourceRecord[]): Rrset {
   const [first] = records;
   return {
     name: first.name,

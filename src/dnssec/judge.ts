@@ -11,7 +11,8 @@ import {
 } from '../wire/names';
 import { ROOT_TRUST_ANCHORS } from './anchors';
 import { groupRrsets, wildcardOwner } from './canonical';
-import type { Rrset, WireRecord } from './canonical';
+import type { ResourceRecord } from '../wire/message';
+import type { Rrset } from './canonical';
 import {
   checkAnchors,
   checkBudget,
@@ -72,8 +73,8 @@ export interface DnssecResponse {
   name: string;
   type: number;
   rcode: number;
-  answers: WireRecord[];
-  authorities: WireRecord[];
+  answers: ResourceRecord[];
+  authorities: ResourceRecord[];
   // the server was asked to recurse, so it follows every alias to its end: a response that
   // stops at an alias without the target's records owes a proof that the target has none.
   // A zone's own server hands over an alias that leads out of its zone and nothing more
@@ -319,7 +320,7 @@ export interface ZoneKeysJudgement {
 // validly signed, so the DS records anchor nothing
 export type KeysEntry =
   | { anchors: readonly TrustAnchor[] }
-  | { ds: readonly WireRecord[]; dsTtl?: number; authenticated?: boolean };
+  | { ds: readonly ResourceRecord[]; dsTtl?: number; authenticated?: boolean };
 
 // judge a zone's key set against its entry points. Every check is made and handed back,
 // even past a failure, unless `stopAtFirst`
@@ -545,7 +546,7 @@ interface DenialRecords {
   // each NSEC or NSEC3 RRset of the zone, checked in it
   checks: RrsetCheck[];
   // their records, which are all a proof is worked out from
-  records: WireRecord[];
+  records: ResourceRecord[];
 }
 
 // the NSEC and NSEC3 RRsets of a response's authority section that belong to `zone`, each
@@ -560,8 +561,8 @@ interface DenialRecords {
 // (CVE-2023-50868)
 async function checkDenialRecords(
   zone: ZoneState,
-  authorities: WireRecord[],
-  rrsigs: WireRecord[],
+  authorities: ResourceRecord[],
+  rrsigs: ResourceRecord[],
   options: RrsetOptions
 ): Promise<DenialRecords | undefined> {
   const apex = canonicalName(zone.zone);
@@ -589,7 +590,7 @@ async function checkDenialRecords(
 }
 
 // an NSEC3 record's hash parameters, as one string to compare
-function nsec3Params(record: WireRecord): string | undefined {
+function nsec3Params(record: ResourceRecord): string | undefined {
   try {
     const { hashAlgorithm, iterations, salt } = decodeNsec3(record.rdata);
     return `${hashAlgorithm}/${iterations}/${salt.join(',')}`;
@@ -599,7 +600,7 @@ function nsec3Params(record: WireRecord): string | undefined {
 }
 
 // the most NSEC3 iterations among records
-function nsec3Iterations(records: WireRecord[]): number {
+function nsec3Iterations(records: ResourceRecord[]): number {
   let most = 0;
   for (const record of records) {
     if (record.type !== NSEC3) continue;
@@ -796,7 +797,7 @@ function aliasStep(name: string, rrsets: Rrset[]): string | undefined {
   return undefined;
 }
 
-function targetOf(record: WireRecord): string {
+function targetOf(record: ResourceRecord): string {
   return canonicalName(labelsToName(readName(record.rdata, 0).labels));
 }
 
@@ -1020,12 +1021,12 @@ async function judgeResponse(
 async function judgeDenial(
   zone: ZoneState,
   response: DnssecResponse,
-  rrsigs: WireRecord[],
+  rrsigs: ResourceRecord[],
   options: RrsetOptions,
   name: string,
   purpose: 'wildcard' | 'nxdomain' | 'nodata',
   // the proof, and whether the NSEC3 covering the next closer name sets opt-out
-  prove: (records: WireRecord[]) => { proof: DenialProof; optOut: boolean }
+  prove: (records: ResourceRecord[]) => { proof: DenialProof; optOut: boolean }
 ): Promise<ChainLink> {
   const type = purpose === 'nodata' ? typeName(response.type) : undefined;
   const link = (

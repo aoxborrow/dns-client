@@ -1,6 +1,6 @@
 import { RECORD_TYPES } from '../protocol/types';
 import { RCODES } from '../protocol/header';
-import type { Message } from '../wire/message';
+import type { Message, ResourceRecord } from '../wire/message';
 import {
   canonicalName,
   isSubdomain,
@@ -10,8 +10,6 @@ import {
   splitName,
 } from '../wire/names';
 import { ROOT_TRUST_ANCHORS } from './anchors';
-import { toWireMessage } from './canonical';
-import type { WireRecord } from './canonical';
 import { readRrsig } from './checks';
 import { judgeChain } from './judge';
 import type { ChainLink, ChainName, DnssecResponse, ZoneFact } from './judge';
@@ -66,13 +64,12 @@ const { DS, DNSKEY, RRSIG, NSEC, NSEC3, NS, CNAME, DNAME } = RECORD_TYPES;
 
 // a response, as the judging core reads it, for the question that was sent
 export function dnssecResponse(message: Message, name: string, type: number): DnssecResponse {
-  const wire = toWireMessage(message);
   return {
     name,
     type,
-    rcode: wire.rcode,
-    answers: wire.answers,
-    authorities: wire.authorities,
+    rcode: message.rcode,
+    answers: message.answers,
+    authorities: message.authorities,
     ...(message.flags.tc && { truncated: true }),
   };
 }
@@ -219,7 +216,7 @@ function dataNames(responses: DnssecResponse[]): string[] {
   return [...names].sort((a, b) => splitName(a).length - splitName(b).length);
 }
 
-function aliasTargetOf(record: WireRecord): string | undefined {
+function aliasTargetOf(record: ResourceRecord): string | undefined {
   try {
     return canonicalName(labelsToName(readName(record.rdata, 0).labels));
   } catch {

@@ -7,9 +7,8 @@ import {
   computeKeyTag,
   groupRrsets,
   nsec3Hash,
-  toWireMessage,
 } from '../../src/dnssec/canonical';
-import type { WireRecord } from '../../src/dnssec/canonical';
+import type { ResourceRecord } from '../../src/wire/message';
 import { presentRecord } from '../../src/dnssec/present';
 import { ROOT_TRUST_ANCHORS } from '../../src/dnssec/anchors';
 import { encodeName } from '../../src/wire/names';
@@ -17,8 +16,8 @@ import { decodeMessage } from '../../src/wire/index';
 
 const { A: TYPE_A, NS: TYPE_NS, DNSKEY: TYPE_DNSKEY } = RECORD_TYPES;
 
-// a response as the DNSSEC code reads it: decoded by the library, then put in canonical form
-const parseMessage = (bytes: Uint8Array) => toWireMessage(decodeMessage(bytes));
+// a response as the DNSSEC code reads it: decoded by the library
+const parseMessage = (bytes: Uint8Array) => decodeMessage(bytes);
 
 const hex = (bytes: Uint8Array | null | undefined) =>
   bytes ? Buffer.from(bytes).toString('hex') : undefined;
@@ -117,9 +116,9 @@ describe('parseMessage', () => {
 
   it('reads the header flags and question', () => {
     const message = parseMessage(buildResponse());
-    expect(message.aa).toBe(true);
+    expect(message.flags.aa).toBe(true);
     expect(message.rcode).toBe(0);
-    expect(message.question).toEqual({ name: 'example.com', type: TYPE_NS, class: 1 });
+    expect(message.questions[0]).toEqual({ name: 'example.com', type: TYPE_NS, class: 1 });
   });
 
   it('expands compression pointers in the owner name', () => {
@@ -214,36 +213,35 @@ describe('canonicalRdata', () => {
 });
 
 describe('presentRecord', () => {
-  const rr = (type: number, rdata: number[]): WireRecord => ({
+  const rr = (type: number, rdata: number[]): ResourceRecord => ({
     name: 'example.com',
     type,
-    typeName: typeName(type),
     class: 1,
     ttl: 300,
     rdata: Uint8Array.from(rdata),
     section: 'answer',
   });
 
-  it('writes the signer and next names in lowercase', () => {
+  it('writes the signer and next names in the case they were sent', () => {
     const signer = [...encodeName('Example.COM')];
     const rrsig = [0, 1, 13, 2, 0, 0, 1, 44, 0, 0, 0, 1, 0, 0, 0, 0, 0, 7, ...signer, 0xaa];
     expect(presentRecord(rr(46, rrsig))).toBe(
-      'example.com.\t300\tIN\tRRSIG\tA 13 2 300 19700101000001 19700101000000 7 example.com. qg=='
+      'example.com.\t300\tIN\tRRSIG\tA 13 2 300 19700101000001 19700101000000 7 Example.COM. qg=='
     );
     expect(presentRecord(rr(47, [...encodeName('B.Example'), 0, 1, 0x40]))).toBe(
-      'example.com.\t300\tIN\tNSEC\tb.example. A'
+      'example.com.\t300\tIN\tNSEC\tB.Example. A'
     );
   });
 
   it('writes record data that does not decode in the unknown-type form', () => {
-    expect(presentRecord(rr(46, [0, 1, 13]))).toBe('example.com.\t300\tIN\tRRSIG\t\\# 3 00010D');
-    expect(presentRecord(rr(TYPE_NS, [3, 0x61]))).toBe('example.com.\t300\tIN\tNS\t\\# 2 0361');
+    expect(presentRecord(rr(46, [0, 1, 13]))).toBe('example.com.\t300\tIN\tTYPE46\t\\# 3 00010d');
+    expect(presentRecord(rr(TYPE_NS, [3, 0x61]))).toBe('example.com.\t300\tIN\tTYPE2\t\\# 2 0361');
   });
 });
 
 describe('groupRrsets', () => {
   it('groups by owner, class and type and keeps the lowest TTL', () => {
-    const base = { class: 1, section: 'answer' as const, typeName: 'A' };
+    const base = { class: 1, section: 'answer' as const };
     const rrsets = groupRrsets([
       { ...base, name: 'example.com', type: TYPE_A, ttl: 300, rdata: Buffer.from([1, 1, 1, 1]) },
       { ...base, name: 'example.com', type: TYPE_A, ttl: 60, rdata: Buffer.from([2, 2, 2, 2]) },
@@ -279,7 +277,6 @@ describe('buildSignedData', () => {
       {
         name: 'example.com',
         type: TYPE_A,
-        typeName: 'A',
         class: 1,
         ttl: 300,
         rdata: Buffer.from([9, 9, 9, 9]),
@@ -288,7 +285,6 @@ describe('buildSignedData', () => {
       {
         name: 'example.com',
         type: TYPE_A,
-        typeName: 'A',
         class: 1,
         ttl: 300,
         rdata: Buffer.from([1, 1, 1, 1]),
@@ -327,6 +323,29 @@ describe('buildSignedData', () => {
   it('refuses to build when the label count exceeds the owner name', () => {
     const sig = decodeRrsig(rrsigRdata(5));
     expect(buildSignedData(sig, rrset)).toBeNull();
+  });
+
+  it('signs record data in canonical form whatever case its names were sent in', () => {
+    const sig = decodeRrsig(rrsigRdata(2));
+    const ns = (target: string) => ({
+      name: 'example.com',
+      type: TYPE_NS,
+      class: 1,
+      ttl: 300,
+      rdata: encodeName(target),
+      section: 'answer' as const,
+    });
+    const nsSet = (target: string) => ({
+      name: 'example.com',
+      type: TYPE_NS,
+      typeName: 'NS',
+      class: 1,
+      ttl: 300,
+      records: [ns(target)],
+    });
+    expect(buildSignedData(sig, nsSet('NS1.Example.COM'))!.data).toEqual(
+      buildSignedData(sig, nsSet('ns1.example.com'))!.data
+    );
   });
 
   it('drops duplicate RRs, which are not part of the RRset', () => {

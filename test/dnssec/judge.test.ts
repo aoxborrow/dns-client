@@ -8,7 +8,8 @@ import {
 } from '../../src/dnssec/index';
 import { checkDsSet } from '../../src/dnssec/checks';
 import { EDE_CODES, REASON_EDE } from '../../src/dnssec/reasons';
-import type { DnssecResponse, WireRecord } from '../../src/dnssec/index';
+import type { DnssecResponse } from '../../src/dnssec/index';
+import type { ResourceRecord } from '../../src/wire/message';
 import { dnssecResponse } from '../../src/dnssec/validate';
 import { Resolver } from '../../src/index';
 import { simulateNetwork } from '../support/simulated-network';
@@ -194,7 +195,7 @@ describe('judgeChain: limits', () => {
 
 describe('checkDsSet', () => {
   // a DS record for a key, with the digest type asked for and, if `broken`, a wrong digest
-  function dsFor(owner: string, key: TestKey, digestType: number, broken = false): WireRecord {
+  function dsFor(owner: string, key: TestKey, digestType: number, broken = false): ResourceRecord {
     const digest = computeDsDigest(owner, key.rdata, digestType)!;
     if (broken) digest[0] ^= 0xff;
     const head = new Uint8Array(4);
@@ -203,14 +204,13 @@ describe('checkDsSet', () => {
     head[2] = key.algorithm;
     head[3] = digestType;
     const rdata = new Uint8Array([...head, ...digest]);
-    return { name: owner, type: 43, typeName: 'DS', class: 1, ttl: 3600, rdata, section: 'answer' };
+    return { name: owner, type: 43, class: 1, ttl: 3600, rdata, section: 'answer' };
   }
   const key = ecdsaKey();
   const keys = readKeys([
     {
       name: 'zone',
       type: 48,
-      typeName: 'DNSKEY',
       class: 1,
       ttl: 3600,
       rdata: key.rdata,

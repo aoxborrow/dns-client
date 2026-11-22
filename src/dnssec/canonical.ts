@@ -3,14 +3,12 @@ import type { RrsigFields } from '../records/decode';
 import {
   compareBytes,
   concatBytes,
-  readU16,
   toBase32Hex,
   toBase64,
-  utf8Decode,
   writeU16,
   writeU32,
 } from '../wire/bytes';
-import type { Message, ResourceRecord } from '../wire/message';
+import type { ResourceRecord } from '../wire/message';
 import { canonicalName, countLabels, encodeName, splitName } from '../wire/names';
 import { sha1, sha256, sha384 } from './hash';
 
@@ -20,7 +18,8 @@ import { sha1, sha256, sha384 } from './hash';
 // verification needs the exact bytes the signer signed. The library's decoder keeps each
 // record's data as it arrived, with names inside it written out in full; what this adds
 // is the canonical form of RFC 4034 §6.2 (those names downcased, for the types the RFC
-// lists), which is what a signature is computed over. Names and record data are read
+// lists), which is what a signature is computed over. buildSignedData applies it to the
+// records it is given, so callers pass records as they were decoded. Names and record data are read
 // with the codec in `/wire` and `/records`
 
 // the offset of a name that follows fields of varying length, found from the RDATA itself
@@ -77,44 +76,6 @@ const DOWNCASE_NAMES_IN_RDATA = new Set([
   2, 3, 4, 5, 6, 7, 8, 9, 12, 14, 15, 17, 18, 21, 24, 26, 30, 33, 35, 36, 38, 39,
 ]);
 
-export type WireSection = 'answer' | 'authority' | 'additional';
-
-export interface WireRecord {
-  // owner name as the server wrote it, without the trailing dot (root is '.'). Compare
-  // with `canonicalName`
-  name: string;
-  type: number;
-  typeName: string;
-  class: number;
-  ttl: number;
-  // RDATA in RFC 4034 §6.2 canonical form — this is what gets signed
-  rdata: Uint8Array;
-  section: WireSection;
-}
-
-export interface WireMessage {
-  id: number;
-  rcode: number;
-  // header flags
-  qr: boolean;
-  aa: boolean;
-  tc: boolean;
-  rd: boolean;
-  ra: boolean;
-  ad: boolean;
-  cd: boolean;
-  question?: { name: string; type: number; class: number };
-  answers: WireRecord[];
-  authorities: WireRecord[];
-  additionals: WireRecord[];
-  // EDNS
-  ednsUdpSize?: number;
-  doBit: boolean;
-  extendedErrorCode?: number;
-  extendedErrorText?: string;
-  bytes: number;
-}
-
 // ---------------------------------------------------------------------------
 // message parsing
 // ---------------------------------------------------------------------------
@@ -148,57 +109,6 @@ export function canonicalRdata(type: number, rdata: Uint8Array): Uint8Array {
   return out;
 }
 
-// a decoded message as the DNSSEC code reads it: names in the case the server wrote them,
-// record data in canonical form, the EDNS state flattened
-export function toWireMessage(message: Message): WireMessage {
-  const record = (rr: ResourceRecord): WireRecord => ({
-    name: rr.name,
-    type: rr.type,
-    typeName: typeName(rr.type),
-    class: rr.class,
-    ttl: rr.ttl,
-    rdata: canonicalRdata(rr.type, rr.rdata),
-    section: rr.section,
-  });
-  const [question] = message.questions;
-  const wire: WireMessage = {
-    id: message.id,
-    rcode: message.rcode,
-    qr: message.flags.qr,
-    aa: message.flags.aa,
-    tc: message.flags.tc,
-    rd: message.flags.rd,
-    ra: message.flags.ra,
-    ad: message.flags.ad,
-    cd: message.flags.cd,
-    answers: message.answers.map(record),
-    authorities: message.authorities.map(record),
-    additionals: message.additionals.map(record),
-    doBit: message.edns?.dnssecOk ?? false,
-    bytes: message.bytes,
-  };
-  if (question) {
-    wire.question = {
-      name: question.name,
-      type: question.type,
-      class: question.class,
-    };
-  }
-  if (message.edns) {
-    wire.ednsUdpSize = message.edns.udpPayloadSize;
-    // the extended DNS error (RFC 8914), if the server sent one
-    for (const option of message.edns.options) {
-      if (option.code === 15 && option.data.length >= 2) {
-        wire.extendedErrorCode = readU16(option.data, 0);
-        // eslint-disable-next-line no-control-regex
-        const text = utf8Decode(option.data.subarray(2)).replace(/\u0000+$/, '');
-        if (text) wire.extendedErrorText = text;
-      }
-    }
-  }
-  return wire;
-}
-
 // ---------------------------------------------------------------------------
 // RRsets
 // ---------------------------------------------------------------------------
@@ -209,12 +119,12 @@ export interface Rrset {
   typeName: string;
   class: number;
   ttl: number;
-  records: WireRecord[];
+  records: ResourceRecord[];
 }
 
 // group records into RRsets keyed by (name, class, type), as RFC 2181 defines them. Names
 // are compared without regard to case; the RRset takes its first record's spelling
-export function groupRrsets(records: WireRecord[]): Rrset[] {
+export function groupRrsets(records: ResourceRecord[]): Rrset[] {
   const map = new Map<string, Rrset>();
   for (const rr of records) {
     if (rr.type === RECORD_TYPES.RRSIG || rr.type === RECORD_TYPES.OPT) continue;
@@ -227,7 +137,7 @@ export function groupRrsets(records: WireRecord[]): Rrset[] {
       map.set(key, {
         name: rr.name,
         type: rr.type,
-        typeName: rr.typeName,
+        typeName: typeName(rr.type),
         class: rr.class,
         ttl: rr.ttl,
         records: [rr],
@@ -290,12 +200,6 @@ export function computeDsDigest(
 // signed data reconstruction
 // ---------------------------------------------------------------------------
 
-// canonical RR ordering within an RRset (RFC 4034 §6.3): sort by RDATA, treated as an
-// unsigned left-justified octet sequence
-function compareRdata(a: WireRecord, b: WireRecord): number {
-  return compareBytes(a.rdata, b.rdata);
-}
-
 // the wildcard an answer at `name` was synthesised from, given its RRSIG's labels field: `*.`
 // and the rightmost `labels` labels, the source of synthesis (RFC 4035 §5.3.2)
 export function wildcardOwner(name: string, labels: number): string {
@@ -338,24 +242,26 @@ export function buildSignedData(
   const encodedOwner = canonicalWireName(signedOwner);
   const parts: Uint8Array[] = [signedPrefix(rrsig)];
 
-  // deduplicate identical RDATA before ordering: a duplicate RR in the wire response is not
-  // part of the RRset and would corrupt the digest if included twice
+  // the record data in canonical form, deduplicated before ordering: a duplicate RR in the
+  // wire response is not part of the RRset and would corrupt the digest if included twice
   const seen = new Set<string>();
-  const unique = rrset.records.filter(rr => {
-    const key = toBase64(rr.rdata);
-    if (seen.has(key)) return false;
+  const unique: Uint8Array[] = [];
+  for (const rr of rrset.records) {
+    const rdata = canonicalRdata(rrset.type, rr.rdata);
+    const key = toBase64(rdata);
+    if (seen.has(key)) continue;
     seen.add(key);
-    return true;
-  });
+    unique.push(rdata);
+  }
 
-  for (const rr of [...unique].sort(compareRdata)) {
+  for (const rdata of unique.sort(compareBytes)) {
     const header = new Uint8Array(10);
     writeU16(header, 0, rrset.type);
     writeU16(header, 2, rrset.class);
     // the original TTL from the RRSIG, not the TTL the record arrived with
     writeU32(header, 4, rrsig.originalTtl);
-    writeU16(header, 8, rr.rdata.length);
-    parts.push(encodedOwner, header, rr.rdata);
+    writeU16(header, 8, rdata.length);
+    parts.push(encodedOwner, header, rdata);
   }
 
   return { data: concatBytes(parts), ownerName: signedOwner, wildcard };
