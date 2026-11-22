@@ -103,7 +103,7 @@ const messageOf = (error: unknown) => (error instanceof Error ? error.message : 
 
 // a `node:net` or `node:tls` socket as a wire
 function socketWire(socket: Socket, handlers: WireHandlers): Wire {
-  socket.on('data', (chunk: Buffer) => {
+  socket.on('data', (chunk: Uint8Array) => {
     handlers.onData(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.length));
   });
   socket.on('error', error => handlers.onClose(error));

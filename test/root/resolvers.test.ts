@@ -2115,6 +2115,37 @@ describe('AuthoritativeResolver', () => {
       expect(network.log()).toEqual(['10.0.1.1 example.com A', '10.1.0.1 example.com A']);
     });
 
+    it('forgets a delegation when the TTL of its glue runs out', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        // com hands out example.com's servers for two days, and their addresses for a minute
+        const shortGlue: SimulatedServer = query => {
+          const reply = com(query);
+          if (!(reply instanceof Uint8Array)) return reply;
+          const message = decodeMessage(reply);
+          return encodeMessage({
+            ...message,
+            additionals: message.additionals.map(record => ({ ...record, ttl: 60 })),
+          });
+        };
+        const iterative = resolver({}, { '10.0.1.1': shortGlue, '10.0.1.2': shortGlue });
+        await iterative.query('example.com', 'A');
+        vi.setSystemTime(Date.now() + 59_000);
+        network.queries.length = 0;
+        await iterative.query('one.example.com', 'TXT');
+        expect(network.log()).toEqual(['10.1.0.1 one.example.com TXT']);
+        vi.setSystemTime(Date.now() + 2_000);
+        network.queries.length = 0;
+        await iterative.query('two.example.com', 'TXT');
+        expect(network.log()).toEqual([
+          '10.0.1.1 two.example.com TXT',
+          '10.1.0.1 two.example.com TXT',
+        ]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('looks up a nameserver address again once its own TTL runs out', async () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       try {

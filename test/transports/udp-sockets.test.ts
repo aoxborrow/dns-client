@@ -11,6 +11,14 @@ import type { FixtureServer } from '../support/fixture-server';
 // a fresh source port per query, so an off-path attacker forging an answer has to guess the
 // port as well as the ID (RFC 5452), and no socket outlives the query it was opened for
 
+// the system lookup of a server's name, made to never finish while `stall.on` is set
+const stall = vi.hoisted(() => ({ on: false }));
+vi.mock('node:dns/promises', async importOriginal => {
+  const real = await importOriginal<typeof import('node:dns/promises')>();
+  const lookup = (host: string) => (stall.on ? new Promise<never>(() => {}) : real.lookup(host));
+  return { ...real, default: { ...real, lookup }, lookup };
+});
+
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const query = (id: number) => encodeQuery({ id, name: 'example.com', type: 'A' });
 
@@ -137,6 +145,35 @@ describe('UDP sockets', () => {
     ]);
     expect(new Set(server.received.map(received => received.sourcePort)).size).toBe(2);
     expect(await allClosed()).toBe(true);
+  });
+
+  it('rejects a query sent just before the transport closes', async () => {
+    await serve(({ query: asked }) => ({ response: answerTo(asked) }));
+    transport = createUdpTransport();
+    const endpoint = { host: server.address, port: server.port };
+    await transport.send({ endpoint, query: query(6) });
+    const late = transport.send({ endpoint, query: query(7) });
+    transport.close();
+    await expect(late).rejects.toThrow('closed');
+  });
+
+  it('stops waiting for the server name to resolve when the query is aborted', async () => {
+    stall.on = true;
+    const transport = createUdpTransport();
+    try {
+      const giveUp = new AbortController();
+      const sent = transport.send({
+        endpoint: { host: 'dns.example', port: 53 },
+        query: query(5),
+        signal: giveUp.signal,
+      });
+      await sleep(20);
+      giveUp.abort(new Error('given up'));
+      await expect(sent).rejects.toThrow('given up');
+    } finally {
+      stall.on = false;
+      transport.close();
+    }
   });
 });
 

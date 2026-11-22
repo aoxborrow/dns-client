@@ -6,6 +6,7 @@ import { openTunnel } from './proxy';
 import type { Proxy } from './proxy';
 import { defaultConnect } from './runtime';
 import type { Connection, OnEvent, TlsOptions } from './types';
+import { concatBytes } from '../wire/bytes';
 
 // DoH over HTTP/2 with `node:http2`, for Node, whose own `fetch` speaks only HTTP/1.1.
 // RFC 8484 §5.2 names HTTP/2 as the minimum recommended version, and some servers (some
@@ -276,7 +277,7 @@ export function createHttp2Client(options: Http2ClientOptions = {}): Http2Client
       const { signal } = request;
       let status: number | undefined;
       let contentType: string | null = null;
-      const chunks: Buffer[] = [];
+      const chunks: Uint8Array[] = [];
       let size = 0;
       let stream: ClientHttp2Stream | undefined;
       let finished = false;
@@ -300,7 +301,7 @@ export function createHttp2Client(options: Http2ClientOptions = {}): Http2Client
           resolve({
             status: status ?? 0,
             contentType,
-            bytes: new Uint8Array(Buffer.concat(chunks)),
+            bytes: concatBytes(chunks),
           });
         } else if (signal?.aborted) {
           reject(signal.reason);
@@ -341,7 +342,7 @@ export function createHttp2Client(options: Http2ClientOptions = {}): Http2Client
         status = Number(headers[':status']);
         contentType = headers['content-type'] ?? null;
       });
-      stream.on('data', (chunk: Buffer) => {
+      stream.on('data', (chunk: Uint8Array) => {
         // an error status is reported for what it is, whatever its body
         if (status !== undefined && (status < 200 || status >= 300)) return;
         size += chunk.length;

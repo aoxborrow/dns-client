@@ -1,4 +1,4 @@
-import { escapeText, fromHex, latin1Decode, unescapeText } from '../wire/bytes';
+import { escapeText, fromHex, unescapeText } from '../wire/bytes';
 import { serviceParamName } from './decode';
 import type { DnsRecord, ServiceParams } from './types';
 
@@ -101,7 +101,7 @@ function serviceParams(params: ServiceParams): string[] {
     out.push([
       Number(key),
       value.length
-        ? `${serviceParamName(Number(key))}=${quote(latin1Decode(value))}`
+        ? `${serviceParamName(Number(key))}=${quoteString(escapeText(value))}`
         : serviceParamName(Number(key)),
     ]);
   }

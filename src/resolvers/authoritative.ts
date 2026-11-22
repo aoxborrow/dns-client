@@ -1119,6 +1119,8 @@ export class AuthoritativeResolver {
     }
 
     const glue = decodeRecords(message.additionals);
+    // the TTLs of the glue taken: the cut keeps those addresses, so it lasts no longer
+    const glueTtls: number[] = [];
     // names are compared in their canonical form and shown as the zone wrote them
     const written = new Map<string, string>();
     for (const record of delegations) {
@@ -1136,14 +1138,14 @@ export class AuthoritativeResolver {
         // delegated zone alone would be too narrow: the root's glue for the servers of com,
         // named under net, could then never be used
         const inBailiwick = isSubdomain(target, zone);
-        const addresses = glue
-          .filter(
-            (record): record is Extract<DnsRecord, { type: 'A' | 'AAAA' }> =>
-              inBailiwick &&
-              (record.type === 'A' || record.type === 'AAAA') &&
-              canonicalName(record.name) === target
-          )
-          .map(record => normalizeAddress(record.address));
+        const taken = glue.filter(
+          (record): record is Extract<DnsRecord, { type: 'A' | 'AAAA' }> =>
+            inBailiwick &&
+            (record.type === 'A' || record.type === 'AAAA') &&
+            canonicalName(record.name) === target
+        );
+        glueTtls.push(...taken.map(record => record.ttl));
+        const addresses = taken.map(record => normalizeAddress(record.address));
         const shown = written.get(target);
         for (const address of addresses) this.learnName(address, shown ?? target);
         const usable = this.usable(addresses);
@@ -1155,7 +1157,7 @@ export class AuthoritativeResolver {
         };
       });
 
-    const ttl = Math.min(...delegations.map(record => record.ttl));
+    const ttl = Math.min(...delegations.map(record => record.ttl), ...glueTtls);
     return {
       kind: 'referral',
       cut: {

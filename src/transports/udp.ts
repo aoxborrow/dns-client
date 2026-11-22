@@ -121,7 +121,7 @@ export function createUdpTransport(options: UdpTransportOptions = {}): Transport
   function openSocket(
     module: typeof import('node:dgram'),
     family: Family,
-    onMessage: (shared: SharedSocket, message: Buffer, remote: RemoteInfo) => void,
+    onMessage: (shared: SharedSocket, message: Uint8Array, remote: RemoteInfo) => void,
     onGone: (shared: SharedSocket) => void
   ): SharedSocket {
     const shared: SharedSocket = {
@@ -166,7 +166,7 @@ export function createUdpTransport(options: UdpTransportOptions = {}): Transport
     waiter.resolve({ bytes, transport: 'udp' });
   }
 
-  function deliver(shared: SharedSocket, message: Buffer, remote: RemoteInfo): void {
+  function deliver(shared: SharedSocket, message: Uint8Array, remote: RemoteInfo): void {
     if (message.length < 12) return;
     const id = (message[0] << 8) | message[1];
     settleFirst(
@@ -228,21 +228,35 @@ export function createUdpTransport(options: UdpTransportOptions = {}): Transport
 
   // ---- direct
 
-  async function resolveHost(host: string): Promise<string> {
+  // the system lookup takes no signal, so an abort stops the wait for it instead
+  async function resolveHost(host: string, signal: AbortSignal | undefined): Promise<string> {
     if (isIp(host)) return host;
+    if (signal?.aborted) throw signal.reason;
+    let onAbort = () => {};
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(signal?.reason);
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
     try {
       const { lookup } = await import('node:dns/promises');
-      return (await lookup(host)).address;
+      return (await Promise.race([lookup(host), aborted])).address;
     } catch (cause) {
+      if (signal?.aborted) throw signal.reason;
       throw new NoServerError(`Cannot resolve server name "${host}"`, { server: host, cause });
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
     }
   }
 
   async function sendDirect(request: TransportRequest): Promise<TransportResponse> {
     const module = dgram ?? (await loadDgram());
     const { endpoint, query } = request;
-    const address = isIp(endpoint.host) ? endpoint.host : await resolveHost(endpoint.host);
+    const address = isIp(endpoint.host)
+      ? endpoint.host
+      : await resolveHost(endpoint.host, request.signal);
     if (request.signal?.aborted) throw request.signal.reason;
+    // the transport may have closed while the module loaded or the name resolved
+    if (closed) throw new ConnectionError('The UDP transport was closed');
     const id = (query[0] << 8) | query[1];
     const family: Family = address.includes(':') ? 'udp6' : 'udp4';
     const lifetime = request.lifetime?.aborted ? undefined : request.lifetime;
@@ -283,7 +297,7 @@ export function createUdpTransport(options: UdpTransportOptions = {}): Transport
   // an answer from the relay: three bytes of header, the address it really came from,
   // then the datagram
   function deliverRelayed(association: Association) {
-    return (shared: SharedSocket, message: Buffer, remote: RemoteInfo): void => {
+    return (shared: SharedSocket, message: Uint8Array, remote: RemoteInfo): void => {
       if (
         remote.port !== association.relay.port ||
         normalizeAddress(remote.address) !== normalizeAddress(association.relay.host)
@@ -348,7 +362,10 @@ export function createUdpTransport(options: UdpTransportOptions = {}): Transport
         port: 0,
       });
       // an unspecified relay address means "the address you reached me on"
-      const relayHost = await resolveHost(UNSPECIFIED.has(bound.host) ? proxy.host : bound.host);
+      const relayHost = await resolveHost(
+        UNSPECIFIED.has(bound.host) ? proxy.host : bound.host,
+        signal
+      );
       stopIfAborted();
       const relay = { host: relayHost, port: bound.port };
 

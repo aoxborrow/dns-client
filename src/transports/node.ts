@@ -79,7 +79,7 @@ function wrapSocket(
     else controller.close();
   };
   // a copy: the stream's consumer may hold the chunk after the socket moves on
-  const onData = (chunk: Buffer) => controller.enqueue(new Uint8Array(chunk));
+  const onData = (chunk: Uint8Array) => controller.enqueue(new Uint8Array(chunk));
   const onEnd = () => finish();
   const onClose = () => finish();
   const onError = (error: Error) => finish(error);

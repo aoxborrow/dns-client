@@ -9,6 +9,7 @@ import {
   formatSignatureTime,
   parseIpv4,
   parseIpv6,
+  parseRecordData,
   reverseIp,
   sortRecords,
 } from '../../src/records/index';
@@ -250,6 +251,12 @@ describe('formatRecordData', () => {
       }
     }
     expect(formatted).toBeGreaterThan(2000);
+  });
+
+  it('round-trips the bytes of unknown SVCB parameters through text', () => {
+    const params = { other: { 667: 'ff', 668: 'c3a9', 669: '5c22', 670: '00e9' } };
+    const text = formatRecordData({ ...base, type: 'HTTPS', priority: 1, target: '.', params });
+    expect(parseRecordData('HTTPS', text)).toMatchObject({ params });
   });
 });
 

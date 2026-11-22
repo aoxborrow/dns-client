@@ -18,4 +18,14 @@ export default [
     files: ['src/**/*.ts'],
     rules: { 'no-console': 'error' },
   },
+  // bytes are Uint8Array, never Buffer, which exists only in Node
+  {
+    files: ['src/**/*.ts'],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        { name: 'Buffer', message: 'Bytes are Uint8Array, never Buffer (CONTRIBUTING.md).' },
+      ],
+    },
+  },
 ];

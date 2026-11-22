@@ -322,6 +322,61 @@ function stripping(server: SimulatedServer, type: number): SimulatedServer {
   };
 }
 
+// answers a CNAME question for one name with the signed CNAME of another, and nothing else
+function replaying(server: SimulatedServer, asked: string, replayed: string): SimulatedServer {
+  return async query => {
+    if (query.questions[0].name !== asked || query.questions[0].type !== 5) return server(query);
+    const reply = await server({
+      ...query,
+      questions: [{ ...query.questions[0], name: replayed }],
+    });
+    if (!(reply instanceof Uint8Array)) return reply;
+    const message = decodeMessage(reply);
+    message.questions = query.questions;
+    message.rcode = 0;
+    message.authorities = [];
+    return encodeMessage(message);
+  };
+}
+
+describe('validate: a CNAME question', () => {
+  const zones = [
+    root,
+    tld,
+    secure('a.example', [
+      ['www.a.example', 'CNAME', 'host.a.example'],
+      ['host.a.example', 'A', '192.0.2.6'],
+    ]),
+  ];
+
+  it('is secure with the signed CNAME at the name asked', async () => {
+    const [authoritative, recursive] = await both(zones, 'www.a.example', 'CNAME');
+    expectStatus([authoritative, recursive], 'secure', 'verified');
+    for (const answer of [authoritative, recursive])
+      expect(answer.records).toMatchObject([{ name: 'www.a.example', type: 'CNAME' }]);
+  });
+
+  it('is bogus when the only CNAME belongs to another name', async () => {
+    const signed = signedNetwork(zones);
+    signed.servers[signed.recursive] = replaying(
+      signed.servers[signed.recursive],
+      'other.a.example',
+      'www.a.example'
+    );
+    const network = simulateNetwork(signed.servers);
+    const resolver = new Resolver({
+      transports: network.transports,
+      servers: [signed.recursive],
+      trustAnchors: signed.trustAnchors,
+      validate: true,
+    });
+    const answer = await resolver.query('other.a.example', 'CNAME');
+    expect(answer.records).toEqual([]);
+    expect(answer.security?.status).toBe('bogus');
+    expect(answer.security?.failure).toMatchObject({ kind: 'denial', name: 'other.a.example' });
+  });
+});
+
 describe('validate: an alias without its target', () => {
   const zones = [
     root,

@@ -1132,7 +1132,12 @@ async function judgeResponse(
   // keeps the alias RRsets on the way, and the name at the end still takes a denial proof
   if (
     response.rcode === RCODES.NOERROR &&
-    (answered || (response.type === CNAME && rrsets.some(rrset => rrset.type === CNAME)))
+    (answered ||
+      (response.type === CNAME &&
+        rrsets.some(
+          rrset =>
+            rrset.type === CNAME && canonicalName(rrset.name) === canonicalName(response.name)
+        )))
   )
     return links;
   const aliased = target !== canonicalName(response.name);
