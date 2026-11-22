@@ -1,0 +1,45 @@
+name: DNSSEC Algorithms
+
+# Weekly check of the bundled DNSSEC algorithm and DS digest tables
+# (DNSSEC_ALGORITHMS and DS_DIGEST_TYPES in src/dnssec/constants.ts) against IANA's
+# registries. It goes red when they differ: a new algorithm or digest type, a renamed one,
+# or a change in a row's standing (RFC 9904's recommendation columns). The fix is
+# `yarn refresh-algorithms` and the procedure in CONTRIBUTING.md. It writes nothing and
+# opens nothing.
+
+on:
+  schedule:
+    # Mondays 14:30 UTC, between the trust anchor check and the live suite
+    - cron: '30 14 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dnssec-algorithms-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dnssec-algorithms:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: 'yarn'
+
+      - name: Install dependencies (immutable)
+        run: yarn install --immutable
+
+      - name: Compare the bundled algorithm and digest tables with IANA's registries
+        run: yarn refresh-algorithms --check

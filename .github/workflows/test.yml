@@ -1,0 +1,83 @@
+name: Test
+
+# Every push to main and every pull request: lint (typecheck, eslint, prettier), the unit
+# suite, the browser bundle check and the pack check, on each supported Node line; and the
+# socket-free part of the suite inside the Cloudflare Workers runtime. No network, no secrets.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'yarn'
+
+      - name: Install dependencies (immutable)
+        run: yarn install --immutable
+
+      - name: Lint (typecheck, eslint, prettier)
+        run: yarn lint
+
+      - name: Unit tests
+        run: yarn test
+
+      - name: Browser-safe entries bundle with no Node built-ins
+        run: yarn check:browser
+
+      - name: The packed tarball installs and imports
+        run: yarn check:pack
+
+  workers:
+    name: Workers runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: 'yarn'
+
+      - name: Install dependencies (immutable)
+        run: yarn install --immutable
+
+      # a local workerd, through @cloudflare/vitest-plugin: more permissive than a deployed
+      # Worker (it lets TLS start inside a proxy tunnel), so this proves the code runs there,
+      # not every behaviour of production Workers
+      - name: Unit tests inside workerd
+        run: yarn test:workers
