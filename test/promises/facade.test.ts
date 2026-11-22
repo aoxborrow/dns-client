@@ -281,6 +281,22 @@ describe('servers', () => {
   });
 });
 
+describe('transports', () => {
+  it('refuses a set of transports given together with transport options', () => {
+    const { transports } = simulateNetwork({});
+    expect(() => new Resolver({ transports, pipeline: true })).toThrow(
+      /\(`pipeline`\) cannot be combined with `transports`/
+    );
+  });
+
+  it('makes a set of its own from transport options, and keeps it when the servers change', () => {
+    let mine: Resolver | undefined;
+    expect(() => (mine = new Resolver({ pipeline: true, idleTimeout: 10 }))).not.toThrow();
+    expect(() => mine?.setServers(['192.0.2.1'])).not.toThrow();
+    mine?.close();
+  });
+});
+
 describe('cancel', () => {
   it('rejects the calls in progress with ECANCELLED, as node:dns does', async () => {
     const theirs = new nodeDns.Resolver({ timeout: 2000, tries: 1 });

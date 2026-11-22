@@ -502,8 +502,9 @@ const DECODERS: Record<number, Decoder> = {
 };
 
 export interface DecodeOptions {
-  // return a record whose data cannot be read as an UnknownRecord rather than throwing
-  lenient?: boolean;
+  // malformed record data is an error. By default such a record comes back in the
+  // generic form, as an UnknownRecord
+  strict?: boolean;
 }
 
 function unknownRecord(record: ResourceRecord): UnknownRecord {
@@ -538,7 +539,7 @@ export function decodeRecord(record: ResourceRecord, options: DecodeOptions = {}
     } as DnsRecord;
   } catch (error) {
     if (!(error instanceof ParseError)) throw error;
-    if (options.lenient) return unknownRecord(record);
+    if (!options.strict) return unknownRecord(record);
     throw new ParseError(
       `Malformed ${typeName(record.type)} record at ${record.name}: ${error.message}`,
       { cause: error }

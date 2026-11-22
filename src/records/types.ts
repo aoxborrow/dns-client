@@ -301,8 +301,8 @@ export interface LocRecord extends RecordBase {
   altitude: number;
 }
 
-// a record of a type the library has no fields for, or whose data it could not read in
-// lenient mode. The type is in the RFC 3597 form, so it never collides with a known one
+// a record of a type the library has no fields for, or whose data it could not read
+// (which is an error instead when decoding is `strict`). The type is in the RFC 3597 form, so it never collides with a known one
 export interface UnknownRecord extends RecordBase {
   type: `TYPE${number}`;
   // the record's data, hex

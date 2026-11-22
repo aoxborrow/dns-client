@@ -240,7 +240,7 @@ These can be set on a resolver for every query, or passed to one `query()`:
 | `authenticData` | `false` | the AD flag in the query: ask to be told whether the answer validated |
 | `udpPayloadSize` | `1232` | the largest UDP answer this client will accept |
 | `ednsOptions` | none | EDNS options to send: `nsidOption()`, `clientSubnetOption()`, `cookieOption()`, `paddingOption()` |
-| `edns` | on | `false` sends a plain RFC 1035 query |
+| `edns` | on | `false` sends a plain RFC 1035 query, with no EDNS record. `dnssecOk`, `udpPayloadSize` and `ednsOptions` travel in that record, so setting one of them together with `edns: false` is a `DnsError`. The exception is `edns: false` passed to one `query()`: that query goes out plain, without whichever of them the resolver was made with |
 | `signal` | none | an `AbortSignal`, per query. An aborted query rejects with the signal's reason |
 
 `Resolver` also takes:
@@ -274,7 +274,9 @@ These can be set on a resolver for every query, or passed to one `query()`:
 
 Both take the transport options (`proxy`, `fetch`, `connect`, `tls`, `pipeline`,
 `idleTimeout`, `dohMethod`; see [`/transports/*`](#transports)), `onEvent`, and
-`transports`, a set of sockets to share with other resolvers.
+`transports`, a set of sockets to share with other resolvers. The set is made with
+`createTransports(options)` and takes its transport options there: a resolver given both
+`transports` and a transport option throws a `DnsError`.
 
 ### Caching
 
@@ -430,8 +432,8 @@ binary data is hex or base64, TTLs and RRSIG times are numbers of seconds.
 Supported: A, AAAA, CAA, CDNSKEY, CDS, CERT, CNAME, DNAME, DNSKEY, DS, HINFO, HTTPS, KEY,
 LOC, MX, NAPTR, NS, NSEC, NSEC3, NSEC3PARAM, OPENPGPKEY, PTR, RP, RRSIG, SIG, SOA, SRV,
 SSHFP, SVCB, TLSA, TSIG, TXT and URI. A record of any other type, or one whose data is
-malformed, comes back in a generic form (`type: 'TYPE65280'`, `data` in hex); `strict: true`
-on a resolver makes malformed data an error.
+malformed, comes back in a generic form (`type: 'TYPE65280'`, `data` in hex); `strict: true`,
+on a resolver or on `decodeRecord(s)`, makes malformed data an error.
 
 ### Formatting and helpers
 
@@ -569,7 +571,8 @@ validating resolver upstream hands over broken records instead of a SERVFAIL); t
 zone between the root and the data has its DS and DNSKEY records fetched the same way, and
 the judging core decides. The answer itself is unchanged apart from carrying its
 signatures in `answers`; nothing is withheld, whatever the verdict. Without `validate`,
-nothing changes.
+nothing changes. Validation needs EDNS, which carries the DO bit: `edns: false` on a
+validating resolver, or on one of its queries, is a `DnsError`.
 
 | Status | Meaning |
 | --- | --- |

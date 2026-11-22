@@ -13,8 +13,7 @@ import { reverseIp } from '../records/addresses';
 import type { DnsRecord, KnownRecordType } from '../records/types';
 import { Resolver as LibraryResolver } from '../resolvers/index';
 import type { ResolverOptions as LibraryResolverOptions } from '../resolvers/index';
-import { hasTransportOptions } from '../exchange';
-import { createTransports, defaultTransports } from '../transports/index';
+import { transportsFor, withoutTransportOptions } from '../exchange';
 import type { Transports } from '../transports/index';
 import { configuredServers } from '../transports/host';
 import type { Server } from '../transports/types';
@@ -171,10 +170,9 @@ export class Resolver {
       ...(options.tries !== undefined && { retries: options.tries - 1 }),
     };
     // one set of sockets for the resolver's life, so changing servers keeps them
-    this.#ownsTransports = !options.transports && hasTransportOptions(options);
-    this.#transports =
-      options.transports ??
-      (this.#ownsTransports ? createTransports(options) : defaultTransports());
+    const { transports, owned } = transportsFor(options);
+    this.#transports = transports;
+    this.#ownsTransports = owned;
     this.#servers = options.servers?.map(server =>
       typeof server === 'string' ? parseServer(server) : server
     );
@@ -398,8 +396,9 @@ export class Resolver {
   // ---- inside
 
   #make(): LibraryResolver {
+    // the set is already made from the transport options, so they are not given again
     return new LibraryResolver({
-      ...this.#options,
+      ...withoutTransportOptions(this.#options),
       servers: this.#servers,
       transports: this.#transports,
     });

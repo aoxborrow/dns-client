@@ -6,14 +6,19 @@ import {
   TimeoutError,
 } from '../errors';
 import type { ServerFailure } from '../errors';
-import { exchange, hasTransportOptions, presentName, tcpFallbackFailure } from '../exchange';
+import {
+  checkEdnsSettings,
+  exchange,
+  presentName,
+  tcpFallbackFailure,
+  transportsFor,
+} from '../exchange';
 import type { ExchangeResult } from '../exchange';
 import { RCODES, rcodeName } from '../protocol/header';
 import { typeCode, typeName } from '../protocol/types';
 import { decodeRecords } from '../records/decode';
 import type { DnsRecord, KnownRecordType, RecordOf } from '../records/types';
 import { isIp, isIpv4, isIpv6, normalizeAddress } from '../transports/endpoint';
-import { createTransports, defaultTransports } from '../transports/index';
 import type { Transports } from '../transports/index';
 import { now } from '../transports/runtime';
 import type { OnEvent, TransportOptions } from '../transports/types';
@@ -25,7 +30,7 @@ import {
   splitName,
   toAsciiName,
 } from '../wire/names';
-import { dnssecResponse, Validator } from '../dnssec/validate';
+import { dnssecResponse, requireEdns, Validator } from '../dnssec/validate';
 import type { DnssecResponse } from '../dnssec/judge';
 import type { TrustAnchor } from '../dnssec/types';
 import { aliasTarget, buildAnswer } from './answer';
@@ -312,13 +317,14 @@ export class AuthoritativeResolver {
   private swept = 0;
 
   constructor(options: AuthoritativeResolverOptions = {}) {
+    checkEdnsSettings(options);
     this.options = options;
     this.limit = createLimiter(options.concurrency ?? Infinity);
     this.limitServer = createKeyedLimiter(options.serverConcurrency ?? DEFAULT_SERVER_CONCURRENCY);
     this.pace = createPacer(options.serverDelay ?? 0);
-    this.ownsTransports = !options.transports && hasTransportOptions(options);
-    this.transports =
-      options.transports ?? (this.ownsTransports ? createTransports(options) : defaultTransports());
+    const { transports, owned } = transportsFor(options);
+    this.transports = transports;
+    this.ownsTransports = owned;
 
     for (const [name, addresses] of Object.entries(options.hosts ?? {})) {
       const list = [addresses].flat().map(normalizeAddress);
@@ -329,6 +335,7 @@ export class AuthoritativeResolver {
       this.givenNames.set(address, name)
     );
     if (options.validate) {
+      requireEdns(options.edns);
       this.validator = new Validator({
         trustAnchors: options.trustAnchors,
         ...(options.cache === false && { maxZones: 0 }),
@@ -349,8 +356,10 @@ export class AuthoritativeResolver {
     type: string | number,
     options: AuthoritativeQueryOptions = {}
   ): Promise<Answer> {
+    checkEdnsSettings(options, this.options);
     const follow = this.options.followCnames === true;
     if (!this.validator) return this.walk(name, type, options, follow);
+    requireEdns(options.edns);
     // one deadline for the data and the chain together
     const totalTimeout = options.totalTimeout ?? this.options.totalTimeout ?? DEFAULT_TOTAL_TIMEOUT;
     const deadline = now() + totalTimeout;
@@ -511,7 +520,7 @@ export class AuthoritativeResolver {
       }
       // keep the alias records, and start again from the name they point at
       aliases.push(
-        ...decodeRecords(result.message.answers, { lenient: !this.options.strict }).filter(
+        ...decodeRecords(result.message.answers, { strict: this.options.strict }).filter(
           record => record.type === 'CNAME' || record.type === 'DNAME'
         )
       );
@@ -979,7 +988,6 @@ export class AuthoritativeResolver {
     }
     if (message.rcode !== RCODES.NOERROR) return { kind: 'answer' };
 
-    const lenient = { lenient: true };
     if (message.answers.length > 0) {
       // records from a server without authority for them, beside a delegation further
       // down, are a referral: the child zone is asked, not taken at the parent's word
@@ -987,7 +995,7 @@ export class AuthoritativeResolver {
         const referral = this.referral(result, name, zone);
         if (referral?.kind === 'referral') return referral;
       }
-      const answers = decodeRecords(message.answers, lenient);
+      const answers = decodeRecords(message.answers);
       // records of the type asked for, at the name or at the end of its aliases
       if (type === 'ANY' || type === 'CNAME' || type === 'DNAME') return { kind: 'answer' };
       const owner = aliasTarget(name, answers);
@@ -1007,8 +1015,7 @@ export class AuthoritativeResolver {
   // NS records, or a server authoritative for what it answered
   private referral(result: ExchangeResult, name: string, zone: string): Outcome | undefined {
     const { message } = result;
-    const lenient = { lenient: true };
-    const authorities = decodeRecords(message.authorities, lenient);
+    const authorities = decodeRecords(message.authorities);
     const delegations = authorities.filter(
       (record): record is Extract<DnsRecord, { type: 'NS' }> => record.type === 'NS'
     );
@@ -1026,7 +1033,7 @@ export class AuthoritativeResolver {
       };
     }
 
-    const glue = decodeRecords(message.additionals, lenient);
+    const glue = decodeRecords(message.additionals);
     // names are compared in their canonical form and shown as the zone wrote them
     const written = new Map<string, string>();
     for (const record of delegations) {
@@ -1225,7 +1232,7 @@ export class AuthoritativeResolver {
       try {
         const { result } = await this.resolve(run, name, type, undefined, nesting + 1, answered);
         answered = result.server;
-        for (const record of decodeRecords(result.message.answers, { lenient: true })) {
+        for (const record of decodeRecords(result.message.answers)) {
           if (record.type === 'A' || record.type === 'AAAA') {
             found.push(normalizeAddress(record.address));
             ttl = Math.min(ttl, record.ttl);

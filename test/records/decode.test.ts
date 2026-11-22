@@ -193,7 +193,7 @@ describe('decodeRecord over the corpus', () => {
       const message = decodeMessage(response);
       for (const rr of [...message.answers, ...message.authorities, ...message.additionals]) {
         expect(isKnownRecordType(rr.type), `${label}: ${typeName(rr.type)}`).toBe(true);
-        const result = decodeRecord(rr);
+        const result = decodeRecord(rr, { strict: true });
         expect(result.type, label).toBe(typeName(rr.type));
         expect(result.name, label).toBe(rr.name);
         types.add(rr.type);
@@ -518,7 +518,7 @@ describe('decodeRecord: types with no second opinion', () => {
   });
 
   it('rejects SVCB parameters that break the RFC 9460 rules', () => {
-    const bad = (rdata: number[]) => () => decodeRecord(record('HTTPS', rdata));
+    const bad = (rdata: number[]) => () => decodeRecord(record('HTTPS', rdata), { strict: true });
     expect(bad([0, 1, 0, 0, 3, 0, 2, 0, 53, 0, 1, 0, 3, 2, ...ascii('h2')])).toThrow(
       /out of order/
     );
@@ -716,17 +716,16 @@ describe('decodeRecord: unknown and malformed', () => {
     ['CNAME', [3, 0x77, 0x77], /Label runs past/],
   ];
 
-  it.each(malformed)('rejects a malformed %s record', (type, rdata, message) => {
-    expect(() => decodeRecord(record(type, rdata))).toThrow(ParseError);
-    expect(() => decodeRecord(record(type, rdata))).toThrow(message);
+  it.each(malformed)('rejects a malformed %s record when strict', (type, rdata, message) => {
+    const decode = () => decodeRecord(record(type, rdata), { strict: true });
+    expect(decode).toThrow(ParseError);
+    expect(decode).toThrow(message);
     // the error says which record, and where
-    expect(() => decodeRecord(record(type, rdata))).toThrow(
-      new RegExp(`Malformed ${type} record at example.com`)
-    );
+    expect(decode).toThrow(new RegExp(`Malformed ${type} record at example.com`));
   });
 
-  it('returns a malformed record in the generic form when lenient', () => {
-    expect(decodeRecord(record('A', [192, 0, 2]), { lenient: true })).toEqual({
+  it('returns a malformed record in the generic form unless strict', () => {
+    expect(decodeRecord(record('A', [192, 0, 2]))).toEqual({
       name: 'example.com',
       type: 'TYPE1',
       class: 'IN',
@@ -747,7 +746,7 @@ describe('decodeRecord: unknown and malformed', () => {
       if (mangled.length > 0)
         mangled[Math.floor(random() * mangled.length)] = Math.floor(random() * 256);
       try {
-        decodeRecord({ ...rr, rdata: mangled });
+        decodeRecord({ ...rr, rdata: mangled }, { strict: true });
       } catch (error) {
         if (!(error instanceof ParseError)) {
           throw new Error(

@@ -1,6 +1,7 @@
 import { getServers } from 'node:dns';
 import {
   ConnectionError,
+  DnsError,
   InvalidQueryError,
   InvalidResponseError,
   NoServerError,
@@ -2614,5 +2615,105 @@ describe('AuthoritativeResolver', () => {
         }
       });
     });
+  });
+});
+
+describe('settings that need EDNS, where `edns: false` leaves it out', () => {
+  // `dnssecOk`, `udpPayloadSize` and `ednsOptions` travel in the EDNS record, so a query
+  // sent without one has nowhere to carry them
+  type EdnsOnly = Pick<ResolverOptions, 'dnssecOk' | 'udpPayloadSize' | 'ednsOptions'>;
+  const nsid = { code: 3, data: new Uint8Array(0) };
+  const each: [string, EdnsOnly][] = [
+    ['dnssecOk', { dnssecOk: true }],
+    ['udpPayloadSize', { udpPayloadSize: 4096 }],
+    ['ednsOptions', { ednsOptions: [nsid] }],
+  ];
+
+  function setUp(options: ResolverOptions = {}) {
+    const network = simulateNetwork({
+      '10.0.0.1': recursiveServer([['example.com', 'A', '192.0.2.1']]),
+    });
+    const resolver = new Resolver({
+      servers: ['10.0.0.1'],
+      transports: network.transports,
+      timeout: 100,
+      ...options,
+    });
+    return { network, resolver };
+  }
+
+  it.each(each)('refuses a resolver made with `%s` and `edns: false`', (name, setting) => {
+    const { transports } = simulateNetwork({});
+    const recursive = () => new Resolver({ transports, edns: false, ...setting });
+    const authoritative = () => new AuthoritativeResolver({ transports, edns: false, ...setting });
+    expect(recursive).toThrow(DnsError);
+    expect(recursive).toThrow(`which is what carries \`${name}\``);
+    expect(authoritative).toThrow(DnsError);
+    expect(authoritative).toThrow(`which is what carries \`${name}\``);
+  });
+
+  it('names every such setting', () => {
+    const { transports } = simulateNetwork({});
+    expect(
+      () => new Resolver({ transports, edns: false, dnssecOk: true, ednsOptions: [nsid] })
+    ).toThrow('which is what carries `dnssecOk`, `ednsOptions`');
+  });
+
+  it('refuses a query that sets one beside its own `edns: false`, before anything is sent', async () => {
+    const { network, resolver } = setUp();
+    await expect(
+      resolver.query('example.com', 'A', { edns: false, dnssecOk: true })
+    ).rejects.toThrow('which is what carries `dnssecOk`');
+    const iterative = new AuthoritativeResolver({ transports: network.transports });
+    await expect(
+      iterative.query('example.com', 'A', { edns: false, udpPayloadSize: 4096 })
+    ).rejects.toThrow('which is what carries `udpPayloadSize`');
+    expect(network.queries).toEqual([]);
+  });
+
+  it('refuses a query that sets one on a resolver made with `edns: false`, unless the query turns EDNS on', async () => {
+    const { network, resolver } = setUp({ edns: false });
+    await expect(resolver.query('example.com', 'A', { dnssecOk: true })).rejects.toThrow(
+      'which is what carries `dnssecOk`'
+    );
+    expect(network.queries).toEqual([]);
+    const answer = await resolver.query('example.com', 'A', { dnssecOk: true, edns: true });
+    expect(answer.query.edns).toEqual({ udpPayloadSize: 1232, dnssecOk: true });
+  });
+
+  it("lets a query's own `edns: false` leave out what the resolver set", async () => {
+    const { resolver } = setUp({ dnssecOk: true, ednsOptions: [nsid] });
+    const answer = await resolver.query('example.com', 'A', { edns: false });
+    expect(answer.query.edns).toBe(false);
+    expect(answer.records).toMatchObject([{ type: 'A', address: '192.0.2.1' }]);
+  });
+
+  it('takes `edns: false` beside settings that ask for nothing', () => {
+    const { transports } = simulateNetwork({});
+    expect(
+      () => new Resolver({ transports, edns: false, dnssecOk: false, ednsOptions: [] })
+    ).not.toThrow();
+  });
+});
+
+describe('a set of transports and transport options together', () => {
+  // a set that is already made cannot take them, so they are refused, not dropped
+  it('is refused by both resolvers, naming the options', () => {
+    const { transports } = simulateNetwork({});
+    const recursive = () => new Resolver({ transports, proxy: 'socks5://127.0.0.1:1080' });
+    const authoritative = () =>
+      new AuthoritativeResolver({ transports, pipeline: true, idleTimeout: 10 });
+    expect(recursive).toThrow(DnsError);
+    expect(recursive).toThrow(/\(`proxy`\) cannot be combined with `transports`/);
+    expect(authoritative).toThrow(DnsError);
+    expect(authoritative).toThrow(/\(`idleTimeout`, `pipeline`\) cannot be combined/);
+  });
+
+  it('takes either one alone', () => {
+    const { transports } = simulateNetwork({});
+    expect(() => new Resolver({ transports }).close()).not.toThrow();
+    expect(() => new Resolver({ pipeline: true }).close()).not.toThrow();
+    expect(() => new AuthoritativeResolver({ transports }).close()).not.toThrow();
+    expect(() => new AuthoritativeResolver({ dohMethod: 'POST' }).close()).not.toThrow();
   });
 });

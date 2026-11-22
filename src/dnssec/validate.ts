@@ -1,3 +1,4 @@
+import { DnsError } from '../errors';
 import { RECORD_TYPES } from '../protocol/types';
 import { RCODES } from '../protocol/header';
 import type { Message } from '../wire/message';
@@ -23,6 +24,18 @@ import type { TrustAnchor } from './types';
 // each one's DS and DNSKEY records (with DO and CD set, so an upstream validator cannot
 // hide what is broken), and hand it all to the judging core. What the core establishes
 // about each zone is kept for as long as the TTLs and signatures it rests on allow
+
+// validation asks for signatures with the DO bit, which only a query with EDNS carries.
+// Without it none come back, and every signed answer would be judged bogus: so a
+// validating resolver refuses `edns: false`, for itself or for one query
+export function requireEdns(edns: boolean | undefined): void {
+  if (edns === false) {
+    throw new DnsError(
+      'DNSSEC validation needs EDNS: signatures are asked for with the DO bit, which a ' +
+        'query sent with `edns: false` cannot carry'
+    );
+  }
+}
 
 // what a validated answer carries
 export interface Security {

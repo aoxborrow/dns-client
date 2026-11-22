@@ -1,6 +1,6 @@
 import { DnsError, InvalidQueryError, NoServerError } from '../errors';
 import type { ServerFailure } from '../errors';
-import { exchange, hasTransportOptions } from '../exchange';
+import { checkEdnsSettings, exchange, transportsFor } from '../exchange';
 import type { ExchangeResult } from '../exchange';
 import { classCode, RECORD_CLASSES } from '../protocol/classes';
 import { DEFAULT_UDP_PAYLOAD_SIZE } from '../protocol/edns';
@@ -8,7 +8,6 @@ import { RCODES } from '../protocol/header';
 import { typeCode, typeName } from '../protocol/types';
 import { decodeRecords } from '../records/decode';
 import type { DnsRecord, KnownRecordType, RecordOf } from '../records/types';
-import { createTransports, defaultTransports } from '../transports/index';
 import type { Transports } from '../transports/index';
 import { now } from '../transports/runtime';
 import { systemServers } from '../transports/system';
@@ -16,7 +15,7 @@ import type { OnEvent, Server, TransportOptions } from '../transports/types';
 import { toHex } from '../wire/bytes';
 import type { Message } from '../wire/message';
 import { comparableName, toAsciiName } from '../wire/names';
-import { dnssecResponse, Validator } from '../dnssec/validate';
+import { dnssecResponse, requireEdns, Validator } from '../dnssec/validate';
 import type { TrustAnchor } from '../dnssec/types';
 import { buildAnswer, matchingRecords } from './answer';
 import type { Answer, QuerySettings } from './answer';
@@ -90,20 +89,16 @@ export function cacheLifetime(message: Message): number {
     // alias chain, with nothing of the type at its end, is a negative answer as well
     const answered =
       !question ||
-      matchingRecords(
-        question.name,
-        typeName(question.type),
-        decodeRecords(message.answers, { lenient: true })
-      ).length > 0;
+      matchingRecords(question.name, typeName(question.type), decodeRecords(message.answers))
+        .length > 0;
     if (answered) return answerTtl;
   }
   // a negative answer lives for the smaller of the SOA's TTL and its minimum field
   // (RFC 2308 §5), and no longer than an alias that led to it; with no SOA there is
   // nothing to say how long
-  const soa = decodeRecords(
-    message.authorities.filter(record => record.type === 6),
-    { lenient: true }
-  ).find((record): record is Extract<DnsRecord, { type: 'SOA' }> => record.type === 'SOA');
+  const soa = decodeRecords(message.authorities.filter(record => record.type === 6)).find(
+    (record): record is Extract<DnsRecord, { type: 'SOA' }> => record.type === 'SOA'
+  );
   return soa ? Math.min(soa.ttl, soa.minimum, answerTtl) : 0;
 }
 
@@ -119,14 +114,16 @@ export class Resolver {
   private readonly validator: Validator | undefined;
 
   constructor(options: ResolverOptions = {}) {
+    checkEdnsSettings(options);
     this.options = options;
     this.cache = resolveCache(options.cache);
     this.limit = createLimiter(options.concurrency ?? Infinity);
     this.limitServer = createKeyedLimiter(options.serverConcurrency ?? DEFAULT_SERVER_CONCURRENCY);
-    this.ownsTransports = !options.transports && hasTransportOptions(options);
-    this.transports =
-      options.transports ?? (this.ownsTransports ? createTransports(options) : defaultTransports());
+    const { transports, owned } = transportsFor(options);
+    this.transports = transports;
+    this.ownsTransports = owned;
     if (options.validate) {
+      requireEdns(options.edns);
       this.validator = new Validator({
         trustAnchors: options.trustAnchors,
         ...(options.cache === false && { maxZones: 0 }),
@@ -148,7 +145,9 @@ export class Resolver {
     type: string | number,
     options: ResolverQueryOptions = {}
   ): Promise<Answer> {
+    checkEdnsSettings(options, this.options);
     if (!this.validator) return this.lookup(name, type, options);
+    requireEdns(options.edns);
     // the data and every record of the chain are asked for with their signatures, and with
     // Checking Disabled, so a validating resolver upstream hands over what is broken
     // instead of answering SERVFAIL

@@ -831,14 +831,17 @@ export function parseRecordData(
         class: _class,
         ttl: _ttl,
         ...fields
-      } = decodeRecord({
-        name: '.',
-        type: code,
-        class: 1,
-        ttl: 0,
-        rdata: generic,
-        section: 'answer',
-      }) as Exclude<DnsRecord, UnknownRecord>;
+      } = decodeRecord(
+        {
+          name: '.',
+          type: code,
+          class: 1,
+          ttl: 0,
+          rdata: generic,
+          section: 'answer',
+        },
+        { strict: true }
+      ) as Exclude<DnsRecord, UnknownRecord>;
       return fields;
     } catch (error) {
       if (!(error instanceof ParseError)) throw error;

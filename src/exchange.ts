@@ -291,15 +291,70 @@ function checkResponse(
 
 // ---- the exchange
 
-export function hasTransportOptions(options: TransportOptions): boolean {
-  return (
-    options.proxy !== undefined ||
-    options.fetch !== undefined ||
-    options.connect !== undefined ||
-    options.tls !== undefined ||
-    options.idleTimeout !== undefined ||
-    options.pipeline !== undefined ||
-    options.dohMethod !== undefined
+// every transport option, by name. The compiler holds this to the keys of
+// `TransportOptions`, so an option added there cannot be left out here
+const TRANSPORT_OPTIONS = {
+  proxy: true,
+  fetch: true,
+  connect: true,
+  tls: true,
+  idleTimeout: true,
+  pipeline: true,
+  dohMethod: true,
+} satisfies Record<keyof TransportOptions, true>;
+const TRANSPORT_OPTION_NAMES = Object.keys(TRANSPORT_OPTIONS) as (keyof TransportOptions)[];
+
+// the options without the transport ones, for handing on beside a set made from them
+export function withoutTransportOptions<Options extends TransportOptions>(
+  options: Options
+): Omit<Options, keyof TransportOptions> {
+  const rest: Partial<Options> = { ...options };
+  for (const name of TRANSPORT_OPTION_NAMES) delete rest[name];
+  return rest as Omit<Options, keyof TransportOptions>;
+}
+
+// the set of transports to use, and whether it is the caller's own to close: the set that
+// was given, one made from the transport options that were given, or the process-wide
+// one. A set that is already made takes no transport options, so both together is an error
+export function transportsFor(options: TransportOptions & { transports?: Transports }): {
+  transports: Transports;
+  owned: boolean;
+} {
+  const given = TRANSPORT_OPTION_NAMES.filter(name => options[name] !== undefined);
+  if (options.transports) {
+    if (given.length > 0) {
+      const names = given.map(name => `\`${name}\``).join(', ');
+      throw new DnsError(
+        `Transport options (${names}) cannot be combined with \`transports\`: a set that ` +
+          'is already made does not take them. Pass them to createTransports() instead'
+      );
+    }
+    return { transports: options.transports, owned: false };
+  }
+  return given.length > 0
+    ? { transports: createTransports(options), owned: true }
+    : { transports: defaultTransports(), owned: false };
+}
+
+// the settings that travel in a query's EDNS record
+type EdnsSettings = Pick<ExchangeOptions, 'edns' | 'dnssecOk' | 'udpPayloadSize' | 'ednsOptions'>;
+
+// a setting that only the EDNS record can carry is refused where `edns: false` leaves the
+// record out: on a resolver made with both, and on a query that sets one while EDNS is
+// off for it, by its own `edns` or by the resolver's (`inherited`). What a resolver set
+// may still be left out by one query's own `edns: false`: that is the caller asking for
+// a plain query, and nothing of that query's own is dropped
+export function checkEdnsSettings(own: EdnsSettings, inherited: EdnsSettings = {}): void {
+  if ((own.edns ?? inherited.edns) !== false) return;
+  const names = [
+    own.dnssecOk && '`dnssecOk`',
+    own.udpPayloadSize !== undefined && '`udpPayloadSize`',
+    own.ednsOptions?.length && '`ednsOptions`',
+  ].filter(name => typeof name === 'string');
+  if (names.length === 0) return;
+  throw new DnsError(
+    `\`edns: false\` sends no EDNS record, which is what carries ${names.join(', ')}: ` +
+      'set one or the other'
   );
 }
 
@@ -376,9 +431,7 @@ export async function exchange(
   // the response's question is decoded, so it is spelled without the escapes the name
   // may have been written with
   const expected = { id, name: comparableName(name), type, class: cls };
-  const ownTransports = !options.transports && hasTransportOptions(options);
-  const transports =
-    options.transports ?? (ownTransports ? createTransports(options) : defaultTransports());
+  const { transports, owned: ownTransports } = transportsFor(options);
 
   // over when the exchange is: a UDP socket is kept for the retransmissions until then
   const lifetime = new AbortController();

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AuthoritativeResolver, Resolver } from '../../src/index';
+import { AuthoritativeResolver, DnsError, Resolver } from '../../src/index';
 import type { Answer } from '../../src/index';
 import { late, simulateNetwork, truncatedOverUdp } from '../support/simulated-network';
 import type { SimulatedServer } from '../support/simulated-network';
@@ -1225,5 +1225,52 @@ describe('validate: one deadline for the whole query', () => {
     // with the time it needs, the same query is secure
     const answer = await resolver.query('www.example', 'A', { totalTimeout: 1000 });
     expect(answer.security?.status).toBe('secure');
+  });
+});
+
+describe('validate: with EDNS turned off', () => {
+  // signatures are asked for with the DO bit, which only a query with EDNS carries. Asked
+  // without it, a signed zone sends none, and its answers would all be judged bogus
+  const zones: SignedZone[] = [
+    root,
+    tld,
+    { zone: 'secure.example', records: [['www.secure.example', 'A', '192.0.2.1']] },
+  ];
+
+  it('refuses to make a resolver with `edns: false`', () => {
+    const signed = signedNetwork(zones);
+    const { transports } = simulateNetwork(signed.servers);
+    const settings = { transports, trustAnchors: signed.trustAnchors, validate: true, edns: false };
+    const recursive = () => new Resolver({ ...settings, servers: [signed.recursive] });
+    const authoritative = () =>
+      new AuthoritativeResolver({ ...settings, rootServers: signed.rootServers });
+    expect(recursive).toThrow(DnsError);
+    expect(recursive).toThrow(/needs EDNS/);
+    expect(authoritative).toThrow(DnsError);
+    expect(authoritative).toThrow(/needs EDNS/);
+  });
+
+  it('refuses a query asked with `edns: false`, before anything is sent', async () => {
+    const { authoritative, recursive, network } = setUp(zones);
+    await expect(recursive.query('www.secure.example', 'A', { edns: false })).rejects.toThrow(
+      /needs EDNS/
+    );
+    await expect(authoritative.query('www.secure.example', 'A', { edns: false })).rejects.toThrow(
+      /needs EDNS/
+    );
+    expect(network.queries).toEqual([]);
+  });
+
+  it('leaves `edns: false` alone without `validate`', async () => {
+    const signed = signedNetwork(zones);
+    const network = simulateNetwork(signed.servers);
+    const resolver = new Resolver({
+      transports: network.transports,
+      servers: [signed.recursive],
+      edns: false,
+    });
+    const answer = await resolver.query('www.secure.example', 'A');
+    expect(answer.query.edns).toBe(false);
+    expect(answer.security).toBeUndefined();
   });
 });

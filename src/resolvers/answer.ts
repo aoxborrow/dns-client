@@ -212,7 +212,7 @@ function copyMessage(message: Message): Message {
 // reaches another, or the cache
 export function buildAnswer(result: ExchangeResult, extras: AnswerExtras = {}): Answer {
   const { message } = result;
-  const options = { lenient: !extras.strict };
+  const options = { strict: extras.strict };
   const aged = (records: DnsRecord[]) => {
     if (!extras.age) return records;
     for (const record of records) record.ttl = Math.max(0, record.ttl - (extras.age ?? 0));
