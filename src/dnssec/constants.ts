@@ -1,3 +1,5 @@
+import type { DatasetInfo } from '../dataset';
+
 /**
  * what a signature or digest check came to. `unchecked` is for a check that could not be
  * made (an algorithm this runtime cannot verify), so it is never mistaken for a pass
@@ -46,8 +48,15 @@ export const ALGORITHM_STANDINGS = {
   REGIONAL: 'regional',
 } as const;
 
-/** the date the algorithm/digest assessments below were last checked against IANA */
-export const ALGORITHM_REGISTRY_REFRESHED = '2026-07-27';
+/**
+ * where `DNSSEC_ALGORITHMS` comes from: IANA's DNSSEC algorithm registry, checked by hand (no
+ * script compares them). The `verify` flags are the library's own, so the table has no
+ * version of the registry's to carry
+ */
+export const DNSSEC_ALGORITHMS_INFO: DatasetInfo = {
+  source: 'https://www.iana.org/assignments/dns-sec-alg-numbers/',
+  refreshed: '2026-07-27',
+};
 
 /**
  * DNSSEC signing algorithms. `verify` is whether the library has code to check a signature
@@ -66,6 +75,10 @@ export const DNSSEC_ALGORITHMS = {
   14: { name: 'ECDSAP384SHA384', verify: true, standing: ALGORITHM_STANDINGS.SUPPORTED },
   15: { name: 'ED25519', verify: true, standing: ALGORITHM_STANDINGS.SUPPORTED },
   16: { name: 'ED448', verify: true, standing: ALGORITHM_STANDINGS.SUPPORTED },
+  // 17 and 18 as IANA's registry of 2026-08-10 has them: MAY throughout, as for 23. For
+  // 18, a post-quantum algorithm (FIPS 204), `regional` stands only for that MAY profile
+  17: { name: 'SM2SM3', verify: false, standing: ALGORITHM_STANDINGS.REGIONAL },
+  18: { name: 'MLDSA44', verify: false, standing: ALGORITHM_STANDINGS.REGIONAL },
   23: { name: 'ECC-GOST12', verify: false, standing: ALGORITHM_STANDINGS.REGIONAL },
 } as const;
 
@@ -76,6 +89,15 @@ export const SIGNATURE_LENGTHS: Record<number, number> = {
   14: 96, // ECDSAP384SHA384 — r‖s, 48 bytes each
   15: 64, // Ed25519
   16: 114, // Ed448
+};
+
+/**
+ * where `DS_DIGEST_TYPES` comes from: IANA's DS digest type registry, checked by hand as
+ * `DNSSEC_ALGORITHMS` is. `verify` and `strength` are the library's own
+ */
+export const DS_DIGEST_TYPES_INFO: DatasetInfo = {
+  source: 'https://www.iana.org/assignments/ds-rr-types/',
+  refreshed: '2026-07-27',
 };
 
 /**

@@ -70,20 +70,31 @@ function coordinate(degrees: number, positive: string, negative: string): string
 
 const metres = (value: number) => `${Number.isInteger(value) ? value : value.toFixed(2)}m`;
 
-// a list value inside a service parameter: commas and backslashes in an item are escaped
-const listItem = (item: string) => item.replace(/\\/g, '\\\\').replace(/,/g, '\\,');
+// an alpn value: each protocol's bytes with `,` and `\` escaped for the list, joined by
+// commas, then written as one quoted <character-string> (RFC 9460 Appendix A.1)
+function alpnValue(ids: string[]): string {
+  const bytes: number[] = [];
+  ids.forEach((id, index) => {
+    if (index > 0) bytes.push(0x2c);
+    for (const byte of unescapeText(id)) {
+      if (byte === 0x2c || byte === 0x5c) bytes.push(0x5c);
+      bytes.push(byte);
+    }
+  });
+  return quoteString(escapeText(Uint8Array.from(bytes)));
+}
 
 // service parameters in ascending key order, as RFC 9460 §2.1 writes them
 function serviceParams(params: ServiceParams): string[] {
   const out: [number, string][] = [];
   if (params.mandatory) out.push([0, `mandatory=${params.mandatory.join(',')}`]);
-  if (params.alpn) out.push([1, `alpn=${quote(params.alpn.map(listItem).join(','))}`]);
+  if (params.alpn) out.push([1, `alpn=${alpnValue(params.alpn)}`]);
   if (params.noDefaultAlpn) out.push([2, 'no-default-alpn']);
   if (params.port !== undefined) out.push([3, `port=${params.port}`]);
   if (params.ipv4Hint) out.push([4, `ipv4hint=${params.ipv4Hint.join(',')}`]);
   if (params.ech !== undefined) out.push([5, `ech=${quote(params.ech)}`]);
   if (params.ipv6Hint) out.push([6, `ipv6hint=${params.ipv6Hint.join(',')}`]);
-  if (params.dohPath !== undefined) out.push([7, `dohpath=${quote(params.dohPath)}`]);
+  if (params.dohPath !== undefined) out.push([7, `dohpath=${quoteString(params.dohPath)}`]);
   if (params.ohttp) out.push([8, 'ohttp']);
   for (const [key, hex] of Object.entries(params.other ?? {})) {
     const value = fromHex(hex);

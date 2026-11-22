@@ -106,9 +106,10 @@ need more than a line:
 - **`onEvent`**, on one `AuthoritativeResolver.query()`: told only of the queries this one
   sends, nameserver lookups included. The resolver's own `onEvent` is told as well.
 
-The default `rootServers` is `ROOT_HINTS`, taken from IANA's root hints file
-(`ROOT_HINTS_SOURCE`). `ROOT_HINTS_DATA_VERSION` is the version of that file the list was
-taken from, and `ROOT_HINTS_REFRESHED` the date the list was last compared with it.
+The default `rootServers` is `ROOT_HINTS`, taken from IANA's root hints file.
+`ROOT_HINTS_INFO` says where: `source` is the file's URL, `version` the root zone version
+the list was taken from, and `refreshed` the day the list was last compared with the file.
+Every dataset the library bundles has an info object like it, named after the dataset.
 
 Both resolvers take the transport options (`proxy`, `fetch`, `connect`, `tls`, `pipeline`,
 `idleTimeout`, `dohMethod`; see [Wire format and transports](wire-and-transports.md#transports)),

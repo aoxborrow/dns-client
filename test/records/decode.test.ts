@@ -908,6 +908,46 @@ describe('character-strings', () => {
     }
   });
 
+  it('keeps every byte of the SVCB and HTTPS alpn ids and dohpath', () => {
+    const random = seededRandom(0x2c);
+    // any byte, with the ones that need escaping (a comma, a backslash, a quote and one that
+    // is not UTF-8) more often than chance gives them
+    const special = [0x2c, 0x5c, 0x22, 0xff];
+    const bytes = (length: number) =>
+      Array.from({ length }, () =>
+        random() < 0.3 ? special[Math.floor(random() * 4)] : Math.floor(random() * 256)
+      );
+    const u16 = (value: number) => [value >> 8, value & 0xff];
+    for (let run = 0; run < 500; run++) {
+      const ids = Array.from({ length: 1 + Math.floor(random() * 3) }, () =>
+        bytes(1 + Math.floor(random() * 20))
+      );
+      const path = bytes(Math.floor(random() * 40) + 1);
+      const decoded = decodeRecord(
+        record('HTTPS', [
+          0,
+          1,
+          0,
+          ...[0, 1, ...u16(ids.reduce((sum, id) => sum + 1 + id.length, 0))],
+          ...ids.flatMap(id => [id.length, ...id]),
+          ...[0, 7, ...u16(path.length), ...path],
+        ]),
+        { strict: true }
+      ) as Extract<DnsRecord, { type: 'HTTPS' }>;
+      expect(decoded.params.alpn?.map(id => [...unescapeText(id)])).toEqual(ids);
+      expect([...unescapeText(decoded.params.dohPath!)]).toEqual(path);
+      expect(parseRecordData('HTTPS', formatRecordData(decoded))).toEqual(fields(decoded));
+    }
+  });
+
+  it('escapes an alpn id for the list and then for the character-string (RFC 9460 A.1)', () => {
+    const decoded = decodeRecord(
+      record('SVCB', [0, 1, 0, 0, 1, 0, 6, 5, ...ascii('a,\\b'), 0xff])
+    ) as Extract<DnsRecord, { type: 'SVCB' }>;
+    expect(decoded.params.alpn).toEqual(['a,\\\\b\\255']);
+    expect(formatRecordData(decoded)).toBe('1 . alpn="a\\\\,\\\\\\\\b\\255"');
+  });
+
   it('carries the same escapes in the other types with character-strings', () => {
     const naptr = decodeRecord(
       record('NAPTR', [0, 100, 0, 10, 1, 0x75, 1, 0xe9, 8, ...ascii('!^.*$!\\1'), 0])

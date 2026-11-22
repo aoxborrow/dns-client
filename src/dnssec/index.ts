@@ -3,12 +3,8 @@
 // over. The record data these work on is decoded by `/records` (decodeRrsig, decodeDnskey,
 // decodeDs, decodeNsec, decodeNsec3, decodeNsec3Param) and names by `/wire`
 
-export {
-  ROOT_TRUST_ANCHORS,
-  ROOT_TRUST_ANCHOR_SOURCE,
-  ROOT_TRUST_ANCHORS_DATA_VERSION,
-  ROOT_TRUST_ANCHORS_REFRESHED,
-} from './anchors';
+export { ROOT_TRUST_ANCHORS, ROOT_TRUST_ANCHORS_INFO } from './anchors';
+export type { DatasetInfo } from '../dataset';
 export {
   algorithmName,
   isAlgorithmSupported,
@@ -79,12 +75,13 @@ export { REASON_CODES, SECURITY_STATUSES } from './reasons';
 export type { ReasonCode, SecurityReason, SecurityStatus } from './reasons';
 export type { Security } from './validate';
 export {
-  ALGORITHM_REGISTRY_REFRESHED,
   ALGORITHM_STANDINGS,
   DNSKEY_FLAGS,
   DNSKEY_PROTOCOL,
   DNSSEC_ALGORITHMS,
+  DNSSEC_ALGORITHMS_INFO,
   DS_DIGEST_TYPES,
+  DS_DIGEST_TYPES_INFO,
   NSEC3_FLAGS,
   NSEC3_HASH_ALGORITHMS,
   NSEC3_ITERATIONS_INSECURE_THRESHOLD,

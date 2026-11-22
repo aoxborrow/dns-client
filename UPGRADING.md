@@ -267,7 +267,11 @@ the fields above. `RecordOf<'MX'>` is `MxRecord`.
 
 - Record validation: `parseRecord`, `canonicalRecord`, `diffRecords`,
   `findCnameConflicts`, `findRepeatedRecords`, `qualify` and `relativize`, with every
-  problem as a code and its values. See [Validating records](docs/records.md#validating-records).
+  problem as a code and its values. A record's TTL may be left out when only the record is
+  being checked. See [Validating records](docs/records.md#validating-records).
+- The root servers and the IANA root trust anchors, bundled as data, with
+  `ROOT_HINTS_INFO` and `ROOT_TRUST_ANCHORS_INFO` saying where each comes from and when it was
+  last checked against its source.
 - DNSSEC validation with `validate: true` on either resolver, the judging core and its
   primitives. See [DNSSEC](docs/dnssec.md).
 - The `node:dns/promises` facade, with `connectLookup` for `net.connect` and undici. See

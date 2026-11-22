@@ -475,23 +475,25 @@ function serviceParamKey(text: string): number {
   );
 }
 
-// split a list value on its commas, honouring `\,` and `\\`
-function listItems(value: string): string[] {
-  const items: string[] = [];
-  let current = '';
+// split a list value's bytes on its commas, honouring `\,` and `\\` (RFC 9460 Appendix A.1)
+function listItems(value: Uint8Array): Uint8Array[] {
+  const items: Uint8Array[] = [];
+  let current: number[] = [];
   for (let i = 0; i < value.length; i++) {
-    if (value[i] === '\\' && i + 1 < value.length) {
-      current += value[++i];
-    } else if (value[i] === ',') {
-      items.push(current);
-      current = '';
+    if (value[i] === 0x5c && i + 1 < value.length) {
+      current.push(value[++i]);
+    } else if (value[i] === 0x2c) {
+      items.push(Uint8Array.from(current));
+      current = [];
     } else {
-      current += value[i];
+      current.push(value[i]);
     }
   }
-  items.push(current);
+  items.push(Uint8Array.from(current));
   return items;
 }
+
+const textItems = (value: Uint8Array) => listItems(value).map(utf8Decode);
 
 function serviceBinding(fields: Fields, data: string) {
   const priority = fields.u16('priority');
@@ -534,21 +536,23 @@ function serviceBinding(fields: Fields, data: string) {
     switch (key) {
       case 0:
         needsValue();
-        params.mandatory = listItems(value).map(item => {
+        params.mandatory = textItems(bytes).map(item => {
           serviceParamKey(item);
           return item;
         });
         break;
       case 1:
         needsValue();
-        params.alpn = listItems(value);
-        if (params.alpn.some(id => id.length === 0 || encoder.encode(id).length > 255)) {
-          throw recordError(
-            'invalid-value',
-            { field: 'alpn', text: value },
-            'alpn has an empty or over-long protocol name'
-          );
-        }
+        params.alpn = listItems(bytes).map(id => {
+          if (id.length === 0 || id.length > 255) {
+            throw recordError(
+              'invalid-value',
+              { field: 'alpn', text: value },
+              'alpn has an empty or over-long protocol name'
+            );
+          }
+          return escapeText(id);
+        });
         break;
       case 2:
         noValue();
@@ -566,7 +570,7 @@ function serviceBinding(fields: Fields, data: string) {
         break;
       case 4:
         needsValue();
-        params.ipv4Hint = listItems(value).map(item => {
+        params.ipv4Hint = textItems(bytes).map(item => {
           const address = parseIpv4(item);
           if (!address) {
             throw recordError(
@@ -584,7 +588,7 @@ function serviceBinding(fields: Fields, data: string) {
         break;
       case 6:
         needsValue();
-        params.ipv6Hint = listItems(value).map(item => {
+        params.ipv6Hint = textItems(bytes).map(item => {
           const address = parseIpv6(item);
           if (!address) {
             throw recordError(
@@ -598,7 +602,7 @@ function serviceBinding(fields: Fields, data: string) {
         break;
       case 7:
         needsValue();
-        params.dohPath = value;
+        params.dohPath = escapeText(bytes);
         break;
       case 8:
         noValue();
@@ -866,8 +870,15 @@ export function parseRecordData(
       `${mnemonic} records can only be given in the generic form: \\# <length> <hex>`
     );
   }
-  const fields = new Fields(tokenize(data), mnemonic, options.readName);
+  // a service parameter's quoted value may hold anything, a `)` or a `;` included, so the
+  // SVCB-style types read every token with its quoted runs attached
+  const selfTerminating = SELF_TERMINATING.has(mnemonic);
+  const fields = new Fields(
+    tokenize(data, { innerQuotes: selfTerminating }),
+    mnemonic,
+    options.readName
+  );
   const parsed = PARSERS[mnemonic](fields, data);
-  if (!SELF_TERMINATING.has(mnemonic)) fields.end();
+  if (!selfTerminating) fields.end();
   return parsed;
 }

@@ -19,10 +19,13 @@ export interface FlatRecord {
 }
 
 /**
- * a flat record as a person or a provider API writes one: the class may be left out, and
- * is then IN
+ * a flat record as a person or a provider API writes one. The class may be left out, and is
+ * then IN. The TTL may be left out too, for checking a record whose TTL is not known or not
+ * the point; `parseRecord` and `canonicalRecord` then give it 0, a TTL that caches nothing,
+ * rather than make up a caching policy nobody chose. Once parsed, a TTL left out and a TTL of
+ * 0 look the same
  */
-export type FlatRecordInput = Omit<FlatRecord, 'class'> & { class?: string };
+export type FlatRecordInput = Omit<FlatRecord, 'class' | 'ttl'> & { class?: string; ttl?: number };
 
 /**
  * one record as a `FlatRecord`: the envelope as it is, and the type's own fields as one `data`

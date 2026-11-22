@@ -195,7 +195,7 @@ describe('algorithm support', () => {
   });
 
   it('marks the algorithms it cannot', async () => {
-    for (const algorithm of [1, 3, 6, 12, 23]) {
+    for (const algorithm of [1, 3, 6, 12, 17, 18, 23]) {
       expect(isAlgorithmVerifiable(algorithm)).toBe(false);
     }
   });
@@ -216,7 +216,7 @@ describe('algorithm support', () => {
     }
     expect(await isAlgorithmSupported(15)).toBe(await canMake('Ed25519'));
     expect(await isAlgorithmSupported(16)).toBe(await canMake('Ed448'));
-    for (const algorithm of [1, 3, 6, 12, 23, 99]) {
+    for (const algorithm of [1, 3, 6, 12, 17, 18, 23, 99]) {
       expect(await isAlgorithmSupported(algorithm)).toBe(false);
     }
   });

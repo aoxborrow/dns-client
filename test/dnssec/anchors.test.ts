@@ -6,12 +6,8 @@ import {
   parseRootAnchors,
   parseRootHints,
 } from '../../scripts/iana-data';
-import {
-  ROOT_TRUST_ANCHORS,
-  ROOT_TRUST_ANCHORS_DATA_VERSION,
-  ROOT_TRUST_ANCHORS_REFRESHED,
-} from '../../src/dnssec/index';
-import { ROOT_HINTS, ROOT_HINTS_DATA_VERSION } from '../../src/index';
+import { ROOT_TRUST_ANCHORS, ROOT_TRUST_ANCHORS_INFO } from '../../src/dnssec/index';
+import { ROOT_HINTS, ROOT_HINTS_INFO } from '../../src/index';
 
 // the bundled root trust anchors and root hints against copies of IANA's files, saved in
 // test/fixtures/iana when the bundle was last refreshed. The weekly CI job runs the same
@@ -19,12 +15,12 @@ import { ROOT_HINTS, ROOT_HINTS_DATA_VERSION } from '../../src/index';
 
 const xml = readFileSync(new URL('../fixtures/iana/root-anchors.xml', import.meta.url), 'utf8');
 const named = readFileSync(new URL('../fixtures/iana/named.root', import.meta.url), 'utf8');
-const today = ROOT_TRUST_ANCHORS_REFRESHED;
+const today = ROOT_TRUST_ANCHORS_INFO.refreshed;
 
 describe('the bundled root trust anchors', () => {
   it('match what IANA published when they were refreshed', () => {
     expect(anchorChanges(ROOT_TRUST_ANCHORS, parseRootAnchors(xml), today)).toEqual([]);
-    expect(ROOT_TRUST_ANCHORS_DATA_VERSION <= today).toBe(true);
+    expect(ROOT_TRUST_ANCHORS_INFO.version! <= today).toBe(true);
   });
 
   it('hold KSK-2017 without a validUntil, as IANA does before its revocation', () => {
@@ -70,7 +66,7 @@ describe('the bundled root hints', () => {
     const { hints, version } = parseRootHints(named);
     expect(hints).toHaveLength(13);
     expect(hintChanges(ROOT_HINTS, hints)).toEqual([]);
-    expect(version).toBe(ROOT_HINTS_DATA_VERSION);
+    expect(version).toBe(ROOT_HINTS_INFO.version);
   });
 
   it('are told apart from IANA when a root server moves', () => {

@@ -10,8 +10,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ROOT_TRUST_ANCHOR_SOURCE, ROOT_TRUST_ANCHORS } from '../src/dnssec/anchors';
-import { ROOT_HINTS, ROOT_HINTS_SOURCE } from '../src/resolvers/root-hints';
+import { ROOT_TRUST_ANCHORS, ROOT_TRUST_ANCHORS_INFO } from '../src/dnssec/anchors';
+import { ROOT_HINTS, ROOT_HINTS_INFO } from '../src/resolvers/root-hints';
 import {
   anchorChanges,
   anchorsLiteral,
@@ -39,12 +39,18 @@ function replace(file: string, pattern: RegExp, text: string): void {
   writeFileSync(file, source.replace(pattern, text));
 }
 
-const constant = (name: string) => new RegExp(`export const ${name} = '[^']*';`);
+// one field of a dataset's info object
+const setInfo = (file: string, name: string, field: 'version' | 'refreshed', value: string) =>
+  replace(
+    file,
+    new RegExp(`(export const ${name}: DatasetInfo = \\{[^}]*?\\b${field}: )'[^']*'`),
+    `$1'${value}'`
+  );
 
 async function main() {
   const [xml, named] = await Promise.all([
-    fetchText(ROOT_TRUST_ANCHOR_SOURCE),
-    fetchText(ROOT_HINTS_SOURCE),
+    fetchText(ROOT_TRUST_ANCHORS_INFO.source),
+    fetchText(ROOT_HINTS_INFO.source),
   ]);
   const published = parseRootAnchors(xml);
   const { hints, version } = parseRootHints(named);
@@ -68,11 +74,7 @@ async function main() {
     return;
   }
 
-  replace(
-    ANCHORS_FILE,
-    constant('ROOT_TRUST_ANCHORS_REFRESHED'),
-    `export const ROOT_TRUST_ANCHORS_REFRESHED = '${today}';`
-  );
+  setInfo(ANCHORS_FILE, 'ROOT_TRUST_ANCHORS_INFO', 'refreshed', today);
   if (anchors.length) {
     // what IANA publishes, less what retired before today
     const keep = published.filter(anchor => !anchor.validUntil || anchor.validUntil >= today);
@@ -81,17 +83,9 @@ async function main() {
       /export const ROOT_TRUST_ANCHORS: TrustAnchor\[\] = \[[\s\S]*?\n\];/,
       anchorsLiteral(keep, ROOT_TRUST_ANCHORS, today)
     );
-    replace(
-      ANCHORS_FILE,
-      constant('ROOT_TRUST_ANCHORS_DATA_VERSION'),
-      `export const ROOT_TRUST_ANCHORS_DATA_VERSION = '${today}';`
-    );
+    setInfo(ANCHORS_FILE, 'ROOT_TRUST_ANCHORS_INFO', 'version', today);
   }
-  replace(
-    HINTS_FILE,
-    constant('ROOT_HINTS_REFRESHED'),
-    `export const ROOT_HINTS_REFRESHED = '${today}';`
-  );
+  setInfo(HINTS_FILE, 'ROOT_HINTS_INFO', 'refreshed', today);
   if (roots.length) {
     replace(
       HINTS_FILE,
@@ -100,11 +94,7 @@ async function main() {
     );
   }
   if (version) {
-    replace(
-      HINTS_FILE,
-      constant('ROOT_HINTS_DATA_VERSION'),
-      `export const ROOT_HINTS_DATA_VERSION = '${version}';`
-    );
+    setInfo(HINTS_FILE, 'ROOT_HINTS_INFO', 'version', version);
   }
   console.log(`\nRewrote ${ANCHORS_FILE} and ${HINTS_FILE}. Check the diff before committing.`);
 }

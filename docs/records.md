@@ -10,7 +10,8 @@ camelCase. A value inside a record stays as it was on the wire: names keep their
 binary data is hex or base64, TTLs and RRSIG times are numbers of seconds.
 
 Text that is a character-string on the wire (TXT strings, the CAA tag and value, HINFO, the
-URI target, and NAPTR's flags, services and regexp) keeps every byte, the way names do:
+URI target, NAPTR's flags, services and regexp, and the SVCB and HTTPS `alpn` ids and
+`dohPath`) keeps every byte, the way names do:
 valid UTF-8 as it is, a backslash as `\\`, and any other byte as `\DDD`. So the TXT bytes
 `"`, `\` and 0xFF read `"\\\255`, as `dig` writes them, and a NAPTR regexp's `\1` reads
 `\\1`. The `/promises` facade undoes the escapes, as Node does.
@@ -67,8 +68,11 @@ The rest of the entry:
 ## Validating records
 
 The same entry checks records written by a person or held by a DNS provider. These are
-pure functions and touch no network. A record is given as a `FlatRecord`:
-`{ name, type, class?, ttl, data }`, with the class `IN` when left out.
+pure functions and touch no network. A record is given as a `FlatRecordInput`:
+`{ name, type, class?, ttl?, data }`, with the class `IN` when left out. The TTL may be left
+out when only the record is being checked: `parseRecord` and `canonicalRecord` then give it
+0, which caches nothing, rather than a caching policy nobody chose. `diffRecords` with
+`compareTtl` needs a TTL on every record, and throws a `TypeError` otherwise.
 
 ```ts
 import { RecordSyntaxError } from '@aoxborrow/dns';

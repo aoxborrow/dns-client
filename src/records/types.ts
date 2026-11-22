@@ -222,6 +222,10 @@ export interface SrvRecord extends RecordBase {
  */
 export interface ServiceParams {
   mandatory?: string[];
+  /**
+   * the protocol ids, in order. A backslash is written `\\` and a byte that is not UTF-8
+   * `\DDD`, as in a zone file
+   */
   alpn?: string[];
   noDefaultAlpn?: true;
   port?: number;
@@ -229,6 +233,7 @@ export interface ServiceParams {
   /** base64 */
   ech?: string;
   ipv6Hint?: string[];
+  /** the DoH URI template, escaped the same way as `alpn` */
   dohPath?: string;
   ohttp?: true;
   other?: Record<number, string>;

@@ -59,8 +59,9 @@ NSEC3 names are hashed once per parameter set, and not at all past 50 iterations
 What each zone's key set came to is kept for as long as the TTLs and signatures it rests on
 allow (with `cache: false`, not at all), and `clearCache()` forgets it. Validation starts
 from `trustAnchors`, IANA's root anchors by default (`ROOT_TRUST_ANCHORS`, with
-`ROOT_TRUST_ANCHORS_DATA_VERSION` and `ROOT_TRUST_ANCHORS_REFRESHED`). A key published with
-the RFC 5011 revoke bit anchors nothing and signs nothing.
+`ROOT_TRUST_ANCHORS_INFO`: their source, the date they last changed, and the day they were
+last checked against IANA). A key published with the RFC 5011 revoke bit anchors nothing and
+signs nothing.
 
 ## The judging core
 
@@ -206,11 +207,11 @@ The registries the checks read:
 
 | Name                                                                       |                                                                                                                                                                                                                                                                             |
 | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DNSSEC_ALGORITHMS`, `ALGORITHM_STANDINGS`, `ALGORITHM_REGISTRY_REFRESHED` | each signing algorithm's name, whether the library verifies it, and its standing in IANA's registry (RFC 9904); the standings themselves, which are `recommended`, `supported`, `deprecated`, `prohibited` and `regional`; and the date they were last checked against IANA |
-| `DS_DIGEST_TYPES`                                                          | each DS digest type's name, standing and strength. Strength picks among several digests published for one key (RFC 4509 §3)                                                                                                                                                 |
+| `DNSSEC_ALGORITHMS`, `ALGORITHM_STANDINGS`, `DNSSEC_ALGORITHMS_INFO` | each signing algorithm's name, whether the library verifies it, and its standing in IANA's registry (RFC 9904); the standings themselves, which are `recommended`, `supported`, `deprecated`, `prohibited` and `regional`; and where the table comes from, with the day it was last checked against IANA |
+| `DS_DIGEST_TYPES`, `DS_DIGEST_TYPES_INFO` | each DS digest type's name, standing and strength. Strength picks among several digests published for one key (RFC 4509 §3). And where the table comes from, as for the algorithms |
 | `NSEC3_HASH_ALGORITHMS`                                                    | the NSEC3 hash algorithms, which is SHA-1 alone                                                                                                                                                                                                                             |
 | `DNSKEY_FLAGS`, `DNSKEY_PROTOCOL`, `NSEC3_FLAGS`                           | the flag bits of a DNSKEY, the one protocol value it may carry (3), and the flag bits of an NSEC3                                                                                                                                                                           |
-| `ROOT_TRUST_ANCHOR_SOURCE`                                                 | the URL of the IANA file `ROOT_TRUST_ANCHORS` is taken from                                                                                                                                                                                                                 |
+| `ROOT_TRUST_ANCHORS_INFO`, `DatasetInfo` | where `ROOT_TRUST_ANCHORS` comes from (the URL of IANA's file), the date the bundled anchors last changed, and the day they were last checked against it; and the shape of these info objects |
 
 And the smaller functions:
 

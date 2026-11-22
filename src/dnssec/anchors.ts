@@ -1,13 +1,15 @@
+import type { DatasetInfo } from '../dataset';
 import type { TrustAnchor } from './types';
 
 /**
- * the IANA root trust anchors, shipped as data: the default `trustAnchors` of both
- * resolvers and of the judging core.
+ * where `ROOT_TRUST_ANCHORS` comes from: IANA's root trust anchor file. `version` is the date
+ * the bundled anchors last changed, which the refresh script sets when what IANA publishes
+ * differs from them.
  *
- * this is the one piece of the library that expires on a schedule, so it is deliberately a
- * literal rather than a network fetch: a validator whose anchor comes from the network has
- * no anchor. `scripts/refresh-anchors.ts` compares it with IANA's file (a weekly CI job runs
- * it in check mode) and rewrites it; the procedure is in CONTRIBUTING.md.
+ * the anchors are the one piece of the library that expires on a schedule, so they are
+ * deliberately a literal rather than a network fetch: a validator whose anchor comes from the
+ * network has no anchor. `scripts/refresh-anchors.ts` compares them with IANA's file (a
+ * weekly CI job runs it in check mode) and rewrites them; the procedure is in CONTRIBUTING.md.
  *
  * both current KSKs are held at once. KSK-2024 (38696) signs the root zone since
  * 2026-10-11 and KSK-2017 (20326) is due to be revoked on 2027-01-11. As of the refresh
@@ -18,16 +20,11 @@ import type { TrustAnchor } from './types';
  * (`checkAnchors`). When IANA then gives it a validUntil, the CI check fails until it is
  * copied here.
  */
-export const ROOT_TRUST_ANCHOR_SOURCE = 'https://data.iana.org/root-anchors/root-anchors.xml';
-
-/**
- * a version for the data below: the date it last changed. The refresh script sets it when
- * what IANA publishes differs from it
- */
-export const ROOT_TRUST_ANCHORS_DATA_VERSION = '2026-07-28';
-
-/** when the literal below was last checked against the source above */
-export const ROOT_TRUST_ANCHORS_REFRESHED = '2026-11-16';
+export const ROOT_TRUST_ANCHORS_INFO: DatasetInfo = {
+  source: 'https://data.iana.org/root-anchors/root-anchors.xml',
+  version: '2026-07-28',
+  refreshed: '2026-11-16',
+};
 
 /** IANA's root trust anchors, the default `trustAnchors` of both resolvers and of `judgeChain` */
 export const ROOT_TRUST_ANCHORS: TrustAnchor[] = [

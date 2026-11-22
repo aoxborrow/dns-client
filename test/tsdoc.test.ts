@@ -58,6 +58,32 @@ function publicNodes(): { program: ts.Program; nodes: Set<ts.Node> } {
 const { program, nodes } = publicNodes();
 const files = program.getSourceFiles().filter(file => file.fileName.startsWith(src));
 
+// every comment in a file, found through the parsed tree: the trivia on either side of each
+// token. A scanner run over the text alone cannot tell a template literal's `}` from a
+// block's, so it loses its place after `${}` and stops seeing comments. JSDoc nodes are
+// comments themselves, so the walk does not go into them
+function commentsOf(file: ts.SourceFile): ts.CommentRange[] {
+  const found = new Map<number, ts.CommentRange>();
+  const visit = (node: ts.Node): void => {
+    if (node.kind >= ts.SyntaxKind.FirstJSDocNode && node.kind <= ts.SyntaxKind.LastJSDocNode) {
+      return;
+    }
+    const children = node.getChildren(file);
+    if (children.length > 0) {
+      children.forEach(visit);
+      return;
+    }
+    for (const range of [
+      ...(ts.getLeadingCommentRanges(file.text, node.pos) ?? []),
+      ...(ts.getTrailingCommentRanges(file.text, node.pos) ?? []),
+    ]) {
+      found.set(range.pos, range);
+    }
+  };
+  visit(file);
+  return [...found.values()];
+}
+
 function where(file: ts.SourceFile, position: number): string {
   const { line } = file.getLineAndCharacterOfPosition(position);
   return `${path.relative(root, file.fileName)}:${line + 1}`;
@@ -74,21 +100,11 @@ describe('doc comments', () => {
     }
     const stray: string[] = [];
     for (const file of files) {
-      const scanner = ts.createScanner(
-        ts.ScriptTarget.Latest,
-        false,
-        file.languageVariant,
-        file.text
-      );
-      for (
-        let token = scanner.scan();
-        token !== ts.SyntaxKind.EndOfFileToken;
-        token = scanner.scan()
-      ) {
-        if (token !== ts.SyntaxKind.MultiLineCommentTrivia) continue;
-        const start = scanner.getTokenStart();
-        if (file.text.startsWith('/**', start) && !attached.has(where(file, start))) {
-          stray.push(where(file, start));
+      for (const range of commentsOf(file)) {
+        if (range.kind !== ts.SyntaxKind.MultiLineCommentTrivia) continue;
+        const text = file.text.slice(range.pos, range.end);
+        if (text.startsWith('/**') && text !== '/**/' && !attached.has(where(file, range.pos))) {
+          stray.push(where(file, range.pos));
         }
       }
     }

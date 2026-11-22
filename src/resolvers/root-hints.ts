@@ -1,18 +1,15 @@
-/**
- * the root servers: where a resolution that knows nothing starts. From the root hints
- * file IANA publishes, which `scripts/refresh-anchors.ts` compares this with (a weekly CI
- * job runs it in check mode)
- */
-export const ROOT_HINTS_SOURCE = 'https://www.internic.net/domain/named.root';
+import type { DatasetInfo } from '../dataset';
 
 /**
- * the version of that file the data below was taken from: its "related version of root
- * zone" line
+ * where `ROOT_HINTS` comes from: the root hints file IANA publishes, which
+ * `scripts/refresh-anchors.ts` compares it with (a weekly CI job runs it in check mode).
+ * `version` is the file's "related version of root zone" line
  */
-export const ROOT_HINTS_DATA_VERSION = '2026111201';
-
-/** when the data below was last checked against the source */
-export const ROOT_HINTS_REFRESHED = '2026-11-16';
+export const ROOT_HINTS_INFO: DatasetInfo = {
+  source: 'https://www.internic.net/domain/named.root',
+  version: '2026111201',
+  refreshed: '2026-11-16',
+};
 
 /** a nameserver by name, with its addresses */
 export interface NameserverHint {

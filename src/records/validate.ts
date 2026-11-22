@@ -60,13 +60,13 @@ function problemsOf(check: () => void): RecordProblem[] {
 // the name, type, class and TTL, each checked. All four are checked before throwing, so
 // a record with several things wrong with it reports them together
 function envelope(input: FlatRecordInput, options: ValidateOptions): Envelope {
-  const head: Envelope = { name: '', type: '', class: 'IN', ttl: input.ttl };
+  const head: Envelope = { name: '', type: '', class: 'IN', ttl: input.ttl ?? 0 };
   const problems = [
     ...problemsOf(() => {
-      if (!Number.isInteger(input.ttl) || input.ttl < 0 || input.ttl > TTL_LIMIT) {
+      if (!Number.isInteger(head.ttl) || head.ttl < 0 || head.ttl > TTL_LIMIT) {
         throw recordError(
           'invalid-ttl',
-          { ttl: input.ttl },
+          { ttl: head.ttl },
           'TTL must be a whole number from 0 to 2147483647'
         );
       }
@@ -417,7 +417,8 @@ export interface RecordDiff {
 export interface DiffOptions extends ValidateOptions {
   /**
    * count a different TTL as a different record. Off by default: a resolver's answer
-   * carries the time left in its cache, not the TTL that was set
+   * carries the time left in its cache, not the TTL that was set. Every record must then
+   * have a TTL; one without is a TypeError
    */
   compareTtl?: boolean;
 }
@@ -432,6 +433,9 @@ export function diffRecords(
   actual: readonly FlatRecordInput[],
   options: DiffOptions = {}
 ): RecordDiff {
+  if (options.compareTtl && [...intended, ...actual].some(record => record.ttl === undefined)) {
+    throw new TypeError('compareTtl needs a TTL on every record');
+  }
   const key = (record: FlatRecord) =>
     `${identity(record)}${options.compareTtl ? `\t${record.ttl}` : ''}`;
   const want = canonicalAll(intended, options);

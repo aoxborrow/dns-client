@@ -10,7 +10,6 @@ import {
   toBase32Hex,
   toBase64,
   toHex,
-  utf8Decode,
 } from '../wire/bytes';
 import type { ResourceRecord } from '../wire/message';
 import { labelsToName, readName } from '../wire/names';
@@ -340,7 +339,7 @@ function serviceBinding(reader: Reader) {
       case 1: {
         const ids = new Reader(value);
         params.alpn = [];
-        while (ids.remaining > 0) params.alpn.push(utf8Decode(ids.characterString()));
+        while (ids.remaining > 0) params.alpn.push(escapeText(ids.characterString()));
         if (params.alpn.length === 0) throw new ParseError('empty alpn parameter');
         break;
       }
@@ -362,7 +361,7 @@ function serviceBinding(reader: Reader) {
         params.ipv6Hint = addresses(value, 16);
         break;
       case 7:
-        params.dohPath = utf8Decode(value);
+        params.dohPath = escapeText(value);
         break;
       case 8:
         if (value.length !== 0) throw new ParseError('ohttp takes no value');

@@ -284,6 +284,17 @@ describe('parseRecord', () => {
     });
   });
 
+  it('takes a record without a TTL, and gives it 0', () => {
+    const record = { name: 'example.com', type: 'A', data: '192.0.2.1' };
+    expect(parseRecord(record).ttl).toBe(0);
+    expect(canonicalRecord(record)).toEqual(out('example.com', 'A', '192.0.2.1', 0));
+    expect(findRepeatedRecords([record, { ...record, ttl: 60 }])).toHaveLength(1);
+    expect(diffRecords([record], [{ ...record, ttl: 60 }])).toEqual({
+      missing: [],
+      unexpected: [],
+    });
+  });
+
   it('has no fields to give for a type that is not on the wire', () => {
     expect(() => parseRecord(rec('example.com', 'ANAME', 'lb.example.net.'))).toThrow(
       /Unknown record type/
@@ -501,6 +512,12 @@ describe('diffRecords', () => {
     const actual = intended.map(record => ({ ...record, ttl: 60 }));
     expect(diffRecords(intended, actual)).toEqual({ missing: [], unexpected: [] });
     expect(diffRecords(intended, actual, { compareTtl: true }).missing).toHaveLength(3);
+  });
+
+  it('needs a TTL on every record to compare TTLs', () => {
+    const { ttl: _, ...untimed } = intended[0];
+    expect(() => diffRecords([untimed], intended, { compareTtl: true })).toThrow(TypeError);
+    expect(() => diffRecords(intended, [untimed], { compareTtl: true })).toThrow(/compareTtl/);
   });
 
   it('refuses to compare records that are not valid, listing them all in one error', () => {

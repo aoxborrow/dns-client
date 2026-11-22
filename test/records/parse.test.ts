@@ -104,7 +104,7 @@ describe('parseRecordData is the inverse of formatRecordData', () => {
       target: '.',
       params: {
         mandatory: ['alpn', 'key667'],
-        alpn: ['h2', 'a,b', 'c\\d'],
+        alpn: ['h2', 'a,b', 'c\\\\d', '\\255'],
         noDefaultAlpn: true,
         port: 8443,
         ipv4Hint: ['192.0.2.1'],
@@ -245,6 +245,11 @@ describe('parseRecordData: what it accepts', () => {
       priority: 1,
       target: '.',
       params: { dohPath: '/q (x); y' },
+    });
+    expect(parseRecordData('HTTPS', '1 . dohpath="/q)" port=443')).toEqual({
+      priority: 1,
+      target: '.',
+      params: { dohPath: '/q)', port: 443 },
     });
     expect(() => parseRecordData('HTTPS', '1 . alpn="h2')).toThrow(/not closed/);
   });
