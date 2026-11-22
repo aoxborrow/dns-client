@@ -2,7 +2,8 @@
 
 `@aoxborrow/dns/wire` encodes queries and decodes messages; `@aoxborrow/dns/transports` sends
 them. The resolvers use both, and most programs never need either directly. The root entry
-re-exports `/wire`, and `createTransports` from `/transports`.
+re-exports the message types (`Message`, `ResourceRecord` and the rest) and `createTransports`;
+the codec itself is imported from `/wire`.
 
 ## `/wire`
 

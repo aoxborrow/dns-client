@@ -2,7 +2,8 @@
 
 `@aoxborrow/dns/records` holds the typed records, the protocol tables, record decoding and
 formatting, and the record validators. It runs anywhere: browsers and Cloudflare Workers
-included. The root entry re-exports all of it.
+included. The root entry re-exports the record types, not the functions or tables: import
+those from `/records`.
 
 Every record type has its own interface, with fields named as the RFCs name them, in
 camelCase. A value inside a record stays as it was on the wire: names keep their case,
