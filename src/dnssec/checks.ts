@@ -46,25 +46,28 @@ export function readRrsig(record: ResourceRecord): RrsigFields | undefined {
 // the work one judgement may do
 // ---------------------------------------------------------------------------
 
-/**
- * how much signature checking one judgement may do. A zone that publishes many keys with
- * the same tag, or signs an RRset many times over, can make a validator run thousands of
- * signature checks for one answer (KeyTrap, CVE-2023-50387); validators since cap that
- * work and fail the answer past the cap. Without a budget nothing is capped, as for a
- * report that wants every check made
- */
+// how much signature checking may be done from one budget: a whole judgement, or one zone's
+// links when everything is judged. A zone that
+// publishes many keys with the same tag, or signs an RRset many times over, can make a
+// validator run thousands of signature checks for one answer (KeyTrap, CVE-2023-50387);
+// validators since cap that work and fail the answer past the cap. Without a budget nothing
+// is capped
 export interface CheckBudget {
-  /** signature verifications left for the whole judgement */
+  // signature verifications left
   remaining: number;
-  /** the most keys tried for one signature, where several share its tag and algorithm */
+  // the most keys tried for one signature, where several share its tag and algorithm
   keysPerSignature: number;
-  /** the most signatures checked for one RRset */
+  // the most signatures checked for one RRset
   signaturesPerRrset: number;
 }
 
 /** limits on how much signature checking one judgement may do */
 export interface CheckLimits {
-  /** signature verifications for the whole judgement */
+  /**
+   * signature verifications for a judgement in mode 'first', or for each zone in mode
+   * 'all': its key set, and the RRsets and proofs it signs, the DS RRsets of the zones below
+   * it among them
+   */
   verifications: number;
   keysPerSignature: number;
   signaturesPerRrset: number;
@@ -79,7 +82,7 @@ export const CHECK_LIMITS: Readonly<CheckLimits> = {
   signaturesPerRrset: 8,
 };
 
-/** a fresh budget, at the default limits unless told otherwise */
+// a fresh budget, at the default limits unless told otherwise
 export function checkBudget(limits: Partial<CheckLimits> = {}): CheckBudget {
   return {
     remaining: limits.verifications ?? CHECK_LIMITS.verifications,
@@ -181,13 +184,11 @@ function digestMatches(owner: string, rdata: Uint8Array, anchor: TrustAnchor): b
   return Boolean(digest) && toHex(digest!) === anchor.digest.toLowerCase();
 }
 
-/**
- * which published keys a set of trust anchors vouches for. A key is anchored by its own
- * material hashing to a current anchor, never by sharing a key tag with one: tags collide,
- * and a colliding key added to the set could otherwise vouch for it. `rrset` and
- * `rrsigs`, when given, are the key set and its signatures, used to tell a revoked anchor:
- * one whose key appears with the revoke bit set and has signed the set with it
- */
+// which published keys a set of trust anchors vouches for. A key is anchored by its own
+// material hashing to a current anchor, never by sharing a key tag with one: tags collide,
+// and a colliding key added to the set could otherwise vouch for it. `rrset` and
+// `rrsigs`, when given, are the key set and its signatures, used to tell a revoked anchor:
+// one whose key appears with the revoke bit set and has signed the set with it
 export async function checkAnchors(
   zone: string,
   keys: readonly DnssecKey[],
@@ -599,28 +600,24 @@ export interface RrsetCheck {
   missingAlgorithms: number[];
 }
 
-/** a zone's validated keys, which RRsets are checked against */
+// a zone's validated keys, which RRsets are checked against
 export interface ZoneKeys {
   zone: string;
   keys: readonly DnssecKey[];
 }
 
-/** the options of `checkRrset` */
+// the options of `checkRrset`
 export interface RrsetCheckOptions {
   now: Date;
-  /**
-   * the child zone, when the RRset came with a referral to it: its NS RRset is then the
-   * delegation's, which the parent does not sign
-   */
+  // the child zone, when the RRset came with a referral to it: its NS RRset is then the
+  // delegation's, which the parent does not sign
   delegationOf?: string;
-  /**
-   * require a signature from every algorithm in the key set (RFC 4035 §2.2). Validators
-   * accept any one (RFC 6840 §5.11), so off by default
-   */
+  // require a signature from every algorithm in the key set (RFC 4035 §2.2). Validators
+  // accept any one (RFC 6840 §5.11), so off by default
   requireEveryAlgorithm?: boolean;
-  /** stop at the first signature that verifies */
+  // stop at the first signature that verifies
   stopAtFirst?: boolean;
-  /** the signature checks the judgement may still make */
+  // the signature checks the judgement may still make
   budget?: CheckBudget;
 }
 
@@ -646,11 +643,9 @@ export function isAuthoritative(rrset: Rrset, zone: string, delegationOf?: strin
   return !delegationNs && !glue;
 }
 
-/**
- * judge an RRset in its zone. Only a signature from the zone can authenticate the zone's
- * data (RFC 4035 §5.3.1): an RRset whose only signatures name another signer is unsigned,
- * or a server could strip the real RRSIG and attach an off-zone one
- */
+// judge an RRset in its zone. Only a signature from the zone can authenticate the zone's
+// data (RFC 4035 §5.3.1): an RRset whose only signatures name another signer is unsigned,
+// or a server could strip the real RRSIG and attach an off-zone one
 export async function checkRrset(
   zone: ZoneKeys,
   rrset: Rrset,
@@ -671,6 +666,9 @@ export async function checkRrset(
   let inZone = false;
   let checked = 0;
   const verifiedAlgorithms = new Set<number>();
+  // algorithms signed in that this runtime cannot verify. Validators that skip them skip
+  // the algorithm, so it is not missing
+  const uncountedAlgorithms = new Set<number>();
   const stop = options.stopAtFirst && !options.requireEveryAlgorithm;
   for (const record of covering) {
     const rrsig = readRrsig(record)!;
@@ -700,6 +698,9 @@ export async function checkRrset(
     );
     check.signatures.push(signature);
     if (signature.result === VERIFIED) verifiedAlgorithms.add(rrsig.algorithm);
+    if (signature.code === SIGNATURE_CODES.UNSUPPORTED_ALGORITHM) {
+      uncountedAlgorithms.add(rrsig.algorithm);
+    }
   }
 
   if (authoritative && !inZone) return check;
@@ -712,7 +713,9 @@ export async function checkRrset(
     algorithms.length > 1 &&
     verifiedAlgorithms.size > 0
   ) {
-    check.missingAlgorithms = algorithms.filter(algorithm => !verifiedAlgorithms.has(algorithm));
+    check.missingAlgorithms = algorithms.filter(
+      algorithm => !verifiedAlgorithms.has(algorithm) && !uncountedAlgorithms.has(algorithm)
+    );
     if (check.missingAlgorithms.length) check.code = RRSET_CODES.MISSING_ALGORITHM;
   }
   return check;

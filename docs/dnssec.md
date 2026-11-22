@@ -108,7 +108,7 @@ const judgement = await judgeChain(
   { mode: 'all', now: new Date() }
 );
 judgement.status; // 'secure'
-judgement.links; // every link, with a status and a reason
+judgement.links; // every link, with a status, a reason and the checks it rests on
 ```
 
 A response marked `truncated: true` (it came with TC set) is not the whole answer: in a
@@ -117,9 +117,29 @@ signed zone its data is `indeterminate`, whatever signatures it carries.
 `mode: 'first'` (what the resolvers use) stops at the first link that settles the outcome;
 `mode: 'all'` judges every link and every signature. `requireEveryAlgorithm` asks for each
 RRset to be signed with every algorithm in its zone's key set (RFC 4035 §2.2), which
-validators do not require (RFC 6840 §5.11). Three of the checks it is made of are
-exported, each returning codes: `checkAnchors` for the trust anchors against a key set,
-`checkRrset` for one RRset's signatures, and `judgeKeys` for a zone's key set as a whole.
+validators do not require (RFC 6840 §5.11). `limits` caps the signature checks a judgement
+may make (KeyTrap, CVE-2023-50387). In `mode: 'first'` one budget covers the whole judgement,
+however many zones an answer crosses; in `mode: 'all'` a zone's key set and the RRsets and
+proofs it signs draw on a budget of their own, so one zone cannot use up another's.
+
+Each link carries its `evidence`, the checks it rests on, as codes and data:
+
+- a `keys` link has the zone's keys (`DnssecKey`), what the trust anchors made of them
+  (`AnchorCheck`) or the parent's signature over the DS RRset and the DS records against the
+  keys (`RrsetCheck`, `DsSetCheck`), the key set's signatures (`KeySetCheck`), and, for a
+  zone proven unsigned, the parent's proof that it has no DS;
+- an `rrset` link has the RRset and every signature over it (`RrsetCheck`);
+- a `denial` link has each NSEC or NSEC3 RRset, checked, the proof worked out from them
+  step by step (`DenialProof`), and what it is for (`purpose`: `nxdomain`, `nodata` or
+  `wildcard`). Past the NSEC3 iterations validators hash
+  (`NSEC3_ITERATIONS_INSECURE_THRESHOLD`, RFC 9276 §3.2) the proof is left unworked, with
+  status `iterations-exceeded`, and the answer is `insecure`.
+
+A link that only takes a zone's outcome, below a zone that is not secure or from a `known`
+fact, has no evidence. Key size never changes a verdict: an RSA key under 1024 bits is
+verified like any other, as validators do by default, so a good signature by one counts and
+a forged one fails. A caller that wants to flag such keys reads them from the evidence
+(`keySet.rrset`, or the `key` of each signature check) and sizes them with `keySizeBits()`.
 
 ## The primitives
 
@@ -177,8 +197,9 @@ What the judgements and the checks return is spelled out as constants:
 | `SECURITY_STATUSES`                                           | the four statuses: `secure`, `insecure`, `bogus`, `indeterminate`                                                                                                            |
 | `REASON_CODES`                                                | every reason code a link can carry. A reason with an extended DNS error (RFC 8914) carries its code in `ede`                                                                 |
 | `DS_CODES`, `KEY_SET_CODES`, `RRSET_CODES`, `SIGNATURE_CODES` | the codes the checks give a DS set, a key set, an RRset and one signature                                                                                                    |
-| `CHECK_LIMITS`, `checkBudget()`                               | the default limits on signature checking (128 verifications in all, 4 keys tried per signature, 8 signatures per RRset), and a budget made from them to pass to `checkRrset` |
+| `CHECK_LIMITS` | the default `limits` on signature checking: 128 verifications (for each zone in `mode: 'all'`), 4 keys tried per signature, 8 signatures per RRset |
 | `VERIFICATION_RESULTS`                                        | what a signature or digest check came to: `verified`, `failed` or `unchecked`                                                                                                |
+| `NSEC3_ITERATIONS_INSECURE_THRESHOLD`, `NSEC3_ITERATIONS_SERVFAIL_THRESHOLD` | the NSEC3 iterations past which validators treat a denial as insecure (50), and past which most return SERVFAIL (500) (RFC 9276 §3.2) |
 | `PROOF_TYPES`, `PROOF_PURPOSES`, `PROOF_STATUSES`             | a denial proof's kind (NSEC or NSEC3), what it was asked to show, and how it came out                                                                                        |
 
 The registries the checks read:

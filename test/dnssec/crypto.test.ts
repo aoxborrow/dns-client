@@ -261,3 +261,18 @@ describe('the runtime probe for Ed25519 and Ed448', () => {
     expect(await isSupported(15)).toBe(true);
   });
 });
+
+describe('RSA key size', () => {
+  // RFC 3110 §2: a one-byte exponent length, the exponent 65537, then the modulus
+  const rsaPublicKey = (modulus: number[]) => Uint8Array.from([3, 1, 0, 1, ...modulus]);
+
+  it('counts the modulus as an integer, leaving out unused high bits', () => {
+    const key = rsaPublicKey([0x0f, ...new Array(127).fill(0xff)]);
+    expect(keySizeBits(8, key)).toBe(1020);
+  });
+
+  it('leaves out a leading zero byte', () => {
+    const key = rsaPublicKey([0, 0x80, ...new Array(127).fill(0xff)]);
+    expect(keySizeBits(8, key)).toBe(1024);
+  });
+});

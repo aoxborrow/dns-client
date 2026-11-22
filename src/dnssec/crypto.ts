@@ -85,7 +85,12 @@ export function keySizeBits(algorithm: number, publicKey: Uint8Array): number | 
     case 8:
     case 10: {
       const rsa = parseRsaPublicKey(publicKey);
-      return rsa ? rsa.modulus.length * 8 : undefined;
+      if (!rsa) return undefined;
+      // the modulus as an integer: leading zero bytes and the unused high bits of the first
+      // byte left out
+      const start = rsa.modulus.findIndex(byte => byte !== 0);
+      if (start < 0) return 0;
+      return (rsa.modulus.length - start - 1) * 8 + (32 - Math.clz32(rsa.modulus[start]));
     }
     case 13:
       return 256;

@@ -38,12 +38,14 @@ import type {
 } from './checks';
 import {
   NSEC3_ITERATIONS_INSECURE_THRESHOLD,
+  PROOF_PURPOSES,
   PROOF_STATUSES,
   VERIFICATION_RESULTS,
 } from './constants';
 import { decodeNsec3 } from '../records/decode';
 import {
   denialTypesAt,
+  iterationsExceededProof,
   nextCloserOptOut,
   verifyNodataProof,
   verifyNoDsProof,
@@ -143,8 +145,10 @@ export interface JudgeOptions {
    */
   requireEveryAlgorithm?: boolean;
   /**
-   * how much signature checking the judgement may do before it gives up on the answer as
-   * bogus. Default: 128 verifications, 4 keys tried per signature, 8 signatures per RRset
+   * how much signature checking may be done before the judgement gives up on what is left
+   * as bogus. In mode 'first' one budget covers the whole judgement; in mode 'all' each zone
+   * (its key set, and the RRsets and proofs it signs) has its own, so one zone cannot use up
+   * another's. Default: 128 verifications, 4 keys tried per signature, 8 signatures per RRset
    */
   limits?: Partial<CheckLimits>;
 }
@@ -166,14 +170,67 @@ export interface ChainLink {
   reason: SecurityReason;
 }
 
+/**
+ * what a link's status rests on: the checks made for it, as they came out. A link that only
+ * takes a zone's outcome, below a zone that is not secure or from a known fact, has none
+ */
+export type LinkEvidence = KeysEvidence | RrsetEvidence | DenialEvidence;
+
+/** a zone's key set, and how its parent vouched for it or proved it has none */
+export interface KeysEvidence {
+  kind: 'keys';
+  /** the published keys, read */
+  keys: DnssecKey[];
+  /** what the trust anchors made of them, for the anchored zone */
+  anchors?: AnchorCheck;
+  /** the parent's signatures over the DS RRset */
+  ds?: RrsetCheck;
+  /** what the DS records made of the keys */
+  dsSet?: DsSetCheck;
+  /** the key set's signatures */
+  keySet?: KeySetCheck;
+  /** the parent's proof that the name has no DS */
+  noDs?: DenialEvidence;
+}
+
+/** an RRset of the data, and its signatures */
+export interface RrsetEvidence {
+  kind: 'rrset';
+  check: RrsetCheck;
+}
+
+/** a proof that something does not exist */
+export interface DenialEvidence {
+  kind: 'denial';
+  /** each NSEC or NSEC3 RRset the proof is made of, checked in the zone */
+  records: RrsetCheck[];
+  /**
+   * the proof worked out from them, step by step: one that fails for want of records when
+   * none came, and one left unworked past the NSEC3 iterations validators hash. Absent when
+   * the records could not be trusted
+   */
+  proof?: DenialProof;
+  /**
+   * what a response's proof is for: that the name does not exist, that it has no data of
+   * the type asked, or that a wildcard answering it may. Absent on a proof of no DS
+   */
+  purpose?: 'wildcard' | 'nxdomain' | 'nodata';
+}
+
+/** a link of the judgement, with the evidence its status rests on */
+export interface JudgedLink extends ChainLink {
+  /** the checks behind the link's status */
+  evidence?: LinkEvidence;
+}
+
 /** what `judgeChain` came to: the outcome, its reason, and every link judged */
 export interface Judgement {
   status: SecurityStatus;
   reason: SecurityReason;
-  /** every link judged, zones from the top down, then the data */
-  links: ChainLink[];
+  /** every link judged, zones from the top down, then the data, each with what it rests on */
+  links: JudgedLink[];
   /** the first link that is bogus or indeterminate, when the outcome is either */
-  failure?: ChainLink;
+  failure?: JudgedLink;
   /**
    * what this judgement established about each name, to keep for next time. Only secure
    * and insecure outcomes are given: a broken or unanswered zone is asked about again
@@ -206,7 +263,19 @@ export async function judgeChain(
   const anchors = options.trustAnchors ?? ROOT_TRUST_ANCHORS;
   const mode = options.mode ?? 'first';
   const stopAtFirst = mode === 'first';
-  const budget = checkBudget(options.limits);
+  // judging everything, each zone gets its own budget, so one zone's signatures cannot
+  // starve the report on the rest. Stopping at the first failure, as a validator does, one
+  // budget bounds the whole judgement however many zones an answer crosses
+  const budgets = new Map<string, CheckBudget>();
+  const budget = (zone: string): CheckBudget => {
+    const key = stopAtFirst ? '' : canonicalName(zone);
+    let found = budgets.get(key);
+    if (!found) {
+      found = checkBudget(options.limits);
+      budgets.set(key, found);
+    }
+    return found;
+  };
   const rrsetOptions: RrsetOptions = {
     now,
     stopAtFirst,
@@ -214,7 +283,7 @@ export async function judgeChain(
     budget,
   };
 
-  const links: ChainLink[] = [];
+  const links: JudgedLink[] = [];
   const facts: ZoneFact[] = [];
   const zones = new Map<string, ZoneState>();
   const insideZone = new Set<string>();
@@ -250,10 +319,10 @@ export async function judgeChain(
       { anchors },
       now,
       stopAtFirst,
-      budget
+      budget(anchorZone)
     );
     zones.set(anchorZone, state.zone);
-    links.push(keysLink(state.zone));
+    links.push(keysLink(state.zone, keysEvidence(state)));
     if (state.fact) facts.push(state.fact);
   }
 
@@ -273,7 +342,7 @@ export async function judgeChain(
     const judged = await judgeName(parent, name, entry, now, rrsetOptions);
     if (judged.cut) {
       zones.set(name, judged.cut);
-      links.push(keysLink(judged.cut));
+      links.push(keysLink(judged.cut, judged.evidence));
     } else if (judged.inside) {
       insideZone.add(name);
     }
@@ -281,7 +350,7 @@ export async function judgeChain(
   }
 
   // the data
-  const dataLinks: ChainLink[] = [];
+  const dataLinks: JudgedLink[] = [];
   // a response that ends at an alias another response was asked about is continued there
   const asked = new Set((input.responses ?? []).map(response => canonicalName(response.name)));
   for (const response of input.responses ?? []) {
@@ -321,41 +390,54 @@ function worst(statuses: SecurityStatus[]): SecurityStatus {
   return statuses.reduce((a, b) => (WEIGHT[b] > WEIGHT[a] ? b : a));
 }
 
-function keysLink(zone: ZoneState): ChainLink {
-  return { kind: 'keys', zone: zone.zone, status: zone.status, reason: zone.reason };
+function keysLink(zone: ZoneState, evidence?: KeysEvidence): JudgedLink {
+  return {
+    kind: 'keys',
+    zone: zone.zone,
+    status: zone.status,
+    reason: zone.reason,
+    ...(evidence && { evidence }),
+  };
+}
+
+function keysEvidence(judged: ZoneKeysJudgement, ds?: RrsetCheck): KeysEvidence {
+  return {
+    kind: 'keys',
+    keys: judged.keys,
+    ...(judged.anchors && { anchors: judged.anchors }),
+    ...(ds && { ds }),
+    ...(judged.dsSet && { dsSet: judged.dsSet }),
+    ...(judged.keySet && { keySet: judged.keySet }),
+  };
 }
 
 // ---------------------------------------------------------------------------
 // a zone's key set
 // ---------------------------------------------------------------------------
 
-/** what `judgeKeys` made of a zone's key set */
+// what `judgeKeys` made of a zone's key set
 export interface ZoneKeysJudgement {
   zone: ZoneState;
-  /** the published keys, read */
+  // the published keys, read
   keys: DnssecKey[];
-  /** what the trust anchors made of them, for the anchored zone */
+  // what the trust anchors made of them, for the anchored zone
   anchors?: AnchorCheck;
-  /** what the parent's DS records made of them, for any other */
+  // what the parent's DS records made of them, for any other
   dsSet?: DsSetCheck;
-  /** the key set's signatures, checked */
+  // the key set's signatures, checked
   keySet?: KeySetCheck;
   fact?: ZoneFact;
 }
 
-/**
- * where a zone's key set gets its trust: the trust anchors, for the anchored zone, or the
- * parent's DS records. `authenticated: false` says the parent's DS response was not
- * validly signed, so the DS records anchor nothing
- */
+// where a zone's key set gets its trust: the trust anchors, for the anchored zone, or the
+// parent's DS records. `authenticated: false` says the parent's DS response was not
+// validly signed, so the DS records anchor nothing
 export type KeysEntry =
   | { anchors: readonly TrustAnchor[] }
   | { ds: readonly ResourceRecord[]; dsTtl?: number; authenticated?: boolean };
 
-/**
- * judge a zone's key set against its entry points. Every check is made and handed back,
- * even past a failure, unless `stopAtFirst`
- */
+// judge a zone's key set against its entry points. Every check is made and handed back,
+// even past a failure, unless `stopAtFirst`
 export async function judgeKeys(
   zone: string,
   dnskey: DnssecResponse | undefined,
@@ -443,13 +525,14 @@ export async function judgeKeys(
       return { zone: state(BOGUS, R.DNSKEY_MISSING, { type: 'DNSKEY' }), ...judged };
     case KEY_SET_CODES.UNSIGNED:
       return { zone: state(BOGUS, R.RRSIGS_MISSING, { name: zone, type: 'DNSKEY' }), ...judged };
-    case KEY_SET_CODES.NO_SUPPORTED_ALGORITHM:
-      // no algorithm the entry points name can be verified here: no path to check, which
-      // a validator treats as no DS at all (RFC 4035 §5.2, RFC 6840 §5.2)
+    case KEY_SET_CODES.NO_SUPPORTED_ALGORITHM: {
+      // no algorithm the entry points name can be verified here: no path to check, which a
+      // validator treats as no DS at all (RFC 4035 §5.2, RFC 6840 §5.2)
       return {
         zone: state(INSECURE, R.UNSUPPORTED_ALGORITHM, { algorithm: entryAlgorithms[0] }),
         ...judged,
       };
+    }
     case KEY_SET_CODES.NO_ENTRY_KEY: {
       const failed = dsSet?.checks.find(check => check.selected);
       const code = failed?.code === 'digest-mismatch' ? R.DS_DIGEST_MISMATCH : R.NO_MATCHING_DNSKEY;
@@ -526,10 +609,9 @@ function rrsetVerdict(
     default: {
       const own = check.signatures.filter(signature => signature.code !== SIGNATURE_CODES.FOREIGN);
       // every signature in an algorithm nothing here verifies: it cannot be told
-      if (
-        own.length > 0 &&
-        own.every(signature => signature.code === SIGNATURE_CODES.UNSUPPORTED_ALGORITHM)
-      ) {
+      const unverifiable = (signature: SignatureCheck) =>
+        signature.code === SIGNATURE_CODES.UNSUPPORTED_ALGORITHM;
+      if (own.length > 0 && own.every(unverifiable)) {
         return {
           status: INDETERMINATE,
           reason: securityReason(R.UNVERIFIABLE, zone, {
@@ -542,7 +624,7 @@ function rrsetVerdict(
       // why the RRset failed
       const failed =
         own.find(signature => signature.code === SIGNATURE_CODES.LIMIT_EXCEEDED) ??
-        own.find(signature => signature.code !== SIGNATURE_CODES.UNSUPPORTED_ALGORITHM) ??
+        own.find(signature => !unverifiable(signature)) ??
         own[0];
       return {
         status: BOGUS,
@@ -562,6 +644,7 @@ function rrsetVerdict(
 interface NameJudgement {
   // the name is a zone of its own, and this is what came of it
   cut?: ZoneState;
+  evidence?: KeysEvidence;
   // the name is inside its parent's zone
   inside?: boolean;
   fact?: ZoneFact;
@@ -571,8 +654,19 @@ type RrsetOptions = {
   now: Date;
   stopAtFirst: boolean;
   requireEveryAlgorithm: boolean;
-  budget?: CheckBudget;
+  // the budget of the zone whose signatures are checked
+  budget: (zone: string) => CheckBudget;
 };
+
+// an RRset checked in its zone, on that zone's budget
+function checkIn(
+  zone: ZoneState,
+  rrset: Rrset,
+  rrsigs: readonly ResourceRecord[],
+  options: RrsetOptions
+): Promise<RrsetCheck> {
+  return checkRrset(zone, rrset, rrsigs, { ...options, budget: options.budget(zone.zone) });
+}
 
 interface DenialRecords {
   // each NSEC or NSEC3 RRset of the zone, checked in it
@@ -617,7 +711,7 @@ async function checkDenialRecords(
   });
   if (rrsets.length === 0) return undefined;
   const checks: RrsetCheck[] = [];
-  for (const rrset of rrsets) checks.push(await checkRrset(zone, rrset, rrsigs, options));
+  for (const rrset of rrsets) checks.push(await checkIn(zone, rrset, rrsigs, options));
   return { checks, records: rrsets.flatMap(rrset => rrset.records) };
 }
 
@@ -676,14 +770,19 @@ async function judgeName(
   now: Date,
   options: RrsetOptions
 ): Promise<NameJudgement> {
-  const cut = (status: SecurityStatus, code: ReasonCode, about = {}): NameJudgement => {
+  const cut = (
+    status: SecurityStatus,
+    code: ReasonCode,
+    about = {},
+    evidence?: Omit<KeysEvidence, 'kind' | 'keys'>
+  ): NameJudgement => {
     const zone: ZoneState = {
       zone: name,
       status,
       reason: securityReason(code, name, about),
       keys: [],
     };
-    return { cut: zone };
+    return { cut: zone, ...(evidence && { evidence: { kind: 'keys', keys: [], ...evidence } }) };
   };
   const response = entry.ds;
   if (!response) return cut(INDETERMINATE, R.RESPONSE_MISSING, { type: 'DS' });
@@ -699,12 +798,32 @@ async function judgeName(
 
   if (dsRrset) {
     // the DS RRset has to be signed by the parent before it can vouch for anything
-    const signed = await checkRrset(parent, dsRrset, rrsigs, options);
+    const signed = await checkIn(parent, dsRrset, rrsigs, options);
     if (signed.code !== RRSET_CODES.VERIFIED) {
       const verdict = rrsetVerdict(signed, parent.zone);
       const code =
         verdict.reason.code === R.RRSIGS_MISSING ? R.DS_UNAUTHENTICATED : verdict.reason.code;
-      return cut(verdict.status, code, { name, type: 'DS' });
+      const about = { name, type: 'DS' };
+      if (options.stopAtFirst) return cut(verdict.status, code, about, { ds: signed });
+      // judging everything, the child's keys and their signatures are still read for the
+      // evidence, though DS records the parent does not vouch for link nothing
+      const unvouched = await judgeKeys(
+        name,
+        entry.dnskey,
+        { ds: dsRrset.records, authenticated: false },
+        now,
+        false,
+        options.budget(name)
+      );
+      return {
+        cut: {
+          zone: name,
+          status: verdict.status,
+          reason: securityReason(code, name, about),
+          keys: [],
+        },
+        evidence: keysEvidence(unvouched, signed),
+      };
     }
     const dsTtl = rrsetLifetime(signed, now);
     const judged = await judgeKeys(
@@ -713,12 +832,12 @@ async function judgeName(
       { ds: dsRrset.records, dsTtl },
       now,
       options.stopAtFirst,
-      options.budget
+      options.budget(name)
     );
     const fact =
       judged.fact ??
       (judged.zone.status === INSECURE ? factOf(judged.zone, true, dsTtl) : undefined);
-    return { cut: judged.zone, ...(fact && { fact }) };
+    return { cut: judged.zone, evidence: keysEvidence(judged, signed), ...(fact && { fact }) };
   }
 
   // a name below a DNAME is rewritten, never looked up, so it cannot be a zone cut
@@ -731,7 +850,7 @@ async function judgeName(
       isSubdomain(rrset.name, parent.zone)
   );
   if (dname) {
-    const signed = await checkRrset(parent, dname, rrsigs, options);
+    const signed = await checkIn(parent, dname, rrsigs, options);
     if (signed.code === RRSET_CODES.VERIFIED) {
       return { inside: true, fact: factOf(parent, false, rrsetLifetime(signed, now), name) };
     }
@@ -744,7 +863,7 @@ async function judgeName(
     rrset => rrset.type === CNAME && canonicalName(rrset.name) === owner
   );
   if (alias) {
-    const signed = await checkRrset(parent, alias, rrsigs, options);
+    const signed = await checkIn(parent, alias, rrsigs, options);
     if (signed.code === RRSET_CODES.VERIFIED) {
       return { inside: true, fact: factOf(parent, false, rrsetLifetime(signed, now), name) };
     }
@@ -754,7 +873,19 @@ async function judgeName(
 
   // no DS: the parent has to prove it, with NSEC or NSEC3 records it signed
   const denial = await checkDenialRecords(parent, response.authorities, rrsigs, options);
-  if (!denial) return cut(BOGUS, R.NO_DS_PROOF, { name, type: 'DS' });
+  if (!denial) {
+    return cut(
+      BOGUS,
+      R.NO_DS_PROOF,
+      { name, type: 'DS' },
+      { noDs: { kind: 'denial', records: [], proof: verifyNoDsProof(name, []) } }
+    );
+  }
+  const noDs = (proof?: DenialProof): DenialEvidence => ({
+    kind: 'denial',
+    records: denial.checks,
+    ...(proof && { proof }),
+  });
   const unsigned = denial.checks.find(check => check.code !== RRSET_CODES.VERIFIED);
   if (unsigned) {
     const verdict = rrsetVerdict(unsigned, parent.zone);
@@ -764,43 +895,63 @@ async function judgeName(
       {
         name: unsigned.rrset.name,
         type: unsigned.rrset.typeName,
-      }
+      },
+      { noDs: noDs() }
     );
   }
   const expanded = denial.checks.find(expandedFromWildcard);
   if (expanded) {
-    return cut(BOGUS, R.DENIAL_INVALID, {
-      name: expanded.rrset.name,
-      type: expanded.rrset.typeName,
-    });
+    return cut(
+      BOGUS,
+      R.DENIAL_INVALID,
+      {
+        name: expanded.rrset.name,
+        type: expanded.rrset.typeName,
+      },
+      { noDs: noDs() }
+    );
   }
   const ttl = Math.min(...denial.checks.map(check => rrsetLifetime(check, now)));
 
   // past the iterations validators hash, nothing is hashed at all (RFC 9276 §3.2)
   if (nsec3Iterations(denial.records) > NSEC3_ITERATIONS_INSECURE_THRESHOLD) {
-    return insecureCut(name, R.NSEC3_ITERATIONS, ttl);
+    return insecureCut(
+      name,
+      R.NSEC3_ITERATIONS,
+      ttl,
+      noDs(iterationsExceededProof(name, PROOF_PURPOSES.NO_DS, denial.records))
+    );
   }
   const proof = verifyNoDsProof(name, denial.records);
-  if (proof.status === PROOF_STATUSES.OPT_OUT) return insecureCut(name, R.OPT_OUT, ttl);
-  if (proof.result !== VERIFIED) return cut(BOGUS, R.NO_DS_PROOF, { name, type: 'DS' });
+  if (proof.status === PROOF_STATUSES.OPT_OUT) {
+    return insecureCut(name, R.OPT_OUT, ttl, noDs(proof));
+  }
+  if (proof.result !== VERIFIED) {
+    return cut(BOGUS, R.NO_DS_PROOF, { name, type: 'DS' }, { noDs: noDs(proof) });
+  }
 
   const at = denialTypesAt(name, denial.records);
   if (at.types?.includes(NS) && !at.types.includes(SOA)) {
     // a delegation with no DS: the zone below is unsigned
-    return insecureCut(name, R.NO_DS, ttl);
+    return insecureCut(name, R.NO_DS, ttl, noDs(proof));
   }
   // the name has no NS, or does not exist: it is inside the parent's zone
   return { inside: true, fact: factOf(parent, false, ttl, name) };
 }
 
-function insecureCut(name: string, code: ReasonCode, ttl: number): NameJudgement {
+function insecureCut(
+  name: string,
+  code: ReasonCode,
+  ttl: number,
+  noDs: DenialEvidence
+): NameJudgement {
   const zone: ZoneState = {
     zone: name,
     status: INSECURE,
     reason: securityReason(code, name),
     keys: [],
   };
-  return { cut: zone, fact: factOf(zone, true, ttl) };
+  return { cut: zone, evidence: { kind: 'keys', keys: [], noDs }, fact: factOf(zone, true, ttl) };
 }
 
 function factOf(zone: ZoneState, cut: boolean, ttl: number, name = zone.zone): ZoneFact {
@@ -862,8 +1013,8 @@ async function judgeResponse(
   options: RrsetOptions,
   stopAtFirst: boolean,
   asked: Set<string>
-): Promise<ChainLink[]> {
-  const links: ChainLink[] = [];
+): Promise<JudgedLink[]> {
+  const links: JudgedLink[] = [];
   const rrsigs = signaturesIn(response);
   const rrsets = groupRrsets(response.answers);
   const inherit = (
@@ -916,7 +1067,7 @@ async function judgeResponse(
       links.push(inherit(zone, 'rrset', rrset.name, rrset.typeName));
       continue;
     }
-    const check = await checkRrset(zone, rrset, rrsigs, options);
+    const check = await checkIn(zone, rrset, rrsigs, options);
     if (
       check.code === RRSET_CODES.UNSIGNED &&
       rrset.type === CNAME &&
@@ -929,6 +1080,7 @@ async function judgeResponse(
         type: rrset.typeName,
         status: SECURE,
         reason: securityReason(R.VERIFIED, zone.zone, { name: rrset.name, type: rrset.typeName }),
+        evidence: { kind: 'rrset', check },
       });
       continue;
     }
@@ -939,6 +1091,7 @@ async function judgeResponse(
       name: rrset.name,
       type: rrset.typeName,
       ...verdict,
+      evidence: { kind: 'rrset', check },
     });
     if (verdict.status !== SECURE) continue;
     if (rrset.type === DNAME) verifiedDnames.push(rrset);
@@ -1059,34 +1212,39 @@ async function judgeDenial(
   purpose: 'wildcard' | 'nxdomain' | 'nodata',
   // the proof, and whether the NSEC3 covering the next closer name sets opt-out
   prove: (records: ResourceRecord[]) => { proof: DenialProof; optOut: boolean }
-): Promise<ChainLink> {
+): Promise<JudgedLink> {
   const type = purpose === 'nodata' ? typeName(response.type) : undefined;
   const link = (
     status: SecurityStatus,
     code: ReasonCode,
+    evidence: DenialEvidence,
     about: Record<string, unknown> = {}
-  ): ChainLink => ({
+  ): JudgedLink => ({
     kind: 'denial',
     zone: zone.zone,
     name,
     ...(type && { type }),
     status,
     reason: securityReason(code, zone.zone, { name, ...(type && { type }), ...about }),
+    evidence: { ...evidence, purpose },
   });
 
   const denial = await checkDenialRecords(zone, response.authorities, rrsigs, options);
-  if (!denial) return link(BOGUS, R.DENIAL_MISSING);
+  if (!denial) {
+    return link(BOGUS, R.DENIAL_MISSING, { kind: 'denial', records: [], proof: prove([]).proof });
+  }
+  const records: DenialEvidence = { kind: 'denial', records: denial.checks };
   const unsigned = denial.checks.find(check => check.code !== RRSET_CODES.VERIFIED);
   if (unsigned) {
     const verdict = rrsetVerdict(unsigned, zone.zone);
-    return link(verdict.status, verdict.reason.code, {
+    return link(verdict.status, verdict.reason.code, records, {
       name: unsigned.rrset.name,
       type: unsigned.rrset.typeName,
     });
   }
   const expanded = denial.checks.find(expandedFromWildcard);
   if (expanded) {
-    return link(BOGUS, R.DENIAL_INVALID, {
+    return link(BOGUS, R.DENIAL_INVALID, records, {
       name: expanded.rrset.name,
       type: expanded.rrset.typeName,
     });
@@ -1094,15 +1252,19 @@ async function judgeDenial(
 
   // past the iterations validators hash, nothing is hashed at all (RFC 9276 §3.2)
   if (nsec3Iterations(denial.records) > NSEC3_ITERATIONS_INSECURE_THRESHOLD) {
-    return link(INSECURE, R.NSEC3_ITERATIONS);
+    return link(INSECURE, R.NSEC3_ITERATIONS, {
+      ...records,
+      proof: iterationsExceededProof(name, purpose, denial.records),
+    });
   }
   const { proof, optOut } = prove(denial.records);
+  const proven: DenialEvidence = { ...records, proof };
   if (proof.result === VERIFIED) {
     // the NSEC3 covering the next closer name sets opt-out: an unsigned delegation may
     // sit in its range, so the proof does not authenticate the answer (RFC 5155 §9.2)
-    if (optOut) return link(INSECURE, R.OPT_OUT);
-    return link(SECURE, R.VERIFIED);
+    if (optOut) return link(INSECURE, R.OPT_OUT, proven);
+    return link(SECURE, R.VERIFIED, proven);
   }
-  if (proof.status === PROOF_STATUSES.OPT_OUT) return link(INSECURE, R.OPT_OUT);
-  return link(BOGUS, proof.records.length ? R.DENIAL_INVALID : R.DENIAL_MISSING);
+  if (proof.status === PROOF_STATUSES.OPT_OUT) return link(INSECURE, R.OPT_OUT, proven);
+  return link(BOGUS, proof.records.length ? R.DENIAL_INVALID : R.DENIAL_MISSING, proven);
 }

@@ -74,6 +74,19 @@ function ecdsaSign(pkcs8: Buffer, data: Uint8Array): Uint8Array {
   );
 }
 
+// an RSA/SHA-256 key (algorithm 8) with a modulus of `bits`
+export function rsaKey(flags = 257, bits = 2048): TestKey {
+  const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: bits });
+  const jwk = publicKey.export({ format: 'jwk' });
+  const exponent = fromBase64Url(jwk.e!);
+  // RFC 3110 §2: the exponent's length, the exponent, then the modulus
+  const raw = concatBytes([Uint8Array.of(exponent.length), exponent, fromBase64Url(jwk.n!)]);
+  const pkcs8 = privateKey.export({ format: 'der', type: 'pkcs8' });
+  return testKey(flags, 8, raw, data =>
+    Uint8Array.from(sign('sha256', data, { key: pkcs8, format: 'der', type: 'pkcs8' }))
+  );
+}
+
 // a key in an algorithm the library cannot verify (ECC-GOST, 12): any bytes stand in for
 // its signatures
 export function unverifiableKey(flags = 257, algorithm = 12): TestKey {

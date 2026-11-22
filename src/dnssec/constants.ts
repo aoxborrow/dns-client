@@ -16,6 +16,8 @@ export const PROOF_STATUSES = {
   OPT_OUT: 'opt-out',
   INVALID_HASH: 'invalid-hash',
   UNSUPPORTED_ALGORITHM: 'unsupported-algorithm',
+  // not worked out: the NSEC3 records use more iterations than validators hash (RFC 9276 §3.2)
+  ITERATIONS_EXCEEDED: 'iterations-exceeded',
 } as const;
 
 /** the kind of denial-of-existence proof a zone returned */
@@ -121,5 +123,8 @@ export const NSEC3_FLAGS = {
 
 // RFC 9276 §3.1: NSEC3 iterations MUST be 0. validators commonly treat higher counts as
 // insecure, and higher still as outright SERVFAIL
+
+/** the NSEC3 iterations past which validators treat a denial as insecure (RFC 9276 §3.2) */
 export const NSEC3_ITERATIONS_INSECURE_THRESHOLD = 50;
+/** the NSEC3 iterations past which most validators return SERVFAIL (RFC 9276 §3.2) */
 export const NSEC3_ITERATIONS_SERVFAIL_THRESHOLD = 500;

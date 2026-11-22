@@ -35,9 +35,6 @@ export {
 } from './canonical';
 export type { Rrset } from './canonical';
 export {
-  checkAnchors,
-  checkBudget,
-  checkRrset,
   isDigestDeprecated,
   readKeys,
   CHECK_LIMITS,
@@ -48,7 +45,6 @@ export {
 } from './checks';
 export type {
   AnchorCheck,
-  CheckBudget,
   CheckLimits,
   DnssecKey,
   DsCheck,
@@ -57,25 +53,26 @@ export type {
   KeySetCheck,
   KeySetCode,
   RrsetCheck,
-  RrsetCheckOptions,
   RrsetCode,
   SignatureCheck,
   SignatureCode,
-  ZoneKeys,
 } from './checks';
-export { judgeChain, judgeKeys } from './judge';
+export { judgeChain } from './judge';
 export type {
   ChainInput,
   ChainLink,
   ChainName,
+  DenialEvidence,
   DnssecResponse,
+  JudgedLink,
   JudgeMode,
   JudgeOptions,
   Judgement,
+  KeysEvidence,
+  LinkEvidence,
   LinkKind,
+  RrsetEvidence,
   ZoneFact,
-  KeysEntry,
-  ZoneKeysJudgement,
   ZoneState,
 } from './judge';
 export { REASON_CODES, SECURITY_STATUSES } from './reasons';
@@ -90,6 +87,8 @@ export {
   DS_DIGEST_TYPES,
   NSEC3_FLAGS,
   NSEC3_HASH_ALGORITHMS,
+  NSEC3_ITERATIONS_INSECURE_THRESHOLD,
+  NSEC3_ITERATIONS_SERVFAIL_THRESHOLD,
   PROOF_PURPOSES,
   PROOF_STATUSES,
   PROOF_TYPES,

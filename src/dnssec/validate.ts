@@ -12,7 +12,7 @@ import {
 import { ROOT_TRUST_ANCHORS } from './anchors';
 import { readRrsig } from './checks';
 import { judgeChain } from './judge';
-import type { ChainLink, ChainName, DnssecResponse, ZoneFact } from './judge';
+import type { ChainLink, ChainName, DnssecResponse, JudgedLink, ZoneFact } from './judge';
 import { denialTypesAt } from './nsec';
 import type { SecurityReason, SecurityStatus } from './reasons';
 import type { TrustAnchor } from './types';
@@ -186,10 +186,15 @@ export class Validator {
     return {
       status: judgement.status,
       reason: judgement.reason,
-      chain: judgement.links,
-      ...(judgement.failure && { failure: judgement.failure }),
+      chain: judgement.links.map(link),
+      ...(judgement.failure && { failure: link(judgement.failure) }),
     };
   }
+}
+
+// a link as a resolver's result gives it: what it came to and why, without the checks
+function link({ evidence, ...rest }: JudgedLink): ChainLink {
+  return rest;
 }
 
 // the names the data in the responses sits at: each answer RRset's owner, the name asked

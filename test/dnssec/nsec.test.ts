@@ -5,6 +5,7 @@ import {
   verifyWildcardProof,
   nextCloserOptOut,
   assessNsec3Params,
+  iterationsExceededProof,
 } from '../../src/dnssec/nsec';
 import { nsec3Hash } from '../../src/dnssec/canonical';
 import type { ResourceRecord } from '../../src/wire/message';
@@ -663,5 +664,26 @@ describe('nextCloserOptOut', () => {
 
   it('is false for NSEC', () => {
     expect(nextCloserOptOut('foo.example', [nsecRecord('example', 'www.example', [])])).toBe(false);
+  });
+});
+
+describe('iterationsExceededProof', () => {
+  it("keeps the root zone's NSEC3 records, whose owners are a single label", () => {
+    const record = {
+      ...nsec3Record(
+        '00000000000000000000000000000000',
+        'example',
+        'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv',
+        [],
+        {
+          iterations: 100,
+        }
+      ),
+      name: '00000000000000000000000000000000.',
+    };
+    const proof = iterationsExceededProof('nothing', 'nxdomain', [record]);
+    expect(proof.status).toBe(PROOF_STATUSES.ITERATIONS_EXCEEDED);
+    expect(proof.records).toHaveLength(1);
+    expect(proof.nsec3Params?.iterations).toBe(100);
   });
 });

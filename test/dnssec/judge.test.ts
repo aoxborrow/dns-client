@@ -1,19 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import {
-  checkAnchors,
-  computeDsDigest,
-  judgeChain,
-  readKeys,
-  REASON_CODES,
-} from '../../src/dnssec/index';
-import { checkDsSet } from '../../src/dnssec/checks';
+import { computeDsDigest, judgeChain, readKeys, REASON_CODES } from '../../src/dnssec/index';
+import { checkAnchors, checkDsSet } from '../../src/dnssec/checks';
 import { EDE_CODES, REASON_EDE } from '../../src/dnssec/reasons';
 import type { DnssecResponse } from '../../src/dnssec/index';
 import type { ResourceRecord } from '../../src/wire/message';
 import { dnssecResponse } from '../../src/dnssec/validate';
 import { Resolver } from '../../src/index';
 import { simulateNetwork } from '../support/simulated-network';
-import { anchorFor, ecdsaKey, revokedKey, signedNetwork } from '../support/signed-zones';
+import { anchorFor, ecdsaKey, revokedKey, rsaKey, signedNetwork } from '../support/signed-zones';
 import type { SignedZone, TestKey } from '../support/signed-zones';
 
 // the judging core on its own: the records are fetched here, by hand, and handed over
@@ -188,8 +182,169 @@ describe('judgeChain: limits', () => {
     const judgement = await judgeChain(chain, { trustAnchors, limits: { verifications: 1 } });
     expect(judgement.status).toBe('bogus');
     expect(judgement.reason).toMatchObject({ code: 'validation-limit', ede: 6 });
-    // the root's key set took the one check; the DS for example found none left
+    // the root's key set took the one check; the DS for example, which the root signs,
+    // found none left
     expect(judgement.failure).toMatchObject({ kind: 'keys', zone: 'example' });
+  });
+
+  // two checks a zone: its key set and the one RRset below it it signs
+  const twoEach = async (mode: 'first' | 'all') => {
+    const { signed, responses } = await fetchAll(healthy, healthyQuestions);
+    const get = (key: string) => responses.get(key)!;
+    return judgeChain(
+      {
+        anchored: get('. DNSKEY'),
+        names: [
+          { name: 'example', ds: get('example DS'), dnskey: get('example DNSKEY') },
+          { name: 'ok.example', ds: get('ok.example DS'), dnskey: get('ok.example DNSKEY') },
+        ],
+        responses: [get('www.ok.example A')],
+      },
+      { mode, trustAnchors: signed.trustAnchors, limits: { verifications: 2 } }
+    );
+  };
+
+  it('gives each zone a budget of its own when judging everything', async () => {
+    expect((await twoEach('all')).status).toBe('secure');
+  });
+
+  it('keeps one budget for the whole judgement when stopping at the first failure', async () => {
+    const judgement = await twoEach('first');
+    expect(judgement.status).toBe('bogus');
+    expect(judgement.reason.code).toBe(REASON_CODES.VALIDATION_LIMIT);
+  });
+});
+
+const healthy: SignedZone[] = [
+  { zone: '.' },
+  { zone: 'example' },
+  { zone: 'ok.example', records: [['www.ok.example', 'A', '192.0.2.1']] },
+  { zone: 'plain.example', ds: 'none', records: [['www.plain.example', 'A', '192.0.2.2']] },
+];
+
+const healthyQuestions: [string, string, string][] = [
+  ['.', '.', 'DNSKEY'],
+  ['.', 'example', 'DS'],
+  ['example', 'example', 'DNSKEY'],
+  ['example', 'ok.example', 'DS'],
+  ['ok.example', 'ok.example', 'DNSKEY'],
+  ['ok.example', 'www.ok.example', 'A'],
+  ['ok.example', 'missing.ok.example', 'A'],
+  ['example', 'plain.example', 'DS'],
+];
+
+describe('judgeChain: evidence', () => {
+  it('hands back the checks each link rests on', async () => {
+    const { signed, responses } = await fetchAll(healthy, healthyQuestions);
+    const get = (key: string) => responses.get(key)!;
+    const judgement = await judgeChain(
+      {
+        anchored: get('. DNSKEY'),
+        names: [
+          { name: 'example', ds: get('example DS'), dnskey: get('example DNSKEY') },
+          { name: 'ok.example', ds: get('ok.example DS'), dnskey: get('ok.example DNSKEY') },
+          { name: 'plain.example', ds: get('plain.example DS') },
+        ],
+        responses: [get('www.ok.example A'), get('missing.ok.example A')],
+      },
+      { trustAnchors: signed.trustAnchors, mode: 'all' }
+    );
+    const [root, example, ok, plain, answer, denial] = judgement.links;
+
+    // the anchored zone: its keys against the trust anchors, and the key set's signatures
+    expect(root.evidence).toMatchObject({
+      kind: 'keys',
+      anchors: { result: 'verified' },
+      keySet: { code: 'verified' },
+    });
+    // a signed delegation: the parent's signature over the DS, the DS against the keys
+    expect(ok).toMatchObject({ kind: 'keys', zone: 'ok.example', status: 'secure' });
+    expect(ok.evidence).toMatchObject({
+      kind: 'keys',
+      ds: { code: 'verified', rrset: { typeName: 'DS' } },
+      dsSet: { checks: [{ code: 'verified' }] },
+      keySet: { code: 'verified' },
+    });
+    expect(example.evidence?.kind).toBe('keys');
+    // an unsigned delegation: the parent's proof that there is no DS
+    expect(plain).toMatchObject({ zone: 'plain.example', status: 'insecure' });
+    expect(plain.evidence).toMatchObject({
+      kind: 'keys',
+      keys: [],
+      noDs: { kind: 'denial', proof: { result: 'verified' } },
+    });
+    // the data: its RRset and every signature over it
+    expect(answer.evidence).toMatchObject({
+      kind: 'rrset',
+      check: { code: 'verified', signatures: [{ code: 'verified' }] },
+    });
+    // a name that does not exist: the NSEC records and the proof worked out from them
+    expect(denial).toMatchObject({ kind: 'denial', name: 'missing.ok.example', status: 'secure' });
+    expect(denial.evidence).toMatchObject({
+      kind: 'denial',
+      proof: { result: 'verified', purpose: 'nxdomain' },
+    });
+    expect(denial.evidence?.kind === 'denial' && denial.evidence.records.length).toBeGreaterThan(0);
+  });
+});
+
+describe('judgeChain: RSA keys under 1024 bits', () => {
+  it('verifies a zone that relies on one like any other, as validators do by default', async () => {
+    const small = rsaKey(257, 768);
+    const { signed, responses } = await fetchAll(
+      [
+        { zone: '.' },
+        { zone: 'example' },
+        {
+          zone: 'small.example',
+          keys: [small],
+          records: [['www.small.example', 'A', '192.0.2.3']],
+        },
+      ],
+      [
+        ['.', '.', 'DNSKEY'],
+        ['.', 'example', 'DS'],
+        ['example', 'example', 'DNSKEY'],
+        ['example', 'small.example', 'DS'],
+        ['small.example', 'small.example', 'DNSKEY'],
+        ['small.example', 'www.small.example', 'A'],
+      ]
+    );
+    const get = (key: string) => responses.get(key)!;
+    const judgement = await judgeChain(
+      {
+        anchored: get('. DNSKEY'),
+        names: [
+          { name: 'example', ds: get('example DS'), dnskey: get('example DNSKEY') },
+          {
+            name: 'small.example',
+            ds: get('small.example DS'),
+            dnskey: get('small.example DNSKEY'),
+          },
+        ],
+        responses: [get('www.small.example A')],
+      },
+      { trustAnchors: signed.trustAnchors, mode: 'all' }
+    );
+    expect(judgement.status).toBe('secure');
+    const keys = judgement.links.find(link => link.zone === 'small.example')!;
+    expect(keys).toMatchObject({ status: 'secure', reason: { code: 'verified' } });
+    expect(keys.evidence).toMatchObject({
+      keySet: { code: 'verified', keyTag: small.keyTag, signatures: [{ code: 'verified' }] },
+    });
+  });
+
+  it('still verifies with a 1024-bit key', async () => {
+    const key = rsaKey(257, 1024);
+    const { signed, responses } = await fetchAll(
+      [{ zone: '.', keys: [key] }],
+      [['.', '.', 'DNSKEY']]
+    );
+    const judgement = await judgeChain(
+      { anchored: responses.get('. DNSKEY')! },
+      { trustAnchors: signed.trustAnchors }
+    );
+    expect(judgement.status).toBe('secure');
   });
 });
 

@@ -197,12 +197,13 @@ function collectNsec3(records: ResourceRecord[]): Nsec3Entry[] {
     if (rr.type !== RECORD_TYPES.NSEC3) continue;
     const decoded = orSkip(() => decodeNsec3(rr.rdata));
     if (!decoded) continue;
+    // the root zone's NSEC3 owners are a single label
     const [ownerHash, ...zone] = splitName(canonicalName(rr.name));
-    if (zone.length === 0) continue;
+    if (!ownerHash) continue;
     out.push({
       record: rr,
       ownerHash: ownerHash.toLowerCase(),
-      zone: zone.join('.'),
+      zone: zone.length ? zone.join('.') : '.',
       nextHash: toNsec3Label(decoded.nextHashed),
       types: decoded.types,
       hashAlgorithm: decoded.hashAlgorithm,
@@ -234,6 +235,36 @@ function emptyProof(
     records: [],
     steps: [step('Proof records', reason, FAILED)],
     optOut: false,
+    reason,
+  };
+}
+
+// a proof left unworked: its NSEC3 records use more iterations than validators hash (RFC
+// 9276 §3.2), so hashing a name for them is work no validator does
+export function iterationsExceededProof(
+  qname: string,
+  purpose: ProofPurpose,
+  records: ResourceRecord[]
+): DenialProof {
+  const entries = collectNsec3(records);
+  const most = entries.reduce((a, b) => (b.iterations > a.iterations ? b : a), entries[0]);
+  const params = assessNsec3Params(
+    most.hashAlgorithm,
+    most.iterations,
+    most.salt,
+    entries.some(e => e.optOut)
+  );
+  const reason = `The NSEC3 records use ${most.iterations} iterations, more than the ${NSEC3_ITERATIONS_INSECURE_THRESHOLD} validators hash.`;
+  return {
+    type: PROOF_TYPES.NSEC3,
+    purpose,
+    status: PROOF_STATUSES.ITERATIONS_EXCEEDED,
+    result: UNCHECKED,
+    qname: canonicalName(qname),
+    records: entries.map(e => presentRecord(e.record)),
+    steps: [step('Iterations', reason, UNCHECKED)],
+    optOut: params.optOut,
+    nsec3Params: params,
     reason,
   };
 }
