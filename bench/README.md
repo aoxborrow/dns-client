@@ -2,8 +2,8 @@
 
 `@aoxborrow/dns` against the other ways to resolve names from Node. The latest numbers are
 in [`RESULTS.md`](RESULTS.md), with the environment and date they were taken on and a
-feature matrix. The package [README](../README.md#benchmarks) carries a summary of them;
-update it by hand after a new run.
+feature matrix. The package [README](../README.md#performance) only says that throughput is
+not the library's goal, and links here.
 
 ## Running
 

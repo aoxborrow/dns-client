@@ -1,19 +1,23 @@
 # @aoxborrow/dns
 
-DNS for TypeScript, with no dependencies. Ask the resolvers you're configured with, or walk
-from the root to each zone's own servers; validate answers with DNSSEC; read and write every
-common record type as typed data. UDP, TCP, DNS over TLS and DNS over HTTPS, directly or
-through a SOCKS5 or HTTP CONNECT proxy.
+[![npm version](https://img.shields.io/npm/v/@aoxborrow/dns/beta.svg)](https://www.npmjs.com/package/@aoxborrow/dns)
+[![Test](https://github.com/aoxborrow/dns/actions/workflows/test.yml/badge.svg)](https://github.com/aoxborrow/dns/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-6.0-blue.svg)](https://www.typescriptlang.org)
+[![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](package.json)
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/aoxborrow)
 
-- **Two resolvers, one answer shape.** `Resolver` asks recursive resolvers, as `dig` does;
-  `AuthoritativeResolver` walks from the root and returns the trace of every server asked.
-- **DNSSEC validation** with `validate: true`: secure, insecure, bogus or indeterminate,
-  with the reason as a code and the extended DNS error a validator would send.
-- **33 typed record types**, parsing and validation of records in zone-file syntax, and a
-  wire codec on `Uint8Array`.
-- **A `node:dns/promises`-compatible API** in `@aoxborrow/dns/promises`, with a cache.
-- **Runs in more places than Node:** the records, wire and DNSSEC entries run in browsers and
-  Cloudflare Workers; DNS over HTTPS works anywhere with `fetch`.
+> A fully typed DNS library for TypeScript: resolvers, DNSSEC validation and every common record type, with no dependencies.
+
+- **Two resolvers** - ask recursive resolvers with failover and a TTL cache, or walk from the root servers with a hop-by-hop trace, like `dig +trace`
+- **DNSSEC validation** - every answer judged secure, insecure, bogus or indeterminate, with the reason and the extended DNS error
+- **Every transport** - UDP, TCP, DNS over TLS and DNS over HTTPS, directly or through a SOCKS5 or HTTP CONNECT proxy
+- **33 typed record types** - decoded into typed fields, and parsed, formatted and validated in zone-file syntax
+- **A `node:dns/promises` drop-in** - the same API, with a cache, in `@aoxborrow/dns/promises`
+- **Runs beyond Node** - the records, wire and DNSSEC entries run in browsers and Cloudflare Workers; DNS over HTTPS works anywhere with `fetch`
+
+This library is extracted from [dns.tools](https://dns.tools). Check out our [DNS API](https://dns.tools/docs#dns) if you need a hosted version of it.
 
 **Status:** `1.0.0-beta.1`, on npm's `beta` tag. It replaces `@aoxborrow/dns-client` 0.x and
 is not compatible with it; see [UPGRADING.md](UPGRADING.md).
@@ -28,7 +32,7 @@ is not compatible with it; see [UPGRADING.md](UPGRADING.md).
 - [Entry points](#entry-points)
 - [Where it runs](#where-it-runs)
 - [Documentation](#documentation)
-- [Benchmarks](#benchmarks)
+- [Performance](#performance)
 
 ## Install
 
@@ -419,81 +423,14 @@ and transport together, has not yet been run on a deployed Worker.
 | [UPGRADING.md](UPGRADING.md) | moving from `@aoxborrow/dns-client` 0.x |
 | [CHANGELOG.md](CHANGELOG.md) | what changed in each release |
 
-## Benchmarks
+## Performance
 
-Against the other ways to resolve names from Node, on an Apple M2 Max (12 cores), macOS
-14.8.5, Node 24.14.1 and DiG 9.10.6, on 2026-11-22. To reproduce, from this package:
-
-```bash
-yarn bench --network
-```
-
-The full output, with every scenario, the real-network runs and the method, is in
-[`bench/RESULTS.md`](bench/RESULTS.md); how it is run is in
-[`bench/README.md`](bench/README.md).
-
-**On a local fixture server**, which answers every question with one A record in the same
-process, so nothing but the client is measured. Every query asks a new name, except in the
-cache column.
-
-| Client                               |     Transport | warm p50, µs | 1,000 sequential, ms | queries/s, 100 in flight | queries/s, 1,000 in flight | cached answers/s |
-| :----------------------------------- | ------------: | -----------: | -------------------: | -----------------------: | -------------------------: | ---------------: |
-| `@aoxborrow/dns` `Resolver`          |           UDP |          150 |                  159 |                   12,407 |                     11,726 |          233,755 |
-| `@aoxborrow/dns` `Resolver`          | TCP pipelined |           56 |                   60 |                   31,456 |                     32,352 |          220,191 |
-| `@aoxborrow/dns` `Resolver`          |           DoH |          109 |                  127 |                   11,258 |                        n/a |          235,318 |
-| `@aoxborrow/dns/promises` `resolve4` |           UDP |          128 |                  135 |                    8,495 |                     12,144 |          211,589 |
-| `node:dns` `Resolver` (c-ares)       |           UDP |           62 |                   66 |                   38,009 |                     35,216 |         no cache |
-| dns2 3.1.1                           |           UDP |          156 |                  167 |                   19,400 |                     12,374 |         no cache |
-| tangerine 2.1.3                      |           DoH |           73 |                   81 |                   21,544 |                        n/a |        1,441,996 |
-| `fetch` + dns-packet                 |           DoH |          116 |                  133 |                   12,162 |                        n/a |         no cache |
-
-DoH stops at 100 in flight: past that the local test server's accept queue drops
-connections, which measures the server.
-
-**Over UDP the library manages about a third of c-ares's throughput**, and that is the
-price of a choice. Every UDP query gets a fresh socket and a random source port of its own,
-so a forged answer has to guess the port as well as the 16-bit ID (RFC 5452); c-ares sends
-every query from one socket. The extra system calls cost throughput and latency on every
-query. **Pipelined TCP**, which reuses one connection, is about 2.5 times as fast as the
-library's UDP and close to c-ares. **The cache** is the clear win: about 230,000 answers a
-second at every transport, against c-ares, whose cache Node turns off, so every repeat goes
-back to the server. Only tangerine's cache is faster.
-
-**Iterative resolution from the root**, the 100 names in `bench/top-100.ts`, one at a time
-over IPv4 UDP:
-
-| Resolver                                   | total, s | per name p50, ms | per name p95, ms | queries per name |
-| :----------------------------------------- | -------: | ---------------: | ---------------: | ---------------: |
-| `AuthoritativeResolver`, one for the list  |     16.6 |               77 |              373 |              3.3 |
-| `AuthoritativeResolver`, new for each name |     15.8 |              138 |              375 |              5.0 |
-| `dig +trace`, a process per name           |     28.9 |              176 |            1,099 |              4.0 |
-
-Against public resolvers (Cloudflare, Google, Quad9) every client is mostly round-trip time
-and the differences are within the network's own variance; those tables are in
-`bench/RESULTS.md`. `Bun.dns`, `Deno.resolveDns` and `dnsperf` were not installed on the
-machine, and `dns-socket` is unmaintained since 2021, so none of them is measured.
-
-### Features
-
-|                                                         | @aoxborrow/dns                                                                            | node:dns Resolver        | node:dns lookup    | dns2              | tangerine                            | Bun.dns                   | Deno.resolveDns            | dig                               |
-| :------------------------------------------------------ | :---------------------------------------------------------------------------------------- | :----------------------- | :----------------- | :---------------- | :----------------------------------- | :------------------------ | :------------------------- | :-------------------------------- |
-| UDP                                                     | yes                                                                                       | yes                      | system resolver    | yes               | no                                   | system resolver           | yes                        | yes                               |
-| TCP                                                     | yes, pipelined on request                                                                 | on truncation only       | system resolver    | yes               | no                                   | system resolver           | on truncation only         | yes (`+tcp`)                      |
-| DNS over TLS                                            | yes                                                                                       | no                       | no                 | no                | no                                   | no                        | no                         | BIND 9.18+ (`+tls`)               |
-| DNS over HTTPS                                          | yes                                                                                       | no                       | no                 | yes               | yes, only                            | no                        | no                         | BIND 9.18+ (`+https`)             |
-| Iterative resolution from the root                      | yes (`AuthoritativeResolver`)                                                             | no                       | no                 | no                | no                                   | no                        | no                         | `+trace`                          |
-| DNSSEC                                                  | validation (`validate: true`), and the primitives it is built from                        | no                       | no                 | record types only | DO bit, reads the resolver's AD flag | no                        | no                         | DO bit (`+dnssec`), no validation |
-| Cache                                                   | yes, by TTL, shared between callers                                                       | no (Node turns c-ares's cache off) | the system's       | no                | yes, pluggable (Map, Redis)          | yes                       | no                         | no                                |
-| One query on the wire for callers asking the same thing | yes                                                                                       | no                       | no                 | no                | no                                   | not documented            | no                         | n/a                               |
-| SOCKS5 and HTTP CONNECT proxies                         | yes                                                                                       | no                       | no                 | no                | through its `request` function       | no                        | no                         | no                                |
-| Browsers and Workers                                    | records, wire and DNSSEC entries anywhere; DoH through `fetch`; TCP on Cloudflare Workers | no                       | no                 | no                | no                                   | Bun only                  | Deno only                  | n/a                               |
-| Typed records                                           | 33 types, every field typed; unknown types as raw data                                    | 12 types in fixed shapes | addresses only     | about 20 types    | Node's shapes                        | addresses only            | 12 types                   | text                              |
-| TypeScript                                              | written in it                                                                             | `@types/node`            | `@types/node`      | bundled types     | bundled types                        | built in                  | built in                   | n/a                               |
-| Runtime dependencies                                    | none                                                                                      | built in                 | built in           | none              | 15                                   | built in                  | built in                   | n/a                               |
-| A `node:dns/promises` drop-in                           | yes (`@aoxborrow/dns/promises`)                                                           | it is the original       | it is the original | no                | yes, over DoH                        | Bun implements `node:dns` | Deno implements `node:dns` | n/a                               |
-
-"System resolver" means the client asks the operating system (getaddrinfo), which picks
-the transport and the servers.
+Maximum throughput is not the goal of this library. For raw volume, keep using `node:dns`:
+its resolver (c-ares) answers a busy UDP workload faster, in part because this library gives
+every UDP query a socket and source port of its own (RFC 5452). This library is for the
+rest: DNSSEC validation, resolving from the root, DNS over TLS and HTTPS, proxies, typed
+records, and runtimes beyond Node. The numbers, against `node:dns` and other clients, are in
+[`bench/RESULTS.md`](bench/RESULTS.md).
 
 ## Development
 
