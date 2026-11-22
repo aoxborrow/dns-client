@@ -1469,10 +1469,10 @@ describe('AuthoritativeResolver', () => {
 
     describe('a truncated answer whose TCP retry fails', () => {
       it("returns the zone's own answer as it came, TC set", async () => {
-        const answer = await resolver({}, { '10.1.0.1': truncatedOverUdp(example) }).query(
-          'example.com',
-          'A'
-        );
+        const answer = await resolver(
+          { transport: 'udp' },
+          { '10.1.0.1': truncatedOverUdp(example) }
+        ).query('example.com', 'A');
         expect(answer.server).toBe('10.1.0.1');
         expect(answer.flags).toMatchObject({ aa: true, tc: true });
         expect(answer.records.map(record => record.address)).toEqual(['192.0.2.1']);
@@ -1486,10 +1486,10 @@ describe('AuthoritativeResolver', () => {
       });
 
       it('returns an empty authoritative answer too, TC set', async () => {
-        const answer = await resolver({}, { '10.1.0.1': truncatedOverUdp(example, true) }).query(
-          'example.com',
-          'A'
-        );
+        const answer = await resolver(
+          { transport: 'udp' },
+          { '10.1.0.1': truncatedOverUdp(example, true) }
+        ).query('example.com', 'A');
         expect(answer.server).toBe('10.1.0.1');
         expect(answer.flags.tc).toBe(true);
         expect(answer.records).toEqual([]);
@@ -1498,7 +1498,7 @@ describe('AuthoritativeResolver', () => {
       it('follows the delegation a truncated referral still carries', async () => {
         const events: DnsEvent[] = [];
         const answer = await resolver(
-          { onEvent: event => events.push(event) },
+          { transport: 'udp', onEvent: event => events.push(event) },
           { '10.0.1.1': truncatedOverUdp(com) }
         ).query('example.com', 'A');
         expect(network.log()).toEqual([
@@ -2406,7 +2406,7 @@ describe('AuthoritativeResolver', () => {
       };
       const many = zoneServer({ zone: 'many.com', records: [['many.com', 'A', '192.0.2.44']] });
       const iterative = resolver(
-        {},
+        { transport: 'udp' },
         {
           '10.0.1.1': oneOfFour,
           '10.0.1.2': oneOfFour,

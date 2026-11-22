@@ -1,0 +1,433 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<?xml-stylesheet type="text/xsl" href="dns-sec-alg-numbers.xsl"?>
+<?xml-model href="dns-sec-alg-numbers.rng" schematypens="http://relaxng.org/ns/structure/1.0" ?>
+<registry xmlns="http://www.iana.org/assignments" id="dns-sec-alg-numbers">
+  <title>Domain Name System Security (DNSSEC) Algorithm Numbers</title>
+  <created>2003-11-03</created>
+  <updated>2026-08-10</updated>
+
+  <registry id="dns-sec-alg-numbers-1">
+    <title>DNS Security Algorithm Numbers</title>
+    <xref type="rfc" data="rfc4034"/>
+    <xref type="rfc" data="rfc3755"/>
+    <xref type="rfc" data="rfc6014"/>
+    <xref type="rfc" data="rfc6944"/>
+    <xref type="rfc" data="rfc9904"/>
+    <registration_rule>Standards Action or Specification Required</registration_rule>
+    <expert>Mark Andrews, Roy Arends, Warren Kumari, Wes Hardaker</expert>
+    <note>Adding a new entry to the "DNS Security Algorithm Numbers”
+registry with a recommended value of "MAY" in the "Use for DNSSEC
+Signing", "Use for DNSSEC Validation", "Implement for DNSSEC
+Signing", or "Implement for DNSSEC Validation" columns will be
+subject to the Specification Required policy as defined in 
+<xref type="rfc" data="rfc8126"/> in order to promote continued evolution of DNSSEC
+algorithms and DNSSEC agility. New entries added through the
+Specification Required process will have the value of "MAY” for
+all columns.
+
+Adding a new entry to, or changing an existing value in, the “DNS
+Security Algorithm Numbers" registry that has any value other than
+"MAY" in the "Use for DNSSEC Signing", "Use for DNSSEC
+Validation", "Implement for DNSSEC Signing", or "Implement for
+DNSSEC Validation" columns requires Standards Action.
+
+If an item is not marked as "RECOMMENDED", it does not necessarily mean
+that it is flawed; rather, it indicates that the item either has not been
+through the IETF consensus process, has limited applicability, or is
+intended only for specific use cases.
+    </note>
+    <note>The KEY, SIG, DNSKEY, RRSIG, DS, and CERT RRs use an 8-bit number used
+to identify the security algorithm being used.
+
+All algorithm numbers in this registry may be used in CERT RRs. Zone
+signing (DNSSEC) and transaction security mechanisms (SIG(0) and TSIG)
+make use of particular subsets of these algorithms. Only algorithms
+usable for zone signing may appear in DNSKEY, RRSIG, and DS RRs.
+Only those usable for SIG(0) and TSIG may appear in SIG and KEY RRs.
+
+(*) There has been no determination of standardization of the use of this
+algorithm with Transaction Security.
+    </note>
+    <record>
+      <number>0</number>
+      <description>Delete DS</description>
+      <mnemonic>DELETE</mnemonic>
+      <signing>N</signing>
+      <transsec>N</transsec>
+      <usesigning/>
+      <usevalid/>
+      <impsigning/>
+      <impvalid/>
+      <xref type="rfc" data="rfc4034"/>
+      <xref type="text">proposed standard</xref>
+      <xref type="rfc" data="rfc4398"/>
+      <xref type="text">proposed standard</xref>
+      <xref type="rfc" data="rfc8078"/>
+      <xref type="text">proposed standard</xref>
+    </record>
+    <record>
+      <number>1</number>
+      <description>RSA/MD5 (DEPRECATED, see 5)</description>
+      <mnemonic>RSAMD5</mnemonic>
+      <signing>N</signing>
+      <transsec>Y</transsec>
+      <usesigning>MUST NOT</usesigning>
+      <usevalid>MUST NOT</usevalid>
+      <impsigning>MUST NOT</impsigning>
+      <impvalid>MUST NOT</impvalid>
+      <xref type="rfc" data="rfc3110"/>
+      <xref type="text">proposed standard</xref>
+      <xref type="rfc" data="rfc4034"/>
+      <xref type="text">proposed standard</xref>
+    </record>
+    <record>
+      <number>2</number>
+      <description>Diffie-Hellman</description>
+      <mnemonic>DH</mnemonic>
+      <signing>N</signing>
+      <transsec>Y</transsec>
+      <usesigning/>
+      <usevalid/>
+      <impsigning/>
+      <impvalid/>
+      <xref type="rfc" data="rfc2539"/>
+      <xref type="text">proposed standard</xref>
+    </record>
+    <record>
+      <number>3</number>
+      <description>DSA/SHA1</description>
+      <mnemonic>DSA</mnemonic>
+      <signing>Y</signing>
+      <transsec>Y</transsec>
+      <usesigning>MUST NOT</usesigning>
+      <usevalid>MUST NOT</usevalid>
+      <impsigning>MUST NOT</impsigning>
+      <impvalid>MUST NOT</impvalid>
+      <xref type="rfc" data="rfc3755"/>
+      <xref type="text">proposed standard</xref>
+      <xref type="rfc" data="rfc2536"/>
+      <xref type="text">proposed standard</xref>
+      <xref type="text">Federal Information Processing Standards Publication (FIPS PUB) 186,
+Digital Signature Standard, 18 May 1994.</xref>
+      <xref type="text">Federal Information Processing Standards Publication (FIPS PUB) 180-1,
+Secure Hash Standard, 17 April 1995.
+(Supersedes FIPS PUB 180 dated 11 May 1993.)</xref>
+    </record>
+    <record>
+      <number>4</number>
+      <description>Reserved</description>
+      <xref type="rfc" data="rfc6725"/>
+      <xref type="text">proposed standard</xref>
+    </record>
+    <record updated="2025-06-09">
+      <number>5</number>
+      <description>RSA/SHA-1</description>
+      <mnemonic>RSASHA1</mnemonic>
+      <signing>Y</signing>
+      <transsec>Y</transsec>
+      <usesigning>MUST NOT</usesigning>
+      <usevalid>RECOMMENDED</usevalid>
+      <impsigning>NOT RECOMMENDED</impsigning>
+      <impvalid>MUST</impvalid>
+      <xref type="rfc" data="rfc3110"/>
+      <xref type="text">proposed standard</xref>
+      <xref type="rfc" data="rfc4034"/>
+      <xref type="text">proposed standard</xref>
+      <xref type="rfc" data="rfc9905"/>
+    </record>
+    <record>
+      <number>6</number>
+      <description>DSA-NSEC3-SHA1</description>
+      <mnemonic>DSA-NSEC3-SHA1</mnemonic>
+      <signing>Y</signing>
+      <transsec>Y</transsec>
+      <usesigning>MUST NOT</usesigning>
+      <usevalid>MUST NOT</usevalid>
+      <impsigning>MUST NOT</impsigning>
+      <impvalid>MUST NOT</impvalid>
+      <xref type="rfc" data="rfc5155"/>
+      <xref type="text">proposed standard</xref>
+    </record>
+    <record updated="2025-06-09">
+      <number>7</number>
+      <description>RSASHA1-NSEC3-SHA1</description>
+      <mnemonic>RSASHA1-NSEC3-SHA1</mnemonic>
+      <signing>Y</signing>
+      <transsec>Y</transsec>
+      <usesigning>MUST NOT</usesigning>
+      <usevalid>RECOMMENDED</usevalid>
+      <impsigning>NOT RECOMMENDED</impsigning>
+      <impvalid>MUST</impvalid>
+      <xref type="rfc" data="rfc5155"/>
+      <xref type="text">proposed standard</xref>
+      <xref type="rfc" data="rfc9905"/>
+    </record>
+    <record>
+      <number>8</number>
+      <description>RSA/SHA-256</description>
+      <mnemonic>RSASHA256</mnemonic>
+      <signing>Y</signing>
+      <transsec>*</transsec>
+      <usesigning>RECOMMENDED</usesigning>
+      <usevalid>RECOMMENDED</usevalid>
+      <impsigning>MUST</impsigning>
+      <impvalid>MUST</impvalid>
+      <xref type="rfc" data="rfc5702"/>
+      <xref type="text">proposed standard</xref>
+    </record>
+    <record>
+      <number>9</number>
+      <description>Reserved</description>
+      <xref type="rfc" data="rfc6725"/>
+      <xref type="text">proposed standard</xref>
+    </record>
+    <record>
+      <number>10</number>
+      <description>RSA/SHA-512</description>
+      <mnemonic>RSASHA512</mnemonic>
+      <signing>Y</signing>
+      <transsec>*</transsec>
+      <usesigning>NOT RECOMMENDED</usesigning>
+      <usevalid>RECOMMENDED</usevalid>
+      <impsigning>NOT RECOMMENDED</impsigning>
+      <impvalid>MUST</impvalid>
+      <xref type="rfc" data="rfc5702"/>
+      <xref type="text">proposed standard</xref>
+    </record>
+    <record>
+      <number>11</number>
+      <description>Reserved</description>
+      <xref type="rfc" data="rfc6725"/>
+      <xref type="text">proposed standard</xref>
+    </record>
+    <record updated="2025-06-10">
+      <number>12</number>
+      <description>GOST R 34.10-2001 (DEPRECATED)</description>
+      <mnemonic>ECC-GOST</mnemonic>
+      <signing>Y</signing>
+      <transsec>*</transsec>
+      <usesigning>MUST NOT</usesigning>
+      <usevalid>MUST NOT</usevalid>
+      <impsigning>MUST NOT</impsigning>
+      <impvalid>MUST NOT</impvalid>
+      <xref type="rfc" data="rfc5933"/>
+      <xref type="text">proposed standard</xref>
+      <xref type="uri" data="https://datatracker.ietf.org/doc/status-change-gost-dnssec-to-historic">Change the status of GOST Signature Algorithms in DNSSEC in the IETF stream to Historic</xref>
+      <xref type="rfc" data="rfc9906"/>
+    </record>
+    <record>
+      <number>13</number>
+      <description>ECDSA Curve P-256 with SHA-256</description>
+      <mnemonic>ECDSAP256SHA256</mnemonic>
+      <signing>Y</signing>
+      <transsec>*</transsec>
+      <usesigning>RECOMMENDED</usesigning>
+      <usevalid>RECOMMENDED</usevalid>
+      <impsigning>MUST</impsigning>
+      <impvalid>MUST</impvalid>
+      <xref type="rfc" data="rfc6605"/>
+      <xref type="text">proposed standard</xref>
+    </record>
+    <record>
+      <number>14</number>
+      <description>ECDSA Curve P-384 with SHA-384</description>
+      <mnemonic>ECDSAP384SHA384</mnemonic>
+      <signing>Y</signing>
+      <transsec>*</transsec>
+      <usesigning>MAY</usesigning>
+      <usevalid>RECOMMENDED</usevalid>
+      <impsigning>MAY</impsigning>
+      <impvalid>RECOMMENDED</impvalid>
+      <xref type="rfc" data="rfc6605"/>
+      <xref type="text">proposed standard</xref>
+    </record>
+    <record date="2017-01-09">
+      <number>15</number>
+      <description>Ed25519</description>
+      <mnemonic>ED25519</mnemonic>
+      <signing>Y</signing>
+      <transsec>*</transsec>
+      <usesigning>RECOMMENDED</usesigning>
+      <usevalid>RECOMMENDED</usevalid>
+      <impsigning>RECOMMENDED</impsigning>
+      <impvalid>RECOMMENDED</impvalid>
+      <xref type="rfc" data="rfc8080"/>
+      <xref type="text">proposed standard</xref>
+    </record>
+    <record date="2017-01-09">
+      <number>16</number>
+      <description>Ed448</description>
+      <mnemonic>ED448</mnemonic>
+      <signing>Y</signing>
+      <transsec>*</transsec>
+      <usesigning>MAY</usesigning>
+      <usevalid>RECOMMENDED</usevalid>
+      <impsigning>MAY</impsigning>
+      <impvalid>RECOMMENDED</impvalid>
+      <xref type="rfc" data="rfc8080"/>
+      <xref type="text">proposed standard</xref>
+    </record>
+    <record date="2023-02-07">
+      <number>17</number>
+      <description>SM2 signing algorithm with SM3 hashing algorithm</description>
+      <mnemonic>SM2SM3</mnemonic>
+      <signing>Y</signing>
+      <transsec>*</transsec>
+      <usesigning>MAY</usesigning>
+      <usevalid>MAY</usevalid>
+      <impsigning>MAY</impsigning>
+      <impvalid>MAY</impvalid>
+      <xref type="rfc" data="rfc9563"/>
+      <xref type="text">informational</xref>
+    </record>
+    <record date="2026-08-10">
+      <number>18</number>
+      <description>ML-DSA-44</description>
+      <mnemonic>MLDSA44</mnemonic>
+      <signing>Y</signing>
+      <transsec>*</transsec>
+      <usesigning>MAY</usesigning>
+      <usevalid>MAY</usevalid>
+      <impsigning>MAY</impsigning>
+      <impvalid>MAY</impvalid>
+      <xref type="draft" data="draft-westerbaan-dnssec-mldsa-03"/>
+      <xref type="text">informational</xref>
+    </record>
+    <record>
+      <number>19-22</number>
+      <description>Unassigned</description>
+    </record>
+    <record date="2024-01-24">
+      <number>23</number>
+      <description>GOST R 34.10-2012</description>
+      <mnemonic>ECC-GOST12</mnemonic>
+      <signing>Y</signing>
+      <transsec>*</transsec>
+      <usesigning>MAY</usesigning>
+      <usevalid>MAY</usevalid>
+      <impsigning>MAY</impsigning>
+      <impvalid>MAY</impvalid>
+      <xref type="rfc" data="rfc9558"/>
+      <xref type="text">informational</xref>
+    </record>
+    <record>
+      <number>24-122</number>
+      <description>Unassigned</description>
+    </record>
+    <record>
+      <number>123-251</number>
+      <description>Reserved</description>
+      <xref type="rfc" data="rfc4034"/>
+      <xref type="text">proposed standard</xref>
+      <xref type="rfc" data="rfc6014"/>
+      <xref type="text">proposed standard</xref>
+    </record>
+    <record>
+      <number>252</number>
+      <description>Reserved for Indirect Keys</description>
+      <mnemonic>INDIRECT</mnemonic>
+      <signing>N</signing>
+      <transsec>N</transsec>
+      <usesigning/>
+      <usevalid/>
+      <impsigning/>
+      <impvalid/>
+      <xref type="rfc" data="rfc4034"/>
+      <xref type="text">proposed standard</xref>
+    </record>
+    <record>
+      <number>253</number>
+      <description>private algorithm</description>
+      <mnemonic>PRIVATEDNS</mnemonic>
+      <signing>Y</signing>
+      <transsec>Y</transsec>
+      <usesigning>MAY</usesigning>
+      <usevalid>MAY</usevalid>
+      <impsigning>MAY</impsigning>
+      <impvalid>MAY</impvalid>
+      <xref type="rfc" data="rfc4034"/>
+      <xref type="text">proposed standard</xref>
+    </record>
+    <record>
+      <number>254</number>
+      <description>private algorithm OID</description>
+      <mnemonic>PRIVATEOID</mnemonic>
+      <signing>Y</signing>
+      <transsec>Y</transsec>
+      <usesigning>MAY</usesigning>
+      <usevalid>MAY</usevalid>
+      <impsigning>MAY</impsigning>
+      <impvalid>MAY</impvalid>
+      <xref type="rfc" data="rfc4034"/>
+      <xref type="text">proposed standard</xref>
+    </record>
+    <record>
+      <number>255</number>
+      <description>Reserved</description>
+      <xref type="rfc" data="rfc4034"/>
+      <xref type="text">proposed standard</xref>
+    </record>
+  </registry>
+  
+  <registry id="prime-lengths">
+    <title>DNS KEY Record Diffie-Hellman Prime Lengths</title>
+    <xref type="rfc" data="rfc2539"/>
+    <registration_rule>IETF Review</registration_rule>
+    <record>
+      <value>0</value>
+      <name>Unassigned</name>
+    </record>
+    <record>
+      <value>1</value>
+      <name>index into well-known table</name>
+      <xref type="rfc" data="rfc2539"/>
+    </record>
+    <record>
+      <value>2</value>
+      <name>index into well-known table</name>
+      <xref type="rfc" data="rfc2539"/>
+    </record>
+    <record>
+      <value>3-15</value>
+      <name>Unassigned</name>
+    </record>
+    </registry>
+  
+  <registry id="prime-generator-pairs">
+    <title>DNS KEY Record Diffie-Hellman Well-Known Prime/Generator Pairs</title>
+    <xref type="rfc" data="rfc2539"/>
+    <range>
+      <value>0x0000-0x07ff</value>
+      <registration_rule>Standards Action</registration_rule>
+    </range>
+    <range>
+      <value>0x0800-0xbfff</value>
+      <registration_rule>RFC Required</registration_rule>
+    </range>
+    <record>
+      <value>0x0000</value>
+      <name>Unassigned</name>
+    </record>
+    <record>
+      <value>0x0001</value>
+      <name>Well-Known Group 1: A 768 bit prime</name>
+      <xref type="rfc" data="rfc2539"/>
+    </record>
+    <record>
+      <value>0x0002</value>
+      <name>Well-Known Group 2: A 1024 bit prime</name>
+      <xref type="rfc" data="rfc2539"/>
+    </record>
+    <record>
+      <value>0x0003-0xbfff</value>
+      <name>Unassigned</name>
+    </record>
+    <record>
+      <value>0xc000-0xffff</value>
+      <name>Private Use</name>
+      <xref type="rfc" data="rfc2539"/>
+    </record>
+  </registry>
+ 
+  <people/>
+</registry>

@@ -141,16 +141,19 @@ and runs in the live suite (`test/live/docs.live.test.ts`) instead.
 The parts of the suite that need no listening socket (the codec, the records, the
 resolvers over the simulated network, the DNSSEC primitives) also run inside the Workers
 runtime, with [`@cloudflare/vitest-plugin`](https://developers.cloudflare.com/workers/testing/vitest-integration/).
-The standalone repository has it as a devDependency; this monorepo leaves it out, because it
-brings `workerd` into every install. Its config is `vitest.workers.config.ts` at the
-standalone repository's root (here, `extract/standalone/vitest.workers.config.ts`):
+The standalone repository has it as a devDependency; the DNS.Tools monorepo, where the
+library was built, leaves it out, because it brings `workerd` into every install. Its
+config is `vitest.workers.config.ts` at the standalone repository's root (in the
+monorepo, `extract/standalone/vitest.workers.config.ts`):
 
 ```bash
 yarn test:workers
 ```
 
 A test that only makes sense on Node says so with `it.skipIf(!isNode())`, and Ed448 is
-skipped where the runtime cannot make a key for it. The tests of the transports start
+skipped where the runtime cannot make a key for it. A resolver asks over TCP by default
+outside Node, so a test of what happens over UDP (a truncated answer, say) sets
+`transport: 'udp'` to run the same in both places. The tests of the transports start
 real servers and stay on Node. This runs a local `workerd`, which is more permissive than
 a deployed Worker: it lets TLS start inside a proxy tunnel, which a deployed Worker does
 not.
@@ -184,6 +187,29 @@ Then save the verified `root-anchors.xml` and a fresh
 `test/fixtures/iana/`, so the offline test compares the bundle with what it was refreshed
 from, and run `yarn test`: `test/dnssec/canonical.test.ts` recomputes each anchor's digest
 from the published key.
+
+## DNSSEC algorithms
+
+The signing algorithms and DS digest types (`DNSSEC_ALGORITHMS` and `DS_DIGEST_TYPES` in
+`src/dnssec/constants.ts`) carry each one's name and its standing in IANA's
+[algorithm](https://www.iana.org/assignments/dns-sec-alg-numbers) and
+[digest](https://www.iana.org/assignments/ds-rr-types) registries. CI compares them with
+the registries every week, and the check fails when they differ:
+
+```bash
+yarn refresh-algorithms --check   # report, and fail on a difference
+yarn refresh-algorithms           # rewrite the bundled tables
+```
+
+A rewrite takes each row's name and standing from IANA and keeps what only the code
+knows: whether the library verifies the algorithm, and a digest's strength. A standing is
+read from RFC 9904's columns: `prohibited` when validators MUST NOT use it, `deprecated`
+when signers MUST NOT, `recommended` when signing is RECOMMENDED, `regional` when every
+column is MAY, and `supported` otherwise. A row new to the bundle starts with
+`verify: false`; check that `regional` describes it, since IANA gives MAY in every column
+to anything registered through Specification Required. Then save the two registry files
+over the copies in `test/fixtures/iana/` (`dns-sec-alg-numbers.xml`, `ds-rr-types.xml`)
+and run `yarn test`.
 
 ## Adding a record type
 

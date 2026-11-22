@@ -115,6 +115,7 @@ describe('validate: a truncated answer whose TCP retry failed', () => {
       servers: [signed.recursive],
       trustAnchors: signed.trustAnchors,
       validate: true,
+      transport: 'udp',
     });
     const answer = await resolver.query('www.secure.example', 'A');
     expect(answer.flags.tc).toBe(true);
@@ -134,6 +135,7 @@ describe('validate: a truncated answer whose TCP retry failed', () => {
       rootServers: signed.rootServers,
       trustAnchors: signed.trustAnchors,
       validate: true,
+      transport: 'udp',
     });
     const answer = await resolver.query('www.secure.example', 'A');
     expect(answer.flags.tc).toBe(true);
@@ -152,6 +154,7 @@ describe('validate: a truncated answer whose TCP retry failed', () => {
       servers: [signed.recursive],
       trustAnchors: signed.trustAnchors,
       validate: true,
+      transport: 'udp',
     });
     const answer = await resolver.query('www.secure.example', 'A');
     expect(answer.flags.tc).toBe(false);
@@ -172,6 +175,7 @@ describe('validate: a truncated answer whose TCP retry failed', () => {
       servers: [signed.recursive],
       trustAnchors: signed.trustAnchors,
       validate: true,
+      transport: 'udp',
     });
     const answer = await resolver.query('www.plain.example', 'A');
     expect(answer.flags.tc).toBe(true);

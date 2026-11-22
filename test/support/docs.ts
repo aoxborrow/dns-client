@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { entries } from '../../tsup.config';
 
 // the README and the reference pages it links to, read as one set of documents: their
 // TypeScript examples, and what each one says. The list is written out, not globbed, so a
@@ -16,6 +17,28 @@ export const DOCS = [
 ];
 
 export const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+
+// each public specifier and the source file it is built from: `.` from src/index.ts,
+// `./records` from src/records/index.ts, `./transports/doh` from src/transports/doh.ts. The
+// examples import the package by name, and resolve to its source through this map rather
+// than through `exports`, which points at dist/ once the package is published
+const NAME = (JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')) as { name: string })
+  .name;
+export const sources: Record<string, string> = Object.fromEntries(
+  entries.map(entry => {
+    const subpath = entry.replace(/^src\//, '').replace(/(\/index)?\.ts$/, '');
+    return [subpath === 'index' ? NAME : `${NAME}/${subpath}`, path.join(root, entry)];
+  })
+);
+
+// the example with each import of the package by name pointed at its source file
+function toSource(code: string): string {
+  return code.replace(
+    /(from\s+|import\s*\(\s*)(['"])([^'"]+)\2/g,
+    (whole, lead, quote, specifier) =>
+      specifier in sources ? `${lead}${quote}${sources[specifier]}${quote}` : whole
+  );
+}
 
 export interface Example {
   // where the block's code starts, as `file:line`
@@ -133,8 +156,8 @@ export function checked(example: Example): string {
   return `const __check = (globalThis as any).__docCheck;\n${code}\nexport {};\n`;
 }
 
-// runs examples as modules beside the tests, so the package's own name resolves to its
-// source through `exports`, and returns what each check found wrong
+// runs examples as modules beside the tests, with the package's own name pointed at its
+// source, and returns what each check found wrong
 type Check = (actual: unknown, expected: unknown, line: number) => void;
 
 // what an example module finds on the global object while it runs
@@ -160,7 +183,7 @@ export async function run(list: Example[], check: boolean): Promise<string[]> {
         }
       };
       const file = path.join(dir, `example-${index + 1}.ts`);
-      writeFileSync(file, check ? checked(example) : `${example.code}\nexport {};\n`);
+      writeFileSync(file, toSource(check ? checked(example) : `${example.code}\nexport {};\n`));
       try {
         await import(file);
       } catch (error) {

@@ -1,7 +1,7 @@
 import path from 'node:path';
 import ts from 'typescript';
 import { entries } from '../tsup.config';
-import { DOCS, examples, readDoc, root, run } from './support/docs';
+import { DOCS, examples, readDoc, root, run, sources } from './support/docs';
 
 // the README and the reference pages under docs/ (the list is in ./support/docs.ts). Every
 // ```ts block typechecks against the package as a user would import it, so an example
@@ -31,8 +31,9 @@ function sameKeys(code: string): string {
 function diagnostics(): string[] {
   const config = ts.readConfigFile(path.join(root, 'tsconfig.json'), ts.sys.readFile);
   const { options } = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
-  const compilerOptions = { ...options, noEmit: true, incremental: false };
-  // beside the tests, so the package's own name resolves to its source through `exports`;
+  // the package's own name resolves to its source, as the examples run
+  const paths = Object.fromEntries(Object.entries(sources).map(([name, file]) => [name, [file]]));
+  const compilerOptions = { ...options, paths, noEmit: true, incremental: false };
   // a module even with no import, so top-level await is allowed
   const virtual = new Map(
     all.map((example, index) => [
