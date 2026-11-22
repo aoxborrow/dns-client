@@ -65,69 +65,56 @@ await resolver.query('mozilla.org', 'NS', {
 
 ## Options
 
-These can be set on a resolver for every query, or passed to one `query()`:
+Every option, with its default, is in the README's [Options](../README.md#options). The
+query settings (`transport`, `port`, `timeout`, `retries`, `tcpFallback`, the flags and the
+EDNS settings) can be set on a resolver for every query, or passed to one `query()`. These
+need more than a line:
 
-| Option             | Default |                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `transport`        | `'udp'` | `'udp'`, `'tcp'`, `'tls'` or `'doh'`. DoH for a server given as a URL, TCP where there is no UDP. `AuthoritativeResolver` takes `'udp'` or `'tcp'`                                                                                                                                                                                                                                                                                                                       |
-| `timeout`          | `5000`  | milliseconds of patience with one server                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `retries`          | `2`     | further attempts at a server that fails in a way worth retrying. With several `servers`, one: each server is asked once before any is asked again. `AuthoritativeResolver` asks a zone's next server instead (`0`), and only the last one a zone has left a second time (`1`)                                                                                                                                                                                            |
-| `totalTimeout`     | `10000` | milliseconds one answer may take altogether: every server, retry and TCP fallback, time spent waiting under `concurrency` and `serverConcurrency`, and the queries `validate` makes for the chain. Where `timeout` or `retries` is set, the default is at least what one server's attempts take, `timeout × (retries + 1)`, so it never cuts them short. `AuthoritativeResolver` gives the last server a zone has left the rest of it, and counts nameserver lookups too |
-| `tcpFallback`      | `true`  | ask again over TCP when a UDP answer is truncated. When TCP fails (refused, timed out, no time left for it), the truncated answer comes back as it came, `flags.tc` set, with the TCP error in `tcpFallbackError`                                                                                                                                                                                                                                                        |
-| `recursionDesired` | `true`  | the RD flag. `AuthoritativeResolver` never sets it                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `dnssecOk`         | `false` | the DO bit: ask for signatures with the answer                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `checkingDisabled` | `false` | the CD flag: ask a validating resolver not to hold an answer back                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `authenticData`    | `false` | the AD flag in the query: ask to be told whether the answer validated                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `udpPayloadSize`   | `1232`  | the largest UDP answer this client will accept                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `ednsOptions`      | none    | EDNS options to send: `nsidOption()`, `clientSubnetOption()`, `cookieOption()`, `paddingOption()`                                                                                                                                                                                                                                                                                                                                                                        |
-| `edns`             | on      | `false` sends a plain RFC 1035 query, with no EDNS record. `dnssecOk`, `udpPayloadSize` and `ednsOptions` travel in that record, so setting one of them together with `edns: false` is a `TypeError`. One exception: `edns: false` passed to a single `query()` sends that query plain, dropping any of the three that were set on the resolver                                                                                                                           |
-| `signal`           | none    | an `AbortSignal`, per query. An aborted query rejects with the signal's reason, including one still waiting for its turn under a concurrency limit                                                                                                                                                                                                                                                                                                                       |
-
-`Resolver` also takes:
-
-| Option                     | Default          |                                                                              |
-| -------------------------- | ---------------- | ---------------------------------------------------------------------------- |
-| `servers`                  | this machine's   | addresses, names, `host:port`, URLs, or `{ address, port, serverName, url }` |
-| `cache`                    | 1000 entries     | `false`, `{ max }` for the built-in cache, or a cache of your own            |
-| `concurrency`              | no limit         | queries in flight at once, to all servers together                           |
-| `serverConcurrency`        | `16`             | queries in flight to one server at once; `Infinity` for no limit             |
-| `strict`                   | `false`          | malformed record data is an error, not a record in the generic form          |
-| `validate`, `trustAnchors` | off, IANA's root | DNSSEC validation; see [DNSSEC](dnssec.md)                                  |
-
-`AuthoritativeResolver` also takes:
-
-| Option                               | Default             |                                                                                                                                                      |
-| ------------------------------------ | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rootServers`                        | the 13 root servers | where to start: `{ name, ipv4, ipv6 }[]`                                                                                                             |
-| `addressFamily`                      | `'both'`            | `'ipv4'`, `'ipv6'` or `'both'`. With both, a server's IPv6 address is tried only once each of the zone's servers has been tried at its first address |
-| `followCnames`, `maxAliases`         | off, `8`            | resolve an alias into another zone, and how long a chain may be                                                                                      |
-| `maxHops`                            | `40`                | servers asked on the way to one answer, nameserver lookups included                                                                                  |
-| `serverConcurrency`                  | `8`                 | queries in flight to one server address at once; `Infinity` for no limit                                                                             |
-| `serverDelay`                        | `0`                 | the least milliseconds between two queries to the same server                                                                                        |
-| `concurrency`                        | no limit            | queries in flight at once, to all servers together                                                                                                   |
-| `hosts`                              | none                | addresses for nameservers by name, used before asking for them                                                                                       |
-| `cache`                              | `true`              | remember delegations between queries, and share the referrals of queries running at the same time. With `false` every query walks from the root      |
-| `nameserverCache`                    | `true`              | remember the addresses of nameservers that came without glue between queries, even with `cache: false`                                               |
-| `strict`, `validate`, `trustAnchors` |                     | as for `Resolver`                                                                                                                                    |
+- **`retries`**: further attempts at a server that fails in a way worth retrying. The
+  default is `2`, or `1` with several `servers`, so each server is asked once before any is
+  asked again. `AuthoritativeResolver` asks a zone's next server instead (`0`), and asks only
+  the last one a zone has left a second time (`1`).
+- **`totalTimeout`**: the milliseconds one answer may take altogether. That covers every
+  server, retry and TCP fallback, time spent waiting under `concurrency` and
+  `serverConcurrency`, and the queries `validate` makes for the chain. Where `timeout` or
+  `retries` is set, the default is at least what one server's attempts take,
+  `timeout × (retries + 1)`, so it never cuts them short. `AuthoritativeResolver` gives the
+  last server a zone has left the rest of it, and counts nameserver lookups too.
+- **`tcpFallback`**: when TCP fails too (refused, timed out, or no time left for it), the
+  truncated answer comes back as it came, `flags.tc` set, with the TCP error in
+  `tcpFallbackError`.
+- **`edns: false`**: sends a plain RFC 1035 query, with no EDNS record. `dnssecOk`,
+  `udpPayloadSize` and `ednsOptions` travel in that record, so setting one of them together
+  with `edns: false` is a `TypeError`. One exception: `edns: false` passed to a single
+  `query()` sends that query plain, dropping any of the three that were set on the resolver.
+- **`signal`**, per query: an aborted query rejects with the signal's reason, including one
+  still waiting for its turn under a concurrency limit.
+- **`server`**, on one `Resolver.query()`: an address, a name, `host:port`, a URL, or
+  `{ address, port, serverName, url }`. The answer is neither taken from the cache nor put in
+  it.
+- **`addressFamily`**: with `'both`', a server's IPv6 address is tried only once each of the
+  zone's servers has been tried at its first address, so a host with no IPv6 route does not
+  wait out a timeout per server.
+- **`cache`** on `AuthoritativeResolver`: remembers delegations between queries, and shares
+  the referrals of queries running at the same time. With `false`, every query walks from
+  the root.
+- **`startAt`**, on one `AuthoritativeResolver.query()`: nameservers that come without an
+  address are still looked up from the root servers, and the delegations found on the way
+  are not kept for other queries.
+- **`fromRoot`**, on one `AuthoritativeResolver.query()`: what the walk learns is kept for
+  other queries.
+- **`onEvent`**, on one `AuthoritativeResolver.query()`: told only of the queries this one
+  sends, nameserver lookups included. The resolver's own `onEvent` is told as well.
 
 The default `rootServers` is `ROOT_HINTS`, taken from IANA's root hints file
 (`ROOT_HINTS_SOURCE`). `ROOT_HINTS_DATA_VERSION` is the version of that file the list was
 taken from, and `ROOT_HINTS_REFRESHED` the date the list was last compared with it.
 
-One `query()` also takes, for that query alone:
-
-| Option                    | On                      |                                                                                                                                                                                                                                        |
-| ------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `server`                  | `Resolver`              | ask this server and no other: an address, a name, `host:port`, a URL, or `{ address, port, serverName, url }`. The answer is not taken from the cache or put in it                                                                     |
-| `startAt`                 | `AuthoritativeResolver` | where the walk starts, in place of the root servers: `{ name, ipv4, ipv6 }[]`. Nameservers that come without an address are still looked up from the root servers, and the delegations found on the way are not kept for other queries |
-| `fromRoot`                | `AuthoritativeResolver` | `true` walks from the root servers whatever delegations the resolver remembers, so that `trace` is the whole path. What the walk learns is kept for other queries. Default `false`                                                     |
-| `totalTimeout`, `onEvent` | `AuthoritativeResolver` | as on the resolver, for this query. This `onEvent` is told only of the queries this one sends, nameserver lookups included, and the resolver's own is told as well                                                                     |
-
-Both take the transport options (`proxy`, `fetch`, `connect`, `tls`, `pipeline`,
-`idleTimeout`, `dohMethod`; see [Wire format and transports](wire-and-transports.md#transports)), `onEvent`, and
-`transports`, a set of sockets to share with other resolvers. The set is made with
-`createTransports(options)` and takes its transport options there: a resolver given both
-`transports` and a transport option throws a `TypeError`.
+Both resolvers take the transport options (`proxy`, `fetch`, `connect`, `tls`, `pipeline`,
+`idleTimeout`, `dohMethod`; see [Wire format and transports](wire-and-transports.md#transports)),
+`onEvent`, and `transports`, a set of sockets to share with other resolvers. The set is made
+with `createTransports(options)` and takes its transport options there: a resolver given
+both `transports` and a transport option throws a `TypeError`.
 
 ## Caching
 

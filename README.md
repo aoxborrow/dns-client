@@ -20,6 +20,7 @@ is not compatible with it; see [UPGRADING.md](UPGRADING.md).
 
 - [Install](#install)
 - [Quick start](#quick-start)
+- [Options](#options)
 - [Which API do I want?](#which-api-do-i-want)
 - [The answer](#the-answer)
 - [Errors](#errors)
@@ -79,6 +80,170 @@ answer.security?.status; // 'secure'
 answer.trace?.map(hop => hop.serverName);
 // ['e.root-servers.net', 'b.gtld-servers.net', 'hera.ns.cloudflare.com']: one of each zone's
 // servers, picked at random each time
+```
+
+## Options
+
+Both resolvers take their options in the constructor, and any query setting can be given to
+one `query()` as well, for that query alone. Everything is optional.
+
+```ts
+import { Resolver } from '@aoxborrow/dns';
+
+const resolver = new Resolver({
+  servers: ['1.1.1.1', '8.8.8.8'], // tried in order: the next when one fails, or answers SERVFAIL, NOTIMP or REFUSED
+  transport: 'tls', // 'udp' (default), 'tcp', 'tls' or 'doh'
+  timeout: 2000, // milliseconds per attempt at one server (default 5000)
+  retries: 1, // further attempts at a server (default 2, or 1 with several servers)
+  totalTimeout: 6000, // milliseconds for the whole answer (default 10000)
+  cache: { max: 5000 }, // the built-in cache, by TTL (default 1000 entries); false for none
+  serverConcurrency: 32, // queries in flight to one server (default 16)
+  dnssecOk: true, // ask for signatures with the answer (default false)
+  onEvent: event => console.log(event), // told of every query, retry and fallback
+});
+```
+
+```ts network
+import { Resolver } from '@aoxborrow/dns';
+import { nsidOption } from '@aoxborrow/dns/records';
+
+const resolver = new Resolver({ servers: ['1.1.1.1'] });
+
+// for this query alone
+const answer = await resolver.query('example.com', 'A', {
+  server: '8.8.8.8', // this server and no other, outside the cache
+  transport: 'tcp',
+  ednsOptions: [nsidOption()], // ask the server to name itself
+  signal: AbortSignal.timeout(3000),
+});
+```
+
+```ts
+import { AuthoritativeResolver } from '@aoxborrow/dns';
+
+const resolver = new AuthoritativeResolver({
+  addressFamily: 'ipv4', // ask nameservers at their IPv4 addresses only (default 'both')
+  followCnames: true, // resolve an alias into another zone too (default false)
+  maxHops: 20, // servers asked on the way to one answer (default 40)
+  serverDelay: 50, // least milliseconds between two queries to one server (default 0)
+  validate: true, // check the DNSSEC chain, into answer.security (default false)
+});
+```
+
+Transport options can go on a resolver, or on a set of sockets that several resolvers share:
+
+```ts
+import { AuthoritativeResolver, createTransports, Resolver } from '@aoxborrow/dns';
+
+const transports = createTransports({
+  proxy: 'socks5://user:pass@proxy.example:1080', // every query goes through it
+  pipeline: true, // several queries down one TCP connection (default false; true for TLS)
+  idleTimeout: 10_000, // how long an unused connection stays open (default 5000)
+});
+const resolver = new Resolver({ servers: ['9.9.9.9'], transport: 'tcp', transports });
+const authoritative = new AuthoritativeResolver({ transports });
+
+// a resolver leaves a set it was given open, so close it when they are done
+transports.close();
+```
+
+The option types, with each default. [Resolvers](docs/resolvers.md#options) explains the
+ones that need more than a line.
+
+```ts
+import type {
+  Cache,
+  CachedResponse,
+  Connect,
+  EdnsOption,
+  FetchLike,
+  NameserverHint,
+  OnEvent,
+  ProxyInput,
+  Server,
+  TlsOptions,
+  Transports,
+  TrustAnchor,
+} from '@aoxborrow/dns';
+
+// what both resolvers take, for every query or for one
+interface QuerySettings {
+  transport?: 'udp' | 'tcp' | 'tls' | 'doh'; // default 'udp'; 'doh' for a server given as a URL
+  port?: number; // default 53, 853 for TLS, 443 for DoH
+  timeout?: number; // milliseconds per attempt at one server (default 5000)
+  retries?: number; // further attempts at a server (default 2, or 1 with several servers)
+  tcpFallback?: boolean; // ask again over TCP when a UDP answer is truncated (default true)
+  recursionDesired?: boolean; // the RD flag (default true)
+  checkingDisabled?: boolean; // the CD flag (default false)
+  authenticData?: boolean; // the AD flag, to be told whether the answer validated (default false)
+  dnssecOk?: boolean; // the DO bit, to get signatures with the answer (default false)
+  udpPayloadSize?: number; // the largest UDP answer to accept (default 1232)
+  ednsOptions?: readonly EdnsOption[]; // to send: nsidOption(), clientSubnetOption(), cookieOption(), paddingOption()
+  edns?: boolean; // false sends a plain RFC 1035 query, with no EDNS record (default true)
+}
+
+// how the transports connect
+interface TransportOptions {
+  proxy?: ProxyInput; // 'socks5://…' or 'http://…', or a function picking one per server (default none)
+  fetch?: FetchLike; // how DoH requests are made (default HTTP/2 on Node, fetch elsewhere)
+  connect?: Connect; // how TCP connections are opened (default node:net on Node)
+  tls?: TlsOptions; // { ca, rejectUnauthorized } for TLS and DoH on Node (default the runtime's trust store)
+  idleTimeout?: number; // milliseconds an unused connection stays open (default 5000)
+  pipeline?: boolean; // several queries down one TCP connection (default false; true for TLS)
+  dohMethod?: 'GET' | 'POST'; // default 'GET'
+}
+
+interface ResolverOptions extends QuerySettings, TransportOptions {
+  servers?: readonly (string | Server)[]; // addresses, names, host:port or URLs (default this machine's resolvers)
+  cache?: false | Cache<CachedResponse> | { max?: number }; // default the built-in cache, 1000 entries
+  concurrency?: number; // queries in flight at once, to all servers (default no limit)
+  serverConcurrency?: number; // queries in flight to one server (default 16)
+  totalTimeout?: number; // milliseconds for the whole answer (default 10000)
+  strict?: boolean; // malformed record data is an error, not a generic record (default false)
+  onEvent?: OnEvent; // told of every query, retry, TCP fallback and proxy connection
+  transports?: Transports; // sockets shared with other resolvers (default the process-wide set)
+  validate?: boolean; // check the DNSSEC chain, into answer.security (default false)
+  trustAnchors?: readonly TrustAnchor[]; // where validation starts (default IANA's root anchors)
+}
+
+// what one Resolver query() takes besides the query settings
+interface ResolverQueryOptions extends QuerySettings {
+  server?: string | Server; // this server and no other, outside the cache
+  totalTimeout?: number; // in place of the resolver's
+  signal?: AbortSignal; // abandons the query; it rejects with the signal's reason
+}
+
+interface AuthoritativeResolverOptions
+  extends Omit<QuerySettings, 'recursionDesired' | 'transport'>, TransportOptions {
+  transport?: 'udp' | 'tcp'; // default 'udp'
+  rootServers?: readonly NameserverHint[]; // where walks start (default the 13 root servers)
+  addressFamily?: 'ipv4' | 'ipv6' | 'both'; // nameserver addresses to use (default 'both', IPv4 first)
+  followCnames?: boolean; // resolve an alias into another zone too (default false)
+  maxAliases?: number; // how long an alias chain may be (default 8)
+  maxHops?: number; // servers asked on the way to one answer (default 40)
+  totalTimeout?: number; // milliseconds for the whole answer (default 10000)
+  hosts?: Readonly<Record<string, string | readonly string[]>>; // nameserver addresses by name (default none)
+  serverConcurrency?: number; // queries in flight to one server address (default 8)
+  cache?: boolean; // remember delegations between queries (default true)
+  nameserverCache?: boolean; // remember glueless nameservers' addresses (default true)
+  serverDelay?: number; // least milliseconds between two queries to one server (default 0)
+  concurrency?: number; // queries in flight at once, to all servers (default no limit)
+  strict?: boolean; // as for Resolver
+  onEvent?: OnEvent;
+  transports?: Transports;
+  validate?: boolean;
+  trustAnchors?: readonly TrustAnchor[];
+}
+
+// what one AuthoritativeResolver query() takes besides the query settings
+interface AuthoritativeQueryOptions extends Omit<QuerySettings, 'recursionDesired' | 'transport'> {
+  transport?: 'udp' | 'tcp';
+  totalTimeout?: number; // in place of the resolver's
+  signal?: AbortSignal;
+  onEvent?: OnEvent; // told of this query's own exchanges, nameserver lookups included
+  startAt?: readonly NameserverHint[]; // start the walk at these servers instead of the root
+  fromRoot?: boolean; // walk from the root whatever the resolver remembers (default false)
+}
 ```
 
 ## Which API do I want?

@@ -130,6 +130,8 @@ pages the tests read are listed in `test/support/docs.ts`, so a new page goes on
 - an example that needs no network runs, and a statement written `expression; // value`,
   or followed by a comment holding only the value, must give that value
 - every value an entry point exports is named somewhere in the pages
+- a block that writes out one of the package's interfaces (`interface ResolverOptions { … }`,
+  as the README's option types do) names exactly the keys the real one has
 
 An example that needs the network is fenced `` ```ts network ``. It is still typechecked,
 and runs in the live suite (`test/live/docs.live.test.ts`) instead.

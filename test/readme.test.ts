@@ -11,6 +11,23 @@ import { DOCS, examples, readDoc, root, run } from './support/docs';
 
 const all = examples();
 
+// a block that writes out one of the package's interfaces, such as the README's option
+// types, must name exactly the keys the real one has, so it cannot fall behind the code
+function sameKeys(code: string): string {
+  return [...code.matchAll(/^interface (\w+)/gm)]
+    .map(
+      ([, name]) =>
+        [
+          `import type { ${name} as __Real${name} } from '@aoxborrow/dns';`,
+          `const __keys${name}: [never, never] = null as unknown as [`,
+          `  Exclude<keyof ${name}, keyof __Real${name}>,`,
+          `  Exclude<keyof __Real${name}, keyof ${name}>,`,
+          `];`,
+        ].join('\n') + '\n'
+    )
+    .join('');
+}
+
 function diagnostics(): string[] {
   const config = ts.readConfigFile(path.join(root, 'tsconfig.json'), ts.sys.readFile);
   const { options } = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
@@ -20,7 +37,7 @@ function diagnostics(): string[] {
   const virtual = new Map(
     all.map((example, index) => [
       path.join(root, 'test', `doc-example-${index + 1}.ts`),
-      { example, code: `${example.code}export {};\n` },
+      { example, code: `${example.code}${sameKeys(example.code)}export {};\n` },
     ])
   );
 
