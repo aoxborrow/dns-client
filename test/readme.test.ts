@@ -1,44 +1,33 @@
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { entries } from '../tsup.config';
+import { DOCS, examples, readDoc, root, run } from './support/docs';
 
-// every ```ts block in the README typechecks against the package as a user would import
-// it (`@aoxborrow/dns`, `@aoxborrow/dns/records` and so on), so an example cannot drift
-// from the API it shows. Each block is a module of its own and must stand alone: its own
-// imports, its own values. Nothing is run
+// the README and the reference pages under docs/ (the list is in ./support/docs.ts). Every
+// ```ts block typechecks against the package as a user would import it, so an example
+// cannot drift from the API it shows, and each must stand alone with its own imports. The
+// blocks that need no network also run, and a statement written `expression; // literal`
+// must give that literal. Blocks fenced ```ts network run in the live suite instead
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const readme = readFileSync(path.join(root, 'README.md'), 'utf8');
-
-interface Example {
-  // the README line the block's code starts on
-  line: number;
-  file: string;
-  code: string;
-}
-
-const examples: Example[] = [...readme.matchAll(/^```ts\n([\s\S]*?)^```$/gm)].map(
-  (match, index) => ({
-    line: readme.slice(0, match.index).split('\n').length + 1,
-    // beside the tests, so the package's own name resolves to its source through `exports`
-    file: path.join(root, 'test', `readme-example-${index + 1}.ts`),
-    // a module even with no import, so top-level await is allowed
-    code: `${match[1]}export {};\n`,
-  })
-);
+const all = examples();
 
 function diagnostics(): string[] {
   const config = ts.readConfigFile(path.join(root, 'tsconfig.json'), ts.sys.readFile);
   const { options } = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
   const compilerOptions = { ...options, noEmit: true, incremental: false };
-  const virtual = new Map(examples.map(example => [example.file, example.code]));
+  // beside the tests, so the package's own name resolves to its source through `exports`;
+  // a module even with no import, so top-level await is allowed
+  const virtual = new Map(
+    all.map((example, index) => [
+      path.join(root, 'test', `doc-example-${index + 1}.ts`),
+      { example, code: `${example.code}export {};\n` },
+    ])
+  );
 
   const host = ts.createCompilerHost(compilerOptions);
   const getSourceFile = host.getSourceFile.bind(host);
   host.getSourceFile = (file, language, ...rest) => {
-    const code = virtual.get(path.resolve(file));
+    const code = virtual.get(path.resolve(file))?.code;
     return code === undefined
       ? getSourceFile(file, language, ...rest)
       : ts.createSourceFile(file, code, language);
@@ -46,7 +35,7 @@ function diagnostics(): string[] {
   const fileExists = host.fileExists.bind(host);
   host.fileExists = file => virtual.has(path.resolve(file)) || fileExists(file);
   const readFile = host.readFile.bind(host);
-  host.readFile = file => virtual.get(path.resolve(file)) ?? readFile(file);
+  host.readFile = file => virtual.get(path.resolve(file))?.code ?? readFile(file);
 
   const program = ts.createProgram([...virtual.keys()], compilerOptions, host);
   return ts
@@ -54,31 +43,39 @@ function diagnostics(): string[] {
     .filter(diagnostic => diagnostic.file && virtual.has(path.resolve(diagnostic.file.fileName)))
     .map(diagnostic => {
       const file = diagnostic.file as ts.SourceFile;
-      const example = examples.find(each => each.file === path.resolve(file.fileName));
+      const { example } = virtual.get(path.resolve(file.fileName)) as { example: { at: string } };
+      const [doc, start] = example.at.split(':') as [string, string];
       const { line } = file.getLineAndCharacterOfPosition(diagnostic.start ?? 0);
       const text = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n');
-      return `README.md:${(example?.line ?? 0) + line}: ${text}`;
+      return `${doc}:${Number(start) + line}: ${text}`;
     });
 }
 
-describe('README', () => {
-  it('has TypeScript examples', () => {
-    expect(examples.length).toBeGreaterThan(10);
+describe('the docs', () => {
+  it('has every page, with TypeScript examples', () => {
+    for (const doc of DOCS) expect(readDoc(doc).length, doc).toBeGreaterThan(500);
+    expect(all.length).toBeGreaterThan(15);
+    expect(all.filter(example => !example.network).length).toBeGreaterThan(5);
   });
 
   it('typechecks every TypeScript example', () => {
     expect(diagnostics()).toEqual([]);
   }, 60_000);
 
+  it('runs every example that needs no network, and each gives the values it shows', async () => {
+    expect(await run(all.filter(example => !example.network), true)).toEqual([]);
+  }, 60_000);
+
   // nothing is public without a word about what it is. Types are left out: the examples
   // and the option tables are where those are shown
   it('names every value the entries export', async () => {
+    const text = DOCS.map(readDoc).join('\n');
     const unnamed: string[] = [];
     for (const entry of entries) {
       const exported = (await import(path.join(root, entry))) as Record<string, unknown>;
       for (const name of Object.keys(exported)) {
         // as a word of its own: `ENODATA` does not name `NODATA`
-        const named = new RegExp(`(?<![A-Za-z0-9_$])${name}(?![A-Za-z0-9_$])`).test(readme);
+        const named = new RegExp(`(?<![A-Za-z0-9_$])${name}(?![A-Za-z0-9_$])`).test(text);
         if (!named) unnamed.push(`${entry}: ${name}`);
       }
     }
