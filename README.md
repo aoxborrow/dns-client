@@ -14,7 +14,7 @@
 - **DNSSEC validation** - every answer judged secure, insecure, bogus or indeterminate, with the reason and the extended DNS error
 - **Every transport** - UDP, TCP, DNS over TLS and DNS over HTTPS, directly or through a SOCKS5 or HTTP CONNECT proxy
 - **33 typed record types** - decoded into typed fields, and parsed, formatted and validated in zone-file syntax
-- **A `node:dns/promises` drop-in** - the same API, with a cache, in `@aoxborrow/dns/promises`
+- **A `node:dns/promises`-compatible facade** - most of the same API, with a cache, in `@aoxborrow/dns/promises`; [where it differs](docs/promises.md)
 - **Runs beyond Node** - the records, wire and DNSSEC entries run in browsers and Cloudflare Workers; DNS over HTTPS works anywhere with `fetch`
 
 This library is extracted from [dns.tools](https://dns.tools). Check out our [DNS API](https://dns.tools/docs#dns) if you need a hosted version of it.
