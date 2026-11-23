@@ -231,14 +231,15 @@ export function createUdpTransport(options: UdpTransportOptions = {}): Transport
   // the system lookup takes no signal, so an abort stops the wait for it instead
   async function resolveHost(host: string, signal: AbortSignal | undefined): Promise<string> {
     if (isIp(host)) return host;
-    if (signal?.aborted) throw signal.reason;
     let onAbort = () => {};
-    const aborted = new Promise<never>((_, reject) => {
-      onAbort = () => reject(signal?.reason);
-      signal?.addEventListener('abort', onAbort, { once: true });
-    });
     try {
       const { lookup } = await import('node:dns/promises');
+      // made only once nothing more is awaited before the race, so its rejection is handled
+      if (signal?.aborted) throw signal.reason;
+      const aborted = new Promise<never>((_, reject) => {
+        onAbort = () => reject(signal?.reason);
+        signal?.addEventListener('abort', onAbort, { once: true });
+      });
       return (await Promise.race([lookup(host), aborted])).address;
     } catch (cause) {
       if (signal?.aborted) throw signal.reason;

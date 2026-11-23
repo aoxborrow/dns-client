@@ -11,9 +11,11 @@ import type { FixtureServer } from '../support/fixture-server';
 // a fresh source port per query, so an off-path attacker forging an answer has to guess the
 // port as well as the ID (RFC 5452), and no socket outlives the query it was opened for
 
-// the system lookup of a server's name, made to never finish while `stall.on` is set
+// the system lookup of a server's name, made to never finish while `stall.on` is set. The
+// module itself loads slowly, so a query can be aborted while it is still being imported
 const stall = vi.hoisted(() => ({ on: false }));
 vi.mock('node:dns/promises', async importOriginal => {
+  await new Promise(resolve => setTimeout(resolve, 50));
   const real = await importOriginal<typeof import('node:dns/promises')>();
   const lookup = (host: string) => (stall.on ? new Promise<never>(() => {}) : real.lookup(host));
   return { ...real, default: { ...real, lookup }, lookup };
