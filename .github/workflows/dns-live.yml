@@ -1,0 +1,46 @@
+name: DNS Live
+
+# The live suite (test/live): the resolvers over UDP, TCP, DoT and DoH against 1.1.1.1,
+# 8.8.8.8 and 9.9.9.9, a walk from the root, and DNSSEC validation of names with a known
+# verdict (signed, unsigned, broken on purpose, missing, wildcards, aliases), each verdict
+# compared with what 1.1.1.1 and 8.8.8.8 say. It needs the real network, so it runs on a
+# schedule and on dispatch, never on a pull request. A transient network failure is retried
+# once; a wrong verdict fails the run. When a test zone changes or disappears, the
+# reference columns in the log's table show it: update the case in validate.live.test.ts.
+
+on:
+  schedule:
+    # Mondays 15:00 UTC, an hour after the trust anchor check
+    - cron: '0 15 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dns-live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dns-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: 'yarn'
+
+      - name: Install dependencies (immutable)
+        run: yarn install --immutable
+
+      - name: Run the live suite
+        run: yarn test:live

@@ -1,8 +1,28 @@
 {
-  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
-    "types": ["node", "vitest/globals"]
+    "types": ["node", "vitest/globals"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "incremental": true,
+    "sourceMap": true
   },
-  "include": ["src/**/*", "test/**/*", "bench/**/*", "scripts/**/*.ts", "tsup.config.ts", "vitest.config.ts", "vitest.live.config.ts"]
+  "include": [
+    "src/**/*",
+    "test/**/*",
+    "bench/**/*",
+    "scripts/**/*.ts",
+    "tsup.config.ts",
+    "vitest.config.ts",
+    "vitest.live.config.ts",
+    "vitest.workers.config.ts"
+  ]
 }

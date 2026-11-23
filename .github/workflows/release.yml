@@ -1,0 +1,92 @@
+name: Release
+
+# Publishes to npm when a version tag is pushed (`v1.0.0-beta.1`, `v1.0.0`), with npm
+# provenance through GitHub's OIDC token (npm trusted publishing): no npm token is stored
+# in the repo. The one exception is the first release: npm adds a trusted publisher only to
+# a package that exists, so that run publishes with a short-lived granular token in the
+# NPM_TOKEN secret, which is deleted once the trusted publisher is set (extract/README.md
+# in the monorepo has the steps). Only that run sets NODE_AUTH_TOKEN: an empty one, from a
+# deleted secret, would reach .npmrc and npm would try it in place of OIDC. The tag must equal the version in package.json. A prerelease version
+# (anything with a hyphen) goes to the `beta` dist-tag, so `npm install @aoxborrow/dns`
+# keeps resolving to the last stable release; a plain version goes to `latest`.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # npm provenance and trusted publishing
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      # npm's trusted publishing needs npm 11.5 or later, so publish on Node 24
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'yarn'
+
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@latest
+
+      - name: Check the tag matches package.json
+        id: version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package.json version $version" >&2
+            exit 1
+          fi
+          case "$version" in
+            *-*) echo "dist_tag=beta" >> "$GITHUB_OUTPUT" ;;
+            *) echo "dist_tag=latest" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Install dependencies (immutable)
+        run: yarn install --immutable
+
+      - name: Lint
+        run: yarn lint
+
+      - name: Unit tests
+        run: yarn test
+
+      - name: Browser-safe entries bundle with no Node built-ins
+        run: yarn check:browser
+
+      # builds, packs and imports every entry from the tarball; leaves dist/ built
+      - name: The packed tarball installs and imports
+        run: yarn check:pack
+
+      - name: Build
+        run: yarn build
+
+      - name: Publish to npm
+        if: env.NPM_TOKEN == ''
+        run: npm publish --provenance --access public --tag ${{ steps.version.outputs.dist_tag }}
+
+      - name: Publish to npm with the first release's token
+        if: env.NPM_TOKEN != ''
+        env:
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+        run: npm publish --provenance --access public --tag ${{ steps.version.outputs.dist_tag }}

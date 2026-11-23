@@ -1,7 +1,6 @@
 {
   "name": "@aoxborrow/dns",
-  "version": "1.0.0-dev",
-  "private": true,
+  "version": "1.0.0-beta.1",
   "description": "DNS client for TypeScript with no dependencies: wire codec, typed records, resolvers, record validation and DNSSEC validation",
   "author": "Aaron Oxborrow <aaron@oxborrow.com>",
   "license": "MIT",
@@ -35,14 +34,36 @@
   "engines": {
     "node": ">=22"
   },
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./records": "./src/records/index.ts",
-    "./wire": "./src/wire/index.ts",
-    "./transports": "./src/transports/index.ts",
-    "./transports/doh": "./src/transports/doh.ts",
-    "./dnssec": "./src/dnssec/index.ts",
-    "./promises": "./src/promises/index.ts",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./records": {
+      "types": "./dist/records/index.d.ts",
+      "default": "./dist/records/index.js"
+    },
+    "./wire": {
+      "types": "./dist/wire/index.d.ts",
+      "default": "./dist/wire/index.js"
+    },
+    "./transports": {
+      "types": "./dist/transports/index.d.ts",
+      "default": "./dist/transports/index.js"
+    },
+    "./transports/doh": {
+      "types": "./dist/transports/doh.d.ts",
+      "default": "./dist/transports/doh.js"
+    },
+    "./dnssec": {
+      "types": "./dist/dnssec/index.d.ts",
+      "default": "./dist/dnssec/index.js"
+    },
+    "./promises": {
+      "types": "./dist/promises/index.d.ts",
+      "default": "./dist/promises/index.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -54,65 +75,47 @@
     "LICENSE"
   ],
   "publishConfig": {
-    "access": "public",
-    "types": "./dist/index.d.ts",
-    "exports": {
-      ".": {
-        "types": "./dist/index.d.ts",
-        "default": "./dist/index.js"
-      },
-      "./records": {
-        "types": "./dist/records/index.d.ts",
-        "default": "./dist/records/index.js"
-      },
-      "./wire": {
-        "types": "./dist/wire/index.d.ts",
-        "default": "./dist/wire/index.js"
-      },
-      "./transports": {
-        "types": "./dist/transports/index.d.ts",
-        "default": "./dist/transports/index.js"
-      },
-      "./transports/doh": {
-        "types": "./dist/transports/doh.d.ts",
-        "default": "./dist/transports/doh.js"
-      },
-      "./dnssec": {
-        "types": "./dist/dnssec/index.d.ts",
-        "default": "./dist/dnssec/index.js"
-      },
-      "./promises": {
-        "types": "./dist/promises/index.d.ts",
-        "default": "./dist/promises/index.js"
-      },
-      "./package.json": "./package.json"
-    }
+    "access": "public"
   },
   "scripts": {
     "build": "tsup",
-    "typecheck": "yarn run -T tsc --noEmit",
-    "test": "yarn run -T vitest run",
-    "test:live": "yarn run -T vitest run --config vitest.live.config.ts --reporter=verbose",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:live": "vitest run --config vitest.live.config.ts --reporter=verbose",
     "check:browser": "node scripts/browser-check.mjs",
     "check:pack": "node scripts/pack-check.mjs",
-    "capture": "yarn run -T tsx scripts/capture-messages.ts",
-    "refresh-anchors": "yarn run -T tsx scripts/refresh-anchors.ts",
-    "refresh-algorithms": "yarn run -T tsx scripts/refresh-algorithms.ts",
-    "bench": "yarn run -T tsx bench/run.ts",
+    "capture": "tsx scripts/capture-messages.ts",
+    "refresh-anchors": "tsx scripts/refresh-anchors.ts",
+    "refresh-algorithms": "tsx scripts/refresh-algorithms.ts",
+    "bench": "tsx bench/run.ts",
     "lint": "yarn typecheck && yarn eslint && yarn format",
     "lint:fix": "yarn eslint:fix && yarn format:fix",
-    "eslint": "yarn run -T eslint --cache --cache-location .eslintcache --max-warnings 0 .",
-    "eslint:fix": "yarn run -T eslint --cache --cache-location .eslintcache --max-warnings 0 . --fix",
-    "format": "yarn run -T prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"test/fixtures/*.json\" \"bench/**/*.ts\" \"scripts/**/*.{ts,mjs}\" eslint.config.mjs tsup.config.ts vitest.config.ts vitest.live.config.ts",
-    "format:fix": "yarn run -T prettier --write --list-different \"src/**/*.ts\" \"test/**/*.ts\" \"test/fixtures/*.json\" \"bench/**/*.ts\" \"scripts/**/*.{ts,mjs}\" eslint.config.mjs tsup.config.ts vitest.config.ts vitest.live.config.ts"
+    "eslint": "eslint --cache --cache-location .eslintcache --max-warnings 0 .",
+    "eslint:fix": "eslint --cache --cache-location .eslintcache --max-warnings 0 . --fix",
+    "format": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"test/fixtures/*.json\" \"bench/**/*.ts\" \"scripts/**/*.{ts,mjs}\" eslint.config.mjs tsup.config.ts vitest.config.ts vitest.live.config.ts vitest.workers.config.ts",
+    "format:fix": "prettier --write --list-different \"src/**/*.ts\" \"test/**/*.ts\" \"test/fixtures/*.json\" \"bench/**/*.ts\" \"scripts/**/*.{ts,mjs}\" eslint.config.mjs tsup.config.ts vitest.config.ts vitest.live.config.ts vitest.workers.config.ts",
+    "test:workers": "vitest run --config vitest.workers.config.ts"
   },
   "devDependencies": {
-    "@types/dns-packet": "^5.6.5",
-    "dns-packet": "^5.6.1",
+    "@cloudflare/vitest-plugin": "1.4.12",
+    "@eslint/js": "10.0.1",
+    "@types/dns-packet": "5.6.5",
+    "@types/node": "25.9.9",
+    "dns-packet": "5.6.1",
     "dns2": "3.1.1",
-    "esbuild": "0.28.2",
+    "esbuild": "0.28.1",
+    "eslint": "10.15.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-prettier": "5.5.7",
+    "globals": "17.14.0",
+    "prettier": "3.10.1",
     "tangerine": "2.1.3",
-    "tsup": "^8.5.1",
-    "undici": "^8.12.4"
-  }
+    "tsup": "8.5.1",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.2",
+    "undici": "8.12.4",
+    "vitest": "4.1.12"
+  },
+  "packageManager": "yarn@4.17.0"
 }
