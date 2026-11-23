@@ -118,6 +118,11 @@ export interface TransportOptions {
   fetch?: FetchLike;
   /** how TCP connections are opened. Wins over `proxy` for TCP and DoT */
   connect?: Connect;
+  /**
+   * for DoT, and DoH over HTTP/2, on Node. A DoH server that does not offer HTTP/2 is asked
+   * through `fetch`, which keeps the runtime's own trust store: pass a `fetch` that trusts
+   * the same certificates for one
+   */
   tls?: TlsOptions;
   /**
    * with `pipeline`: how long an unused TCP or DoT connection is kept open, in

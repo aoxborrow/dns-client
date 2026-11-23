@@ -59,7 +59,8 @@ export function parseProxy(input: string | URL): Proxy {
     ...(username !== undefined && { username }),
     ...(password !== undefined && { password }),
     display: `${scheme.protocol}://${formatHostPort(host, port)}`,
-    key: `${scheme.protocol}|${host}|${port}|${username ?? ''}|${password ?? ''}`,
+    // a tuple, so no credentials can be split differently into the same key
+    key: JSON.stringify([scheme.protocol, host, port, username ?? null, password ?? null]),
   };
 }
 

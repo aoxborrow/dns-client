@@ -193,7 +193,7 @@ interface TransportOptions {
   proxy?: ProxyInput; // 'socks5://…' or 'http://…', or a function picking one per server (default none)
   fetch?: FetchLike; // how DoH requests are made (default HTTP/2 on Node, fetch elsewhere)
   connect?: Connect; // how TCP connections are opened (default node:net on Node)
-  tls?: TlsOptions; // { ca, rejectUnauthorized } for TLS and DoH on Node (default the runtime's trust store)
+  tls?: TlsOptions; // { ca, rejectUnauthorized } for TLS and DoH over HTTP/2 on Node (default the runtime's trust store)
   idleTimeout?: number; // milliseconds an unused connection stays open (default 5000)
   pipeline?: boolean; // several queries down one TCP connection (default false; true for TLS)
   dohMethod?: 'GET' | 'POST'; // default 'GET'

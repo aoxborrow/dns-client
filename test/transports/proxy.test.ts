@@ -580,6 +580,12 @@ describe('proxies', () => {
       expectNoCredentials(parsed.display);
     });
 
+    it('keys a proxy by its credentials, however they split', () => {
+      const first = parseProxy('socks5://a%7Cb:c@127.0.0.1:1080');
+      const second = parseProxy('socks5://a:b%7Cc@127.0.0.1:1080');
+      expect(first.key).not.toBe(second.key);
+    });
+
     it('rejects a URL it cannot use, without repeating it', () => {
       const attempt = (url: string) => {
         try {

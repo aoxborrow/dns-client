@@ -238,6 +238,21 @@ describe('validate: aliases', () => {
     expect(recursive.security?.reason).toMatchObject({ code: 'no-ds', zone: 'plain.example' });
   });
 
+  it('leaves out the chain of an alias target the answer does not reach', async () => {
+    const zones = [
+      root,
+      tld,
+      secure('a.example', [['www.a.example', 'CNAME', 'host.b.example']]),
+      { ...secure('b.example', [['host.b.example', 'A', '192.0.2.7']]), badDs: true },
+    ];
+    // a CNAME question is answered by the alias itself
+    expectStatus(await both(zones, 'www.a.example', 'CNAME'), 'secure', 'verified');
+    // and the authoritative resolver stops at the alias
+    const [authoritative, recursive] = await both(zones, 'www.a.example', 'A');
+    expect(authoritative.security?.status).toBe('secure');
+    expect(recursive.security?.status).toBe('bogus');
+  });
+
   it('is bogus when the CNAME leads to a record with a broken signature', async () => {
     const [, recursive] = await both(
       [

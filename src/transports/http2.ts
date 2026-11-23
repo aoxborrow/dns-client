@@ -226,7 +226,7 @@ export function createHttp2Client(options: Http2ClientOptions = {}): Http2Client
     url: URL,
     request: Http2Request
   ): Promise<Session | undefined> {
-    const key = request.proxy ? `${request.proxy.key}|${url.origin}` : url.origin;
+    const key = JSON.stringify([request.proxy?.key ?? null, url.origin]);
     let slot = slots.get(key);
     if (slot?.settled) {
       const session = await slot.promise;

@@ -60,7 +60,7 @@ export interface ValidatorOptions {
 
 const DEFAULT_MAX_TTL = 86_400;
 const DEFAULT_MAX_ZONES = 1000;
-const { DS, DNSKEY, RRSIG, NSEC, NSEC3, NS, CNAME, DNAME } = RECORD_TYPES;
+const { DS, DNSKEY, RRSIG, NSEC, NSEC3, NS, CNAME, DNAME, SOA } = RECORD_TYPES;
 
 // a response, as the judging core reads it, for the question that was sent
 export function dnssecResponse(message: Message, name: string, type: number): DnssecResponse {
@@ -198,11 +198,28 @@ function link({ evidence, ...rest }: JudgedLink): ChainLink {
 }
 
 // the names the data in the responses sits at: each answer RRset's owner, the name asked
-// about, and where its aliases lead. A signature's signer is a zone the chain must reach
+// about, and where its aliases lead when the answer goes on past them. A signature's signer
+// is a zone the chain must reach
 function dataNames(responses: DnssecResponse[]): string[] {
   const names = new Set<string>();
   for (const response of responses) {
     names.add(canonicalName(response.name));
+    // an alias's target matters only to an answer that goes on past it: not to a CNAME
+    // question, which the alias answers, and to a zone server's response only inside the
+    // zones it speaks for (its signers, and any SOA it hands over), as judgeChain reads it
+    const speaksFor = response.recursive
+      ? undefined
+      : [
+          ...response.answers.flatMap(record =>
+            record.type === RRSIG ? [readRrsig(record)?.signerName ?? ''] : []
+          ),
+          ...response.authorities.filter(record => record.type === SOA).map(record => record.name),
+        ]
+          .filter(Boolean)
+          .map(canonicalName);
+    const reaches = (target: string) =>
+      response.type !== CNAME &&
+      (speaksFor === undefined || speaksFor.some(zone => isSubdomain(target, zone)));
     for (const record of response.answers) {
       if (record.type === RRSIG) {
         const sig = readRrsig(record);
@@ -213,7 +230,7 @@ function dataNames(responses: DnssecResponse[]): string[] {
       names.add(canonicalName(record.type === DS ? parentName(record.name) : record.name));
       if (record.type === CNAME || record.type === DNAME) {
         const target = aliasTargetOf(record);
-        if (target) names.add(target);
+        if (target && reaches(target)) names.add(target);
       }
     }
   }

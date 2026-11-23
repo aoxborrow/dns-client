@@ -416,7 +416,12 @@ export function createTcpTransport(options: TcpTransportOptions = {}): Transport
       waiter.reject(error);
       return;
     }
-    const key = `${endpoint.host}|${endpoint.port}|${endpoint.serverName ?? ''}|${proxy?.key ?? ''}`;
+    const key = JSON.stringify([
+      endpoint.host,
+      endpoint.port,
+      endpoint.serverName ?? null,
+      proxy?.key ?? null,
+    ]);
     const single = alone || onePerConnection.has(key);
 
     let channel: Channel | undefined;
