@@ -1,5 +1,15 @@
 # dns-client
 
+> [!WARNING]
+> **Deprecated.** `@aoxborrow/dns-client` is no longer maintained. It is replaced by
+> [`@aoxborrow/dns`](https://www.npmjs.com/package/@aoxborrow/dns), a rewrite with no
+> runtime dependencies, at [github.com/aoxborrow/dns](https://github.com/aoxborrow/dns).
+> To move over, see [UPGRADING.md](https://github.com/aoxborrow/dns/blob/main/UPGRADING.md).
+>
+> ```bash
+> npm uninstall @aoxborrow/dns-client && npm install @aoxborrow/dns
+> ```
+
 [![npm version](https://img.shields.io/npm/v/@aoxborrow/dns-client.svg)](https://www.npmjs.com/package/@aoxborrow/dns-client)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org)
